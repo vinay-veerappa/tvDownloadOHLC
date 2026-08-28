@@ -183,6 +183,15 @@ class RTDWorker:
 
             time.sleep(0.3)
 
+            # Heartbeat monitoring: the RTD server can silently stop pushing
+            # updates for subscribed topics (COM throttle, TOS hiccup, data
+            # subscription lapse). Poll the server heartbeat periodically —
+            # a failed heartbeat is pushed through the queue as an error so
+            # the parent's health monitor sees it and can restart.
+            HEARTBEAT_CHECK_EVERY = 30.0  # seconds between heartbeat probes
+            last_heartbeat_check = time.time()
+            consecutive_hb_failures = 0
+
             while not self.stop_event.is_set():
                 pythoncom.PumpWaitingMessages()
 
@@ -197,6 +206,30 @@ class RTDWorker:
 
                 except Exception as e:
                     self.logger.error("Data processing error: %s", e)
+
+                # Periodic heartbeat probe — detects a silent RTD server.
+                now_hb = time.time()
+                if now_hb - last_heartbeat_check >= HEARTBEAT_CHECK_EVERY:
+                    last_heartbeat_check = now_hb
+                    try:
+                        if self.client.check_heartbeat():
+                            if consecutive_hb_failures > 0:
+                                self.logger.info("RTD heartbeat recovered after %d failures", consecutive_hb_failures)
+                            consecutive_hb_failures = 0
+                        else:
+                            consecutive_hb_failures += 1
+                            self.logger.warning(
+                                "RTD heartbeat unhealthy (%d consecutive)", consecutive_hb_failures
+                            )
+                            if consecutive_hb_failures >= 3:
+                                self.data_queue.put({
+                                    "error": f"RTD heartbeat failed {consecutive_hb_failures} consecutive checks"
+                                })
+                    except Exception as hb_err:
+                        consecutive_hb_failures += 1
+                        self.logger.warning("Heartbeat probe failed: %s (%d consecutive)", hb_err, consecutive_hb_failures)
+                        if consecutive_hb_failures >= 3:
+                            self.data_queue.put({"error": f"RTD heartbeat unreachable: {hb_err}"})
 
                 # Poll fast until first data, then slow down
                 if self._first_data_received:

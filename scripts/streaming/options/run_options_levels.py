@@ -676,6 +676,28 @@ def run_pipeline(
                 rtd_scored_macro = score_levels(
                     rtd_dl_macro, rtd_gex_result.chain_data, ticker, ticker_profile, MACRO_VIEW
                 )
+
+                # ── Integrity gate (self-healing last line of defence) ──
+                # Upstream monitors can fail together; this inspects the
+                # computed levels and refuses to silently publish garbage.
+                try:
+                    from .file_writer import assess_levels_integrity
+                    integrity = assess_levels_integrity(
+                        ticker, rtd_dl_intraday.strike_gex, rtd_gex_result.futures_price
+                    )
+                    if not integrity["ok"]:
+                        log.warning(
+                            "INTEGRITY GATE: %s levels failed checks %s (metrics=%s) — "
+                            "tagging output DEGRADED",
+                            ticker, integrity["reasons"], integrity["metrics"],
+                        )
+                        rtd_dl_intraday.regime_label = (
+                            (rtd_dl_intraday.regime_label or "DEGRADED") + " [DEGRADED-DATA]"
+                        )
+                        rtd_scored_intraday.bias = "DEGRADED"
+                except Exception as gate_exc:
+                    log.debug("Integrity gate error for %s: %s", ticker, gate_exc)
+
                 scored_intraday_by_ticker[ticker] = rtd_scored_intraday
                 scored_macro_by_ticker[ticker] = rtd_scored_macro
 
@@ -1792,15 +1814,41 @@ def run_loop(enable_discord: bool = False) -> None:
                     is_versioned = False
                     is_intraday_only = True
 
-            # --- RTD health check / restart (cheap probe, throttled restart) ---
-            # Probes is_rtd_active every RTD_HEALTH_CHECK_INTERVAL seconds.
-            # If False and TOS is enabled, attempt a restart with backoff.
-            # This recovers from mid-session RTD drops (worker crash, TOS
-            # desktop restart, COM topic failure) without operator
-            # intervention.
+            # --- RTD health check / restart (data-flow aware, throttled) ---
+            # Old check only probed is_rtd_active (child process alive), so a
+            # zombie worker with a dead COM feed passed every check while the
+            # LAST price silently froze for hours. Now we probe the adapter's
+            # get_health(): drain-thread aliveness, data staleness, heartbeat
+            # errors. Any of those triggers a full restart with backoff.
             if loop_rtd_coord is not None and (now - rtd_health_last_check) >= RTD_HEALTH_CHECK_INTERVAL:
                 rtd_health_last_check = now
+                rtd_needs_restart = False
+                rtd_health_reason = ""
                 if not loop_rtd_coord.is_rtd_active:
+                    rtd_needs_restart = True
+                    rtd_health_reason = "inactive"
+                elif loop_rtd_coord._adapter is not None:
+                    try:
+                        health = loop_rtd_coord._adapter.get_health()
+                        if health.get("drain_dead"):
+                            rtd_needs_restart = True
+                            rtd_health_reason = "drain thread dead"
+                        elif health.get("last_data_age_seconds") is not None \
+                                and health["last_data_age_seconds"] > 300 \
+                                and not is_weekend_closed:
+                            # RTH-aware: when the futures market is closed
+                            # (weekend/holiday), zero data flow is normal —
+                            # no restarts, no alarms. Only silence DURING
+                            # tradable hours means the feed is dead.
+                            rtd_needs_restart = True
+                            rtd_health_reason = f"no data for {health['last_data_age_seconds']:.0f}s"
+                        elif health.get("worker_errors", 0) >= 3:
+                            rtd_needs_restart = True
+                            rtd_health_reason = f"{health['worker_errors']} worker errors"
+                    except Exception as h_exc:
+                        log.debug("RTD health probe failed: %s", h_exc)
+
+                if rtd_needs_restart:
                     # Determine backoff for this attempt
                     backoff = min(
                         RTD_RESTART_MIN_BACKOFF * (2 ** rtd_restart_failures),
@@ -1811,8 +1859,8 @@ def run_loop(enable_discord: bool = False) -> None:
                         pass
                     elif (now - rtd_health_last_restart) >= backoff:
                         log.warning(
-                            "RTD inactive (failures=%d) — attempting restart (backoff=%.0fs)...",
-                            rtd_restart_failures, backoff,
+                            "RTD unhealthy (%s, failures=%d) — attempting restart (backoff=%.0fs)...",
+                            rtd_health_reason, rtd_restart_failures, backoff,
                         )
                         rtd_health_last_restart = now
                         try:

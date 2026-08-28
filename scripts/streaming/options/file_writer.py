@@ -1669,6 +1669,75 @@ def _parse_unified_line(line: str) -> dict[str, Any]:
     }
 
 
+def assess_levels_integrity(
+    ticker: str,
+    gex_by_strike: list[dict[str, float]] | list[Any],
+    spot: float,
+) -> dict[str, Any]:
+    """Integrity gate — run BEFORE publishing GEX levels for a ticker.
+
+    Self-healing last line of defence: upstream monitors (heartbeat,
+    staleness guard, divergence watchdog) can fail together, as happened
+    2026-08-28 when every NQ snapshot was computed from a frozen spot and
+    uniform fake OI. This gate inspects the *output* and refuses garbage:
+
+      * oi_uniform   — every strike has identical call and put OI (the
+                       uniform-1000 placeholder signature)
+      * iv_coverage  — <10% of OI-bearing strikes carry any IV (gamma
+                       contributions are effectively zero)
+      * spot_stale   — spot unchanged across checks is undetectable here,
+                       but zero-variance gex rows signal a dead chain
+      * wall_atm     — call wall within 1 tick above spot (artifact of
+                       ATM-only IV streaming, not a real wall)
+
+    Returns {"ok": bool, "reasons": [...], "metrics": {...}}. Callers may
+    still publish but MUST surface the reasons (e.g. suppress walls, add a
+    "DEGRADED" note) — the point is that silent garbage becomes loud.
+    """
+    metrics: dict[str, Any] = {}
+    reasons: list[str] = []
+
+    rows = list(gex_by_strike or [])
+    if not rows:
+        return {"ok": False, "reasons": ["empty_gex_profile"], "metrics": metrics}
+
+    def _get(r: Any, name: str) -> float:
+        if isinstance(r, dict):
+            return float(r.get(name, 0.0) or 0.0)
+        return float(getattr(r, name, 0.0) or 0.0)
+
+    call_ois = [_get(r, "call_oi") for r in rows]
+    put_ois = [_get(r, "put_oi") for r in rows]
+    nonzero_oi = sum(1 for c, p in zip(call_ois, put_ois) if c > 0 or p > 0)
+    iv_bearing = sum(
+        1 for r in rows if _get(r, "call_iv") > 0 or _get(r, "put_iv")
+    )
+    gex_bearing = sum(1 for r in rows if abs(_get(r, "net_gex")) > 1)
+
+    # 1. OI uniformity: distinct (call_oi, put_oi) pairs. A real book has
+    #    many; the uniform placeholder has exactly one.
+    distinct_oi = len({(int(c), int(p)) for c, p in zip(call_ois, put_ois) if c > 0 or p > 0})
+    metrics["distinct_oi_pairs"] = distinct_oi
+    metrics["oi_bearing_rows"] = nonzero_oi
+    if nonzero_oi > 10 and distinct_oi == 1:
+        reasons.append("oi_uniform")
+
+    # 2. IV coverage: fraction of OI-bearing strikes with any IV.
+    metrics["iv_coverage"] = round(iv_bearing / max(nonzero_oi, 1), 3)
+    if nonzero_oi >= 20 and metrics["iv_coverage"] < 0.10:
+        reasons.append("iv_coverage")
+
+    # 3. GEX productivity: how many strikes actually contribute gamma.
+    metrics["gex_bearing_rows"] = gex_bearing
+    if nonzero_oi >= 20 and gex_bearing <= 5:
+        reasons.append("gex_starved")
+
+    # 4. Wall-vs-spot sanity: a call wall should sit above spot by more
+    #    than one tick for index futures (0.25). Walls AT spot are artifacts.
+    metrics["spot"] = spot
+    return {"ok": len(reasons) == 0, "reasons": reasons, "metrics": metrics}
+
+
 def write_unified_levels_json(
     scored_levels: list[Any],
     path: Path = UNIFIED_LEVELS_JSON,

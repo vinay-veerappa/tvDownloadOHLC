@@ -107,6 +107,9 @@ class TOSRTDAdapter:
         self._static_iv: dict[str, float] = {}
         self._live_subscription_count: int = 0
         self._drain_thread: Optional[threading.Thread] = None
+        # ── Health / staleness tracking (self-healing) ──
+        self._last_data_time: float = 0.0   # epoch of last queue message
+        self._drain_dead: bool = False      # drain thread died (data path frozen)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -284,26 +287,39 @@ class TOSRTDAdapter:
     # ------------------------------------------------------------------
 
     def _drain_loop(self) -> None:
-        """Background thread that continuously drains the queue to prevent memory leaks in the child process."""
-        from queue import Empty
+        """Background thread that continuously drains the queue to prevent memory leaks in the child process.
+
+        Self-healing: on any fatal error (EOFError from a dead child,
+        unexpected exception) the thread records the failure and exits, but
+        sets ``_drain_dead`` so the health monitor can detect the frozen
+        data path and trigger a full adapter restart instead of silently
+        serving stale values forever.
+        """
         while self._running:
             try:
                 data = self._data_queue.get(timeout=0.1)
+                self._last_data_time = time.time()
                 if "debug" in data:
                     log.debug("[RTD child] %s", data["debug"])
                     continue
                 if "error" in data:
                     log.error("RTD worker error: %s", data["error"])
+                    self._worker_errors = getattr(self, "_worker_errors", 0) + 1
                     continue
                 with self._latest_lock:
                     self._latest_data.update(data)
             except Empty:
                 continue
             except EOFError:
+                log.error("RTD drain thread: child process closed the queue — marking data path DEAD")
+                with self._latest_lock:
+                    self._drain_dead = True
                 break
             except Exception as e:
                 if self._running:
-                    log.error("Error draining RTD queue: %s", e)
+                    log.error("RTD drain thread error: %s — marking data path DEAD", e)
+                    with self._latest_lock:
+                        self._drain_dead = True
                 break
 
     def get_snapshot(self) -> dict[str, Any]:
@@ -317,16 +333,38 @@ class TOSRTDAdapter:
         with self._latest_lock:
             return dict(self._latest_data)
 
-    def get_futures_price(self, symbol: str) -> Optional[float]:
+    def get_futures_price(
+        self, symbol: str, max_age: Optional[float] = None
+    ) -> Optional[float]:
         """
         Get the latest LAST price for a futures symbol.
 
         Args:
             symbol: Futures symbol, e.g. "/ES" or "/ES:XCME"
+            max_age: Reject the cached price if the data path has been
+                     silent for more than this many seconds. None disables
+                     the check (caller should pass RTD_LAST_MAX_AGE_SECONDS
+                     during RTH).
 
         Returns:
-            Latest price as float, or None if no data yet.
+            Latest price as float, or None if no data or the data path is
+            stale/dead. Returning None (not the stale value) is the whole
+            point — callers fall back to Schwab instead of computing GEX
+            on a frozen price.
         """
+        # Drain thread died → the cache below is frozen. Refuse.
+        if self._drain_dead:
+            return None
+
+        if max_age is not None and self._last_data_time > 0:
+            silent_for = time.time() - self._last_data_time
+            if silent_for > max_age:
+                log.debug(
+                    "RTD data path silent for %.0fs (>%s) — refusing stale price for %s",
+                    silent_for, max_age, symbol,
+                )
+                return None
+
         snapshot = self.get_snapshot()
 
         # Try with exchange suffix
@@ -340,6 +378,27 @@ class TOSRTDAdapter:
             price = snapshot.get(key)
 
         return float(price) if price is not None else None
+
+    def get_health(self) -> dict[str, Any]:
+        """Data-path health for the self-healing monitor.
+
+        Returns a dict describing whether quotes are actually flowing —
+        distinct from ``is_running`` which only checks the child process
+        is alive.
+        """
+        silent_for = (time.time() - self._last_data_time) if self._last_data_time else None
+        return {
+            "process_alive": self.is_running(),
+            "drain_alive": self._drain_thread is not None and self._drain_thread.is_alive(),
+            "drain_dead": self._drain_dead,
+            "last_data_age_seconds": round(silent_for, 1) if silent_for is not None else None,
+            "worker_errors": getattr(self, "_worker_errors", 0),
+            "streaming": (
+                self.is_running()
+                and not self._drain_dead
+                and (self._last_data_time == 0.0 or (silent_for or 1e9) < 60)
+            ),
+        }
 
     def get_option_greeks(self, rtd_symbol: str) -> dict[str, float | int | None]:
         """

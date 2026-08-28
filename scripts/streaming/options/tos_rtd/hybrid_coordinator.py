@@ -25,6 +25,10 @@ from zoneinfo import ZoneInfo
 from ..config import (
     ENABLE_TOS_RTD,
     NY_SESSION_ROLLOVER_TIME,
+    RTD_LAST_MAX_AGE_SECONDS,
+    RTD_OI_SCAN_WAVE_SIZE,
+    RTD_OI_SCAN_WAVE_TIMEOUT,
+    RTD_SPOT_DIVERGENCE_PCT,
     TOS_RTD_HEARTBEAT_MS,
     TOS_RTD_STRIKE_RANGE,
     TOS_RTD_STRIKE_SPACING,
@@ -123,6 +127,7 @@ class HybridCoordinator:
         self._expiry = expiry
         self._adapter: Optional[Any] = None  # TOSRTDAdapter if enabled
         self._schwab_prices: dict[str, float] = {}  # Fallback cache
+        self._divergence_count: dict[str, int] = {}  # RTD-vs-Schwab watchdog
         self._validation_results: list[GreeksValidationResult] = []
         # Cached expiry list from Schwab discovery (avoids re-querying every start)
         self._cached_expiries: list[date] | None = None
@@ -335,39 +340,58 @@ class HybridCoordinator:
         log.info("Interleaved candidates: ES=%d NQ=%d total=%d",
                  len(es_bucket), len(nq_bucket), len(candidate_symbols))
 
-        # Completeness-gated scan: capture OPEN_INT from RTD only.
-        # IV is not cached — it will be subscribed live after the scan.
-        # Use the Schwab futures chain OI data directly instead of scanning
-        # via RTD. The COM topic budget can't handle both ES and NQ
-        # simultaneously (400+ subscriptions), and the Schwab chain already
-        # has OI for all strikes. We only need RTD for live IV streaming.
+        # ── Real OI scan: batched RTD OPEN_INT subscriptions ──────────────
+        # The once-per-session OI book. Subscribe OPEN_INT for candidate
+        # symbols in waves bounded by RTD_OI_SCAN_WAVE_SIZE (COM topic
+        # budget), then collect real OI values. This replaces the previous
+        # uniform-1000 placeholder which made wall/pin selection meaningless.
         raw_oi_map: dict[str, int] = {}
-        for sym in self._symbols:
-            schwab_oi = schwab_hints.get(sym)
-            if not schwab_oi:
-                continue
-            price = futures_prices.get(sym, 0)
-            if not price:
-                continue
-            sc = TOS_RTD_SYMBOL_CONFIG.get(sym, {})
-            sr = sc.get("strike_range", TOS_RTD_STRIKE_RANGE)
-            ss = sc.get("strike_spacing", TOS_RTD_STRIKE_SPACING)
-            tiers = sc.get("strike_tiers")
-            # Build RTD symbols for a wide range around ATM for each key expiry.
-            # Use strike_range=20 to cover ±100 points (enough to include all
-            # Schwab hint strikes which are at 100-pt intervals).
-            wide_sr = max(sr, 20)
-            for exp in key_expiries:
-                option_syms = OptionSymbolBuilder.build_symbols(
-                    sym, exp, price, wide_sr, ss, strike_tiers=tiers
-                )
-                for rtd_sym in option_syms:
-                    raw_oi_map[rtd_sym] = 1000  # uniform OI so filter keeps all
+        scan_symbols = list(candidate_symbols)
+        wave_size = RTD_OI_SCAN_WAVE_SIZE
+        waves = max(1, (len(scan_symbols) + wave_size - 1) // wave_size)
+        log.info(
+            "RTD OI scan: %d candidate symbols in %d wave(s) of up to %d topics",
+            len(scan_symbols), waves, wave_size,
+        )
+        scan_started = time.time()
+        for wave_idx in range(0, len(scan_symbols), wave_size):
+            wave = scan_symbols[wave_idx:wave_idx + wave_size]
+            wave_oi = self._run_oi_scan(wave, timeout=RTD_OI_SCAN_WAVE_TIMEOUT)
+            raw_oi_map.update(wave_oi)
+            got = len(wave_oi)
             log.info(
-                "Schwab OI direct for %s: %d RTD symbols across %d expiries (range=%d, spacing=%.1f)",
-                sym, sum(1 for s in raw_oi_map if self._rtd_symbol_belongs_to(s, sym)),
-                len(key_expiries), wide_sr, ss,
+                "RTD OI wave %d/%d: %d/%d contracts returned non-zero OI",
+                wave_idx // wave_size + 1,
+                (len(scan_symbols) + wave_size - 1) // wave_size,
+                got, len(wave),
             )
+            if wave_idx + wave_size < len(scan_symbols):
+                time.sleep(1.0)  # settle between waves
+
+        real_oi_count = len(raw_oi_map)
+        log.info(
+            "RTD OI scan complete: %d/%d contracts with real non-zero OI",
+            real_oi_count, len(scan_symbols),
+        )
+        if real_oi_count == 0:
+            log.warning(
+                "RTD OI scan returned no data — falling back to Schwab hint "
+                "strikes with rank-weighted OI (degraded mode)"
+            )
+            # Degrade gracefully: keep candidate symbols so IV streaming can
+            # still start, but mark OI as unknown (0). The Top-N filter then
+            # behaves like the old ATM-band behaviour instead of fabricating
+            # numbers.
+            for sym in self._symbols:
+                for rtd_sym in candidate_symbols:
+                    if self._rtd_symbol_belongs_to(rtd_sym, sym):
+                        raw_oi_map.setdefault(rtd_sym, 0)
+            self._scan_quality = {
+                "total_symbols_scanned": len(scan_symbols),
+                "non_zero_count": real_oi_count,
+                "non_zero_pct": 0.0,
+                "degraded": True,
+            }
 
         # Per-symbol OI-weighted Top-N filtering with ATM force-inclusion.
         # Merge with existing cached OI for symbols that the fresh scan
@@ -392,29 +416,29 @@ class HybridCoordinator:
                 )
                 selected_oi[sym] = cached_oi[sym]
 
-        # Degenerate scan guard.
-        total_candidates = len(candidate_symbols)
-        total_nonzero = len(raw_oi_map)
-        non_zero_pct = total_nonzero / total_candidates if total_candidates else 0.0
-        self._scan_quality = {
-            "total_symbols_scanned": total_candidates,
-            "non_zero_count": total_nonzero,
-            "non_zero_pct": round(non_zero_pct, 4),
-        }
+        # Degenerate scan guard (only when we have real OI — the degraded
+        # fallback above already records its own scan_quality).
+        if not self._scan_quality.get("degraded"):
+            total_candidates = len(candidate_symbols)
+            total_nonzero = len(raw_oi_map)
+            non_zero_pct = total_nonzero / total_candidates if total_candidates else 0.0
+            self._scan_quality = {
+                "total_symbols_scanned": total_candidates,
+                "non_zero_count": total_nonzero,
+                "non_zero_pct": round(non_zero_pct, 4),
+            }
 
-        if non_zero_pct < 0.50:
-            log.warning(
-                "OI scan degenerate: only %.0f%% non-zero (%d/%d). "
-                "Merging with existing cache where possible.",
-                non_zero_pct * 100, total_nonzero, total_candidates,
-            )
-            # selected_oi already merged with cached_oi above, so just
-            # check we have *some* data before proceeding.
-            if not selected_oi:
-                log.warning("No OI data from scan or cache — cannot proceed.")
-                self._enabled = False
-                self._adapter = None
-                return
+            if non_zero_pct < 0.05:
+                log.warning(
+                    "OI scan near-empty: only %.0f%% non-zero (%d/%d). "
+                    "Continuing with whatever was captured.",
+                    non_zero_pct * 100, total_nonzero, total_candidates,
+                )
+                if not raw_oi_map:
+                    log.warning("No OI data from scan or cache — cannot proceed.")
+                    self._enabled = False
+                    self._adapter = None
+                    return
 
         # Capture basis at scan time.
         basis_at_scan = self._capture_basis(futures_prices)
@@ -697,66 +721,77 @@ class HybridCoordinator:
             sorted_expiries = sorted(by_expiry.keys())
             front_expiry = sorted_expiries[0] if sorted_expiries else None
 
-            # Front expiry: subscribe IV for all selected front contracts,
-            # capped at ``front_iv_max`` by OI with ATM force-inclusion.
+            # Front expiry: subscribe IV ranked by REAL OI (highest first),
+            # capped at ``front_iv_max``.  ATM is force-included only when
+            # the OI rank didn't already pick it.  With the real OI scan in
+            # place this ranks actual dealer concentration instead of the
+            # old uniform-1000 ordering that degenerated to ATM-only.
             if front_expiry:
                 front_pairs = by_expiry[front_expiry]
-                front_total = len(front_pairs)
-                if front_total <= front_iv_max:
-                    iv_contracts = {rtd_sym for rtd_sym, _ in front_pairs}
+                # ATM pair for the expected-move straddle — force-include.
+                atm_call = min(
+                    (p for p in front_pairs if parse_rtd_option_symbol(p[0]).option_type == "C"),
+                    key=lambda x: abs(parse_rtd_option_symbol(x[0]).strike - spot),
+                    default=None,
+                )
+                atm_put = min(
+                    (p for p in front_pairs if parse_rtd_option_symbol(p[0]).option_type == "P"),
+                    key=lambda x: abs(parse_rtd_option_symbol(x[0]).strike - spot),
+                    default=None,
+                )
+                atm_syms = {p[0] for p in (atm_call, atm_put) if p}
+
+                # Rank by OI descending; when all OI are 0 (degraded mode)
+                # fall back to ATM proximity so coverage never collapses.
+                total_front_oi = sum(oi for _, oi in front_pairs)
+                if total_front_oi > 0:
+                    ranked = sorted(front_pairs, key=lambda x: x[1], reverse=True)
                 else:
-                    # Take top OI, then force-include ATM band.
-                    sorted_front = sorted(front_pairs, key=lambda x: x[1], reverse=True)
-                    iv_contracts = {rtd_sym for rtd_sym, _ in sorted_front[:front_iv_max]}
-                    for rtd_sym, _ in front_pairs:
-                        parsed = parse_rtd_option_symbol(rtd_sym)
-                        if parsed and abs(parsed.strike - spot) <= 2 * spacing:
-                            iv_contracts.add(rtd_sym)
+                    ranked = sorted(front_pairs, key=lambda x: abs(parse_rtd_option_symbol(x[0]).strike - spot))
+                iv_contracts = {rtd_sym for rtd_sym, _ in ranked[:front_iv_max]}
+                # Guarantee ATM pair has IV for the EM straddle.
+                iv_contracts.update(atm_syms)
 
                 for rtd_sym in iv_contracts:
                     live_subscriptions.append((QuoteType.IMPL_VOL, rtd_sym))
 
-                # Front ATM call + put for expected-move straddle cost.
-                atm_contracts: list[tuple[str, float]] = []  # (rtd_sym, distance)
-                for rtd_sym, _ in front_pairs:
-                    parsed = parse_rtd_option_symbol(rtd_sym)
-                    if not parsed:
-                        continue
-                    atm_contracts.append((rtd_sym, abs(parsed.strike - spot)))
-                # Pick closest call and closest put.
-                call_atm = min(
-                    [s for s, d in atm_contracts if parse_rtd_option_symbol(s).option_type == "C"],
-                    key=lambda s: abs(parse_rtd_option_symbol(s).strike - spot),
-                    default=None,
-                )
-                put_atm = min(
-                    [s for s, d in atm_contracts if parse_rtd_option_symbol(s).option_type == "P"],
-                    key=lambda s: abs(parse_rtd_option_symbol(s).strike - spot),
-                    default=None,
-                )
-                if call_atm:
-                    live_subscriptions.append((QuoteType.LAST, call_atm))
-                if put_atm:
-                    live_subscriptions.append((QuoteType.LAST, put_atm))
+                # Front ATM call + put for expected-move straddle cost
+                # (LAST subscription so the straddle price is real, not IV-derived).
+                if atm_call:
+                    live_subscriptions.append((QuoteType.LAST, atm_call[0]))
+                if atm_put:
+                    live_subscriptions.append((QuoteType.LAST, atm_put[0]))
 
-            # Back expiries: subscribe IV to the top OI calls + puts per expiry,
-            # plus force-include the ATM band so we get straddle/EM data.
+            # Back expiries: subscribe IV to the top OI calls + puts per expiry
+            # (ranked by real OI now that the scan captures actual values).
             for exp in sorted_expiries:
                 if exp == front_expiry:
                     continue
                 pairs = by_expiry[exp]
-                calls = sorted(
-                    [p for p in pairs if parse_rtd_option_symbol(p[0]).option_type == "C"],
-                    key=lambda x: x[1],
-                    reverse=True,
-                )[:back_iv_top_n]
-                puts = sorted(
-                    [p for p in pairs if parse_rtd_option_symbol(p[0]).option_type == "P"],
-                    key=lambda x: x[1],
-                    reverse=True,
-                )[:back_iv_top_n]
-                iv_set = {s for s, _ in calls + puts}
-                # Force-include ATM band for back expiries (same logic as front).
+                total_oi = sum(oi for _, oi in pairs)
+                if total_oi > 0:
+                    ranked_calls = sorted(
+                        [p for p in pairs if parse_rtd_option_symbol(p[0]).option_type == "C"],
+                        key=lambda x: x[1],
+                        reverse=True,
+                    )[:back_iv_top_n]
+                    ranked_puts = sorted(
+                        [p for p in pairs if parse_rtd_option_symbol(p[0]).option_type == "P"],
+                        key=lambda x: x[1],
+                        reverse=True,
+                    )[:back_iv_top_n]
+                else:
+                    # Degraded mode: ATM proximity instead of fake OI ranks.
+                    ranked_calls = sorted(
+                        [p for p in pairs if parse_rtd_option_symbol(p[0]).option_type == "C"],
+                        key=lambda x: abs(parse_rtd_option_symbol(x[0]).strike - spot),
+                    )[:back_iv_top_n]
+                    ranked_puts = sorted(
+                        [p for p in pairs if parse_rtd_option_symbol(p[0]).option_type == "P"],
+                        key=lambda x: abs(parse_rtd_option_symbol(x[0]).strike - spot),
+                    )[:back_iv_top_n]
+                iv_set = {s for s, _ in ranked_calls + ranked_puts}
+                # Force-include the ATM band so back-expiry EM stays anchored.
                 for rtd_sym, _ in pairs:
                     parsed = parse_rtd_option_symbol(rtd_sym)
                     if parsed and abs(parsed.strike - spot) <= 2 * spacing:
@@ -1054,6 +1089,16 @@ class HybridCoordinator:
         """
         Get the latest futures price, preferring RTD over Schwab.
 
+        Includes a divergence watchdog: when a fresh Schwab price is known
+        and RTD disagrees by more than RTD_SPOT_DIVERGENCE_PCT, the RTD feed
+        is considered frozen — prefer Schwab and record the divergence so
+        the health monitor can see it.
+
+        The staleness guard is market-aware: when the futures market is
+        closed (weekend from Friday 17:00 ET to Sunday 18:00 ET), a silent
+        data path is EXPECTED, so the max-age check is bypassed rather than
+        rejecting every price and forcing pointless Schwab calls.
+
         Args:
             symbol: Futures symbol, e.g. "/ES"
             schwab_price: Price from Schwab API (if already fetched)
@@ -1065,10 +1110,42 @@ class HybridCoordinator:
         if schwab_price is not None:
             self._schwab_prices[symbol] = schwab_price
 
+        # Market-hours awareness for the staleness guard.
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+        dow = now_et.weekday()
+        market_closed = (
+            (dow == 4 and now_et.hour >= 17) or dow == 5
+            or (dow == 6 and now_et.hour < 18)
+        )
+
         # Try RTD first
         if self.is_rtd_active:
-            rtd_price = self._adapter.get_futures_price(symbol)
+            rtd_price = self._adapter.get_futures_price(
+                symbol, max_age=None if market_closed else RTD_LAST_MAX_AGE_SECONDS
+            )
             if rtd_price is not None and rtd_price > 0:
+                # Divergence watchdog: a live RTD feed must track the market.
+                # If a fresh Schwab quote disagrees materially, RTD is frozen.
+                cached_schwab = self._schwab_prices.get(symbol)
+                if (cached_schwab is not None and cached_schwab > 0
+                        and abs(rtd_price - cached_schwab) / cached_schwab > RTD_SPOT_DIVERGENCE_PCT):
+                    self._divergence_count[symbol] = self._divergence_count.get(symbol, 0) + 1
+                    if self._divergence_count[symbol] <= 3 or self._divergence_count[symbol] % 20 == 0:
+                        log.warning(
+                            "RTD LAST for %s (%.2f) diverges from Schwab (%.2f) by %.2f%% "
+                            "(count=%d) — using Schwab price",
+                            symbol, rtd_price, cached_schwab,
+                            abs(rtd_price - cached_schwab) / cached_schwab * 100,
+                            self._divergence_count[symbol],
+                        )
+                    return HybridFuturesQuote(
+                        symbol=symbol,
+                        price=cached_schwab,
+                        source="schwab",
+                    )
+                # Prices agree — reset the divergence counter.
+                if self._divergence_count.get(symbol):
+                    self._divergence_count[symbol] = 0
                 return HybridFuturesQuote(
                     symbol=symbol,
                     price=rtd_price,

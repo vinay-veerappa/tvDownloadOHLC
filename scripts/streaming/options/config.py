@@ -555,6 +555,21 @@ TOS_RTD_SYMBOL_CONFIG: dict[str, dict] = {
 # When False, RTD provides only real-time price + Greeks drift validation.
 TOS_RTD_GEX_AS_PRIMARY: bool = os.environ.get("TOS_RTD_GEX_AS_PRIMARY", "1").lower() in {"1", "true", "yes"}
 
+# ── RTD self-healing / integrity guards ─────────────────────────────
+# Once-per-session OI scan: subscription waves. Each wave subscribes
+# OPEN_INT for up to RTD_OI_SCAN_WAVE_SIZE symbols and waits up to
+# RTD_OI_SCAN_WAVE_TIMEOUT seconds for responses before collecting.
+RTD_OI_SCAN_WAVE_SIZE: int = int(os.environ.get("RTD_OI_SCAN_WAVE_SIZE", "150"))
+RTD_OI_SCAN_WAVE_TIMEOUT: float = float(os.environ.get("RTD_OI_SCAN_WAVE_TIMEOUT", "20"))
+
+# Futures LAST staleness guard: during RTH a LAST quote older than this
+# (seconds) is treated as frozen and rejected in favour of Schwab fallback.
+RTD_LAST_MAX_AGE_SECONDS: float = float(os.environ.get("RTD_LAST_MAX_AGE_SECONDS", "120"))
+
+# Spot divergence watchdog: if RTD LAST and the Schwab REST quote differ by
+# more than this fraction, RTD is considered frozen (0.002 = 0.2%).
+RTD_SPOT_DIVERGENCE_PCT: float = float(os.environ.get("RTD_SPOT_DIVERGENCE_PCT", "0.002"))
+
 # Legacy diagnostic features.  Leave disabled in production.
 TOS_RTD_ENABLE_DRIFT_VALIDATION: bool = os.environ.get("TOS_RTD_ENABLE_DRIFT_VALIDATION", "0").lower() in {"1", "true", "yes"}
 
