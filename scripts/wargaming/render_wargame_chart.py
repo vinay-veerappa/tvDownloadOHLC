@@ -67,12 +67,18 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     start_dt = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(18, 0)), tz="America/New_York")
 
     chart_df = df_1m[(df_1m.index >= start_dt) & (df_1m.index <= cutoff_dt)].copy()
+    chart_df = chart_df[~chart_df.index.duplicated(keep='last')].sort_index()
 
-    # Convert candles to Lightweight Charts JSON format
+    # Convert candles to Lightweight Charts JSON format (strictly ascending timestamps)
     candles_data = []
+    seen_ts = set()
     for ts, row in chart_df.iterrows():
+        unix_sec = int(ts.timestamp())
+        if unix_sec in seen_ts:
+            continue
+        seen_ts.add(unix_sec)
         candles_data.append({
-            "time": int(ts.timestamp()),
+            "time": unix_sec,
             "open": round(float(row["open"]), 2),
             "high": round(float(row["high"]), 2),
             "low": round(float(row["low"]), 2),
@@ -80,6 +86,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
         })
 
     candles_json = json.dumps(candles_data)
+
 
     p12_pos = "ABOVE" if p12["diff_pts"] >= 0 else "BELOW"
     bias_color = "#22c55e" if p12["bias"] == "BULLISH" else "#ef4444"
@@ -295,84 +302,107 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     </div>
 
     <script>
-        const chartContainer = document.getElementById('chart-container');
-        const chart = LightweightCharts.createChart(chartContainer, {{
-            width: chartContainer.clientWidth,
-            height: 600,
-            layout: {{
-                background: {{ color: '#111827' }},
-                textColor: '#9ca3af',
-            }},
-            grid: {{
-                vertLines: {{ color: '#1f2937' }},
-                horzLines: {{ color: '#1f2937' }},
-            }},
-            timeScale: {{
-                timeVisible: true,
-                secondsVisible: false,
-                borderColor: '#1f2937',
-            }},
-            rightPriceScale: {{
-                borderColor: '#1f2937',
-            }},
-        }});
+        document.addEventListener('DOMContentLoaded', () => {{
+            try {{
+                const chartContainer = document.getElementById('chart-container');
+                if (!chartContainer) return;
 
-        const candleSeries = chart.addCandlestickSeries({{
-            upColor: '#10b981',
-            downColor: '#ef4444',
-            borderVisible: false,
-            wickUpColor: '#10b981',
-            wickDownColor: '#ef4444',
-        }});
+                const chart = LightweightCharts.createChart(chartContainer, {{
+                    width: chartContainer.clientWidth || 1000,
+                    height: 600,
+                    layout: {{
+                        background: {{ color: '#111827' }},
+                        textColor: '#9ca3af',
+                    }},
+                    grid: {{
+                        vertLines: {{ color: '#1f2937' }},
+                        horzLines: {{ color: '#1f2937' }},
+                    }},
+                    timeScale: {{
+                        timeVisible: true,
+                        secondsVisible: false,
+                        borderColor: '#1f2937',
+                    }},
+                    rightPriceScale: {{
+                        borderColor: '#1f2937',
+                    }},
+                }});
 
-        const data = {candles_json};
-        candleSeries.setData(data);
+                const seriesOptions = {{
+                    upColor: '#10b981',
+                    downColor: '#ef4444',
+                    borderVisible: false,
+                    wickUpColor: '#10b981',
+                    wickDownColor: '#ef4444',
+                }};
 
-        // Horizontal Price Rays
-        const p12Mid = {p12['mid']};
-        const p12High = {p12['high']};
-        const p12Low = {p12['low']};
-        const midnight = {anchors['midnight_open'] if anchors['midnight_open'] else 'null'};
+                // Universal support for Lightweight Charts v4 and v5
+                const candleSeries = (typeof chart.addCandlestickSeries === 'function')
+                    ? chart.addCandlestickSeries(seriesOptions)
+                    : chart.addSeries(LightweightCharts.CandlestickSeries, seriesOptions);
 
-        candleSeries.createPriceLine({{
-            price: p12Mid,
-            color: '#f59e0b',
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Solid,
-            title: 'P12 MIDLINE',
-        }});
+                const data = {candles_json};
+                candleSeries.setData(data);
+                chart.timeScale().fitContent();
 
-        candleSeries.createPriceLine({{
-            price: p12High,
-            color: '#ef4444',
-            lineWidth: 1,
-            lineStyle: LightweightCharts.LineStyle.Dashed,
-            title: 'P12 HIGH',
-        }});
+                // Horizontal Price Rays
+                const p12Mid = {p12['mid']};
+                const p12High = {p12['high']};
+                const p12Low = {p12['low']};
+                const midnight = {anchors['midnight_open'] if anchors['midnight_open'] else 'null'};
 
-        candleSeries.createPriceLine({{
-            price: p12Low,
-            color: '#10b981',
-            lineWidth: 1,
-            lineStyle: LightweightCharts.LineStyle.Dashed,
-            title: 'P12 LOW',
-        }});
+                const solidStyle = (LightweightCharts.LineStyle && LightweightCharts.LineStyle.Solid !== undefined) ? LightweightCharts.LineStyle.Solid : 0;
+                const dashedStyle = (LightweightCharts.LineStyle && LightweightCharts.LineStyle.Dashed !== undefined) ? LightweightCharts.LineStyle.Dashed : 2;
+                const dottedStyle = (LightweightCharts.LineStyle && LightweightCharts.LineStyle.Dotted !== undefined) ? LightweightCharts.LineStyle.Dotted : 1;
 
-        if (midnight !== null) {{
-            candleSeries.createPriceLine({{
-                price: midnight,
-                color: '#3b82f6',
-                lineWidth: 1,
-                lineStyle: LightweightCharts.LineStyle.Dotted,
-                title: 'MIDNIGHT OPEN',
-            }});
-        }}
+                candleSeries.createPriceLine({{
+                    price: p12Mid,
+                    color: '#f59e0b',
+                    lineWidth: 2,
+                    lineStyle: solidStyle,
+                    title: 'P12 MIDLINE',
+                }});
 
-        // Auto resize
-        window.addEventListener('resize', () => {{
-            chart.applyOptions({{ width: chartContainer.clientWidth }});
+                candleSeries.createPriceLine({{
+                    price: p12High,
+                    color: '#ef4444',
+                    lineWidth: 1,
+                    lineStyle: dashedStyle,
+                    title: 'P12 HIGH',
+                }});
+
+                candleSeries.createPriceLine({{
+                    price: p12Low,
+                    color: '#10b981',
+                    lineWidth: 1,
+                    lineStyle: dashedStyle,
+                    title: 'P12 LOW',
+                }});
+
+                if (midnight !== null) {{
+                    candleSeries.createPriceLine({{
+                        price: midnight,
+                        color: '#3b82f6',
+                        lineWidth: 1,
+                        lineStyle: dottedStyle,
+                        title: 'MIDNIGHT OPEN',
+                    }});
+                }}
+
+                // Auto resize
+                window.addEventListener('resize', () => {{
+                    chart.applyOptions({{ width: chartContainer.clientWidth }});
+                }});
+            }} catch (err) {{
+                console.error("Failed to render chart:", err);
+                const errBox = document.getElementById('chart-container');
+                if (errBox) {{
+                    errBox.innerHTML = '<div style="color:#ef4444;padding:20px;font-family:monospace;">Error rendering chart: ' + err.message + '</div>';
+                }}
+            }}
         }});
     </script>
+
 </body>
 </html>
 """
