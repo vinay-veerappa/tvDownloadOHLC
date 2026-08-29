@@ -86,3 +86,16 @@ def test_shadow_evaluation_underpowered_inconclusive_state(temp_db):
     )
     assert res_under.pipeline_stage == "INCONCLUSIVE_WAITING"
     assert res_under.statistical_power < 0.80
+
+
+def test_shadow_evaluation_without_preregistration_fails_closed(temp_db):
+    """Tests that evaluating on shadow data without prior preregistration strictly raises PreregistrationRequiredError."""
+    with pytest.raises(PreregistrationRequiredError):
+        ShadowGate.evaluate_candidate_finding(
+            finding_id="unregistered_finding_999",
+            model_version_id="MOD_V3",
+            sample_size=100,
+            realized_metric=0.30,
+            fdr_q_value=0.01,
+            db_path=temp_db
+        )

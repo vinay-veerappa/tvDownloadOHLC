@@ -4,8 +4,8 @@ Enforces:
 1. Strict as-of bar-close decision contracts with direction checks (zero future lookahead).
 2. Deduplication key (session_date, ticker, strategy_version_id, bar_timestamp_utc).
 3. Production-grade mechanical disposition derivation:
-   - EXECUTED: Order filled within validity window matching direction and trigger price (+- 2 bps).
-   - PASSED: Trader was active in the market during the window, but did not execute this signal (or executed another strategy).
+   - EXECUTED: Order filled within forward validity window matching direction and trigger price (+- 2 bps).
+   - PASSED: Trader was active in the market during the signal window (0 <= time_diff <= expiry_seconds), but did not execute this signal (or executed another strategy).
    - MISSED: Trader was connected but no trade was taken during the entire signal expiry window, or RiskGuard was locked out.
    - OFFLINE: Market session had zero broker connectivity or platform heartbeat during the signal window.
 4. Intrabar ambiguity preservation for 1m bars touching stop and target.
@@ -143,15 +143,13 @@ class OpportunityLogger:
                     ex_ts = parse_iso_utc(ex["event_timestamp_utc"])
                     time_diff = (ex_ts - opp_ts).total_seconds()
                     
-                    if abs(time_diff) <= expiry_seconds:
+                    if 0 <= time_diff <= expiry_seconds:
                         other_trade_taken_in_window = True
                         
-                    if ex["execution_id"] in matched_exec_ids:
-                        continue
-                        
-                    if 0 <= time_diff <= expiry_seconds:
+                        if ex["execution_id"] in matched_exec_ids:
+                            continue
+                            
                         action = ex["order_action"].upper()
-                        # Direction match
                         dir_ok = (direction == "LONG" and action in ("BUY", "LONG")) or \
                                  (direction == "SHORT" and action in ("SELL", "SELL_SHORT", "SHORT"))
                         if dir_ok:
@@ -176,7 +174,7 @@ class OpportunityLogger:
                     state = "PASSED"
                     exec_id = None
                     latency = None
-                    reason = "Trader was active in session but passed this signal in favor of alternative setup"
+                    reason = "Trader was active in session window but passed this signal in favor of alternative setup"
                 else:
                     state = "MISSED"
                     exec_id = None

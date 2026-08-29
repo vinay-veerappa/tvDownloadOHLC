@@ -1,7 +1,8 @@
 """Preregistered Shadow Validation Gate & Access Custody Protocol (Milestone 3.3).
 
 Enforces:
-1. Preregistration First: Findings must be preregistered with frozen benchmark and MDE before shadow evaluation.
+1. Mandatory Preregistration: Findings MUST be preregistered with frozen benchmark and MDE before shadow evaluation.
+   No inline-registration escape hatches are permitted.
 2. 1-Time Sealed Evaluation: Terminal states (PROMOTED, REJECTED, INVALID_TEST) cannot be re-evaluated.
 3. Minimum Statistical Power >= 0.80 and Minimum Detectable Effect (MDE).
 4. Full access custody audit logging in candidate_finding_events.
@@ -101,14 +102,13 @@ class ShadowGate:
         sample_size: int,
         realized_metric: float,
         fdr_q_value: float,
-        benchmark_metric: Optional[float] = None,
-        effect_size_d: Optional[float] = None,
         actor: str = "RESEARCH_AGENT",
         db_path: Optional[Union[str, Path]] = None
     ) -> ShadowEvaluationResult:
         """Evaluates a candidate finding on sealed shadow data and transitions candidate_finding_events.
         
-        Enforces 1-time sealed evaluation rule and consumes preregistered benchmark.
+        Enforces 1-time sealed evaluation rule and strictly consumes preregistered benchmark.
+        No inline parameter overrides permitted.
         """
         with get_db_connection(db_path) as conn:
             cur = conn.execute(
@@ -121,23 +121,25 @@ class ShadowGate:
             )
             row = cur.fetchone()
             
-            # If not preregistered, check if caller provided initial registration
             if not row:
-                if benchmark_metric is None or effect_size_d is None:
-                    raise PreregistrationRequiredError(
-                        f"Finding '{finding_id}' has not been preregistered and benchmark parameters were not provided."
-                    )
-                sealed_benchmark = benchmark_metric
-                sealed_effect_d = effect_size_d
-            else:
-                prev_stage = row["pipeline_stage"]
-                if prev_stage in ("PROMOTED", "REJECTED", "INVALID_TEST"):
-                    raise ShadowGateLockedError(
-                        f"Candidate finding '{finding_id}' has already been evaluated to terminal stage '{prev_stage}' and cannot be re-evaluated."
-                    )
-                prev_json = json.loads(row["evaluation_result_json"]) if row["evaluation_result_json"] else {}
-                sealed_benchmark = prev_json.get("benchmark_metric", benchmark_metric if benchmark_metric is not None else 0.0)
-                sealed_effect_d = prev_json.get("expected_effect_size_d", effect_size_d if effect_size_d is not None else 0.5)
+                raise PreregistrationRequiredError(
+                    f"Candidate finding '{finding_id}' must be preregistered via preregister_candidate_finding() before evaluation on sealed shadow data."
+                )
+                
+            prev_stage = row["pipeline_stage"]
+            if prev_stage in ("PROMOTED", "REJECTED", "INVALID_TEST"):
+                raise ShadowGateLockedError(
+                    f"Candidate finding '{finding_id}' has already been evaluated to terminal stage '{prev_stage}' and cannot be re-evaluated."
+                )
+                
+            prev_json = json.loads(row["evaluation_result_json"]) if row["evaluation_result_json"] else {}
+            if "benchmark_metric" not in prev_json or "expected_effect_size_d" not in prev_json:
+                raise PreregistrationRequiredError(
+                    f"Candidate finding '{finding_id}' preregistration payload is missing sealed benchmark_metric or expected_effect_size_d."
+                )
+                
+            sealed_benchmark = float(prev_json["benchmark_metric"])
+            sealed_effect_d = float(prev_json["expected_effect_size_d"])
 
             power = cls.calculate_statistical_power(sample_size, sealed_effect_d)
             

@@ -41,7 +41,7 @@ def test_record_opportunity_and_derive_all_disposition_states(temp_db):
     session_date = "2026-08-28"
     ticker = "NQ1"
     
-    # 1. Opportunity 1: Executed (Matched fill)
+    # 1. Opportunity 1: Executed (Matched fill at 13:35:10)
     opp_1 = SignalOpportunity(
         opportunity_id="opp-test-1",
         session_date=session_date,
@@ -59,7 +59,7 @@ def test_record_opportunity_and_derive_all_disposition_states(temp_db):
     )
     OpportunityLogger.record_opportunity(opp_1, db_path=temp_db)
     
-    # 2. Opportunity 2: Passed (Trader took another trade in window)
+    # 2. Opportunity 2: Passed (Trader executed BUY on another strategy at 13:36:30 during opp_2's window)
     opp_2 = SignalOpportunity(
         opportunity_id="opp-test-2",
         session_date=session_date,
@@ -77,7 +77,7 @@ def test_record_opportunity_and_derive_all_disposition_states(temp_db):
     )
     OpportunityLogger.record_opportunity(opp_2, db_path=temp_db)
     
-    # 3. Opportunity 3: Missed (Trader online, no executions anywhere in window)
+    # 3. Opportunity 3: Missed (Trader online at 15:00, no executions anywhere in window)
     opp_3 = SignalOpportunity(
         opportunity_id="opp-test-3",
         session_date=session_date,
@@ -95,8 +95,9 @@ def test_record_opportunity_and_derive_all_disposition_states(temp_db):
     )
     OpportunityLogger.record_opportunity(opp_3, db_path=temp_db)
     
-    # Insert Execution matching Opp 1
+    # Insert Executions
     with sqlite3.connect(str(temp_db)) as conn:
+        # Fill matching Opp 1
         conn.execute(
             """
             INSERT INTO execution_events (
@@ -104,6 +105,16 @@ def test_record_opportunity_and_derive_all_disposition_states(temp_db):
                 broker_order_id, order_action, order_type, quantity, fill_price,
                 strategy_version_id, idempotency_key, event_timestamp_utc
             ) VALUES ('exec-1', '2026-08-28', 'NQ1', 'ACC1', 'b-1', 'b-ord-1', 'BUY', 'LIMIT', 1, 20000.5, 'STRAT_ALN_LPEU_V0_1', 'idemp-1', '2026-08-28T13:35:10Z');
+            """
+        )
+        # Fill in Opp 2 window but opposite direction (BUY) on another strategy
+        conn.execute(
+            """
+            INSERT INTO execution_events (
+                execution_id, session_date, ticker, account_id, broker_execution_id,
+                broker_order_id, order_action, order_type, quantity, fill_price,
+                strategy_version_id, idempotency_key, event_timestamp_utc
+            ) VALUES ('exec-2', '2026-08-28', 'NQ1', 'ACC1', 'b-2', 'b-ord-2', 'BUY', 'LIMIT', 1, 20015.0, 'STRAT_OTHER_V1', 'idemp-2', '2026-08-28T13:36:30Z');
             """
         )
         

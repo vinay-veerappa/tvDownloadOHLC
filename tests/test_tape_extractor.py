@@ -9,8 +9,10 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pytest
 
+from scripts.derived.precompute_daily_classification import analyze_day
 from scripts.trading_brain.db.init_db import init_trading_brain_db
 from scripts.trading_brain.tape.tape_extractor import TapeMetricsExtractor
+from scripts.utils.live_storage_resolver import load_session_bars
 
 EASTERN_TZ = ZoneInfo("America/New_York")
 
@@ -54,6 +56,29 @@ def test_canonical_day_type_classification_and_tape_record(temp_db):
     assert metrics.quality_state == "CLEAN"
     assert metrics.day_type_classification in ("R1", "R2", "DNP", "DWP", "ROTATIONAL_CHOP")
     assert metrics.session_range_bps > 0.0
+
+
+def test_classifier_parity_with_canonical_precompute():
+    """Parity Test: verifies TapeMetricsExtractor (4_CLASS taxonomy) matches canonical analyze_day 100% on golden historical dates."""
+    golden_dates = ["2026-08-28", "2026-08-27", "2026-08-26", "2026-08-25"]
+    
+    for d in golden_dates:
+        df = load_session_bars("NQ1", d)
+        
+        # Run canonical analyze_day
+        df_canon = df.copy()
+        df_canon.index = df_canon["dt_et"]
+        df_canon["time_only"] = df_canon["dt_et"].dt.time
+        canon_res = analyze_day(d, df_canon, "NQ1")
+        assert canon_res is not None
+        canon_type = canon_res["type"]
+        if canon_type == "Range 1":
+            canon_type = "R1"
+            
+        # Run TapeMetricsExtractor 4-class
+        tape_type_4class = TapeMetricsExtractor.classify_day_type(df, ticker="NQ1", taxonomy="4_CLASS")
+        
+        assert tape_type_4class == canon_type, f"Parity mismatch on {d}: canonical={canon_type}, tape_extractor={tape_type_4class}"
 
 
 def test_scheduled_short_session_handling():

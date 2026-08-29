@@ -4,8 +4,15 @@ Calculates:
 1. RTH & Session OHLC (Open @ 09:30 ET, High, Low, RTH Close @ 16:00 ET, Session Close @ 16:15 ET).
 2. Canonical Day Type Classification across 5 MECE classes (R1, R2, DNP, DWP, ROTATIONAL_CHOP)
    mirroring canonical scripts/derived/precompute_daily_classification.py & daily_classification_v2.pine.
+   - 4-Class Canonical Crosswalk:
+     * R2 -> Broke OR and returned into OR after 11:00 AM NY (min_sep >= 1 hr).
+     * DWP -> Broke OR, did not return, had pullback before EOD.
+     * DNP -> Broke OR, did not return, straight trend without pullback.
+     * R1 -> Non-breaking session with wide oscillation testing OR boundaries (touch_count >= 4).
+     * ROTATIONAL_CHOP -> Non-breaking coiled session (touch_count < 4). In canonical 4-class taxonomy,
+       both R1 and ROTATIONAL_CHOP map to 'R1' (Range 1).
 3. HOD / LOD timestamps in UTC and session range in basis points (bps).
-4. Bar completeness, scheduled short session handling, and SHA-256 content hashes.
+4. Bar completeness, scheduled short session handling (205-215 bars), and SHA-256 content hashes.
 5. Saves versioned, revisable records to session_tape_actuals.
 """
 
@@ -93,14 +100,18 @@ class TapeMetricsExtractor:
     def classify_day_type(
         cls,
         df_rth: pd.DataFrame,
-        ticker: str = "NQ1"
+        ticker: str = "NQ1",
+        taxonomy: str = "5_CLASS"               # '5_CLASS' or '4_CLASS'
     ) -> str:
         """Canonical Day Type Classification mirroring scripts/derived/precompute_daily_classification.py.
         
-        Evaluates Opening Range (09:30 1m bar), Breaks, Touches, Returns (for R2), and Pullbacks (for DWP/DNP).
+        Crosswalk:
+        - 4_CLASS: Returns ['R1', 'R2', 'DNP', 'DWP'] matching legacy precompute_daily_classification.
+        - 5_CLASS: Returns ['R1', 'R2', 'DNP', 'DWP', 'ROTATIONAL_CHOP'] splitting non-breaking days into
+          R1 (touch_count >= 4) vs ROTATIONAL_CHOP (touch_count < 4).
         """
         if df_rth.empty:
-            return "ROTATIONAL_CHOP"
+            return "ROTATIONAL_CHOP" if taxonomy == "5_CLASS" else "R1"
             
         cols = {c.lower(): c for c in df_rth.columns}
         h_col = cols.get("high", "high")
@@ -116,7 +127,7 @@ class TapeMetricsExtractor:
         # 2. Reconstruct Boxes
         boxes = cls.get_session_boxes(df_rth)
         if not boxes:
-            return "ROTATIONAL_CHOP"
+            return "ROTATIONAL_CHOP" if taxonomy == "5_CLASS" else "R1"
             
         # Tick tolerance
         tick_size = 0.01 if "CL" in ticker else (0.1 if ("GC" in ticker or "RTY" in ticker) else (1.0 if "YM" in ticker else 0.25))
@@ -190,7 +201,7 @@ class TapeMetricsExtractor:
         elif broke_or:
             return "DWP" if has_pb else "DNP"
         else:
-            return "ROTATIONAL_CHOP"
+            return "ROTATIONAL_CHOP" if taxonomy == "5_CLASS" else "R1"
 
     @classmethod
     def extract_from_dataframe(
@@ -231,10 +242,10 @@ class TapeMetricsExtractor:
         
         range_bps = ((session_high - session_low) / session_open) * 10000.0 if session_open > 0 else 0.0
         
-        day_type = cls.classify_day_type(df_rth, ticker=ticker)
+        day_type = cls.classify_day_type(df_rth, ticker=ticker, taxonomy="5_CLASS")
         
         actual_bars = len(df_rth)
-        # Scheduled half-day handling (e.g. 210 bars 09:30 to 13:00)
+        # Scheduled half-day handling (205-215 bars, e.g. 09:30 to 13:00)
         if actual_bars >= 385:
             quality = "CLEAN"
             expected_bars = 390

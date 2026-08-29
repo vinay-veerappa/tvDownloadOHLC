@@ -240,7 +240,7 @@ CREATE TABLE IF NOT EXISTS session_tape_actuals (
     expected_bar_count INTEGER,
     actual_bar_count INTEGER,
     content_hash TEXT NOT NULL,
-    quality_state TEXT NOT NULL,               -- 'CLEAN', 'SUSPECT_TICKS', 'INCOMPLETE_BARS', 'LEGACY_UNVERIFIED'
+    quality_state TEXT NOT NULL,               -- 'CLEAN', 'SUSPECT_TICKS', 'INCOMPLETE_BARS', 'SCHEDULED_SHORT_SESSION', 'LEGACY_UNVERIFIED'
     supersedes_actual_id TEXT,
     received_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
