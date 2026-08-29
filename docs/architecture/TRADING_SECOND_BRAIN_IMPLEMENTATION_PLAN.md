@@ -1,10 +1,10 @@
 # 🛠️ Trading Second Brain: Master Implementation Plan
 
-> **Document Version**: 5.0.0 (Execution-Certified Specification & Preregistered Contract)  
+> **Document Version**: 5.1.0 (Approved Implementation Contract & Phased Roadmap)  
 > **Status**: Canonical Phased Engineering Roadmap & Review Document  
 > **Architecture Reference**: [`docs/architecture/TRADING_SECOND_BRAIN_MASTER_ARCHITECTURE.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/TRADING_SECOND_BRAIN_MASTER_ARCHITECTURE.md) (v4.3.0)  
 > **Location**: `docs/architecture/TRADING_SECOND_BRAIN_IMPLEMENTATION_PLAN.md`  
-> **Core Operating Principle**: *Construct the verified 18-table schema and immutable plan ledger first. Prove legacy reconciliation with transactional outbox replay and rollback fences. Guarantee server-enforced cutoff gates, as-of decision time contracts, and under 5 minutes of daily operator review before enabling downstream evaluation or research gates.*
+> **Core Operating Principle**: *Construct the verified 21-table schema and immutable plan ledger first. Implement and verify canonical producers in shadow mode. Prove legacy reconciliation with transactional outbox replay and rollback fences before live cutover. Guarantee server-enforced cutoff gates, as-of decision time contracts, and under 5 minutes of daily operator review before enabling downstream evaluation or research gates.*
 
 ---
 
@@ -18,14 +18,14 @@ The implementation is structured into **five sequential, independently testable 
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
   PHASE 0: LOW-MANUAL-INPUT CAPTURE SPINE & ACID DATABASE FOUNDATION [CANDIDATE SPINE]
-  • M0.1: Canonical SQLite Schema & 30-Trigger Immutability Matrix (`trading_brain.sqlite` - 18 tables)
+  • M0.1: Canonical SQLite Schema & 34-Trigger Immutability Matrix (`trading_brain.sqlite` - 21 tables)
   • M0.2: Immutable Plan Snapshots, Revisions & Deterministic `get_plan_as_of` Resolver (Prisma adapter)
   • M0.3a: Shadow Legacy Data Import & Dual-Hash Checksum Verification
-  • M0.3b: Transactional Outbox Projector, Writer Cutover & Rollback Fence
-  • M0.4: Two-Phase Sealed Forecast Snapshot Registrar (Database-clock `received_at_utc`)
+  • M0.4: Two-Phase Sealed Forecast Snapshot Registrar (`create_forecast_run` + commit)
   • M0.5: As-Of Signal Opportunity Logger (Frozen `STRATEGY_REGISTRY_V0` + decision_time_utc)
-  • M0.6: Hardened NT8 Broker Ingestion (Lossless fills via `nt_fill_events` + durable interventions)
+  • M0.6: Hardened NT8 Ingestion (Lossless fills via `nt_fill_events` + durable interventions)
   • M0.7: Measured Tape Actuals Extractor (`live_storage_resolver.py` + explicit ingest manifest)
+  • M0.3b: Transactional Outbox Projector, Verified Rollback Fence & Canonical Writer Cutover
   • M0.8: Operational Verification Gate -> `OPERATIONALLY_ACCEPTED_CAPTURE_V1` (6 scenarios + soak)
   
                                   │ [Operational Gate: Scenario Suite Pass + 10 Live Sessions]
@@ -39,9 +39,9 @@ The implementation is structured into **five sequential, independently testable 
                                   ▼
   PHASE 2: MINUTE-SCALE FEEDBACK & BLINDED DELIBERATE PRACTICE
   • M2.1: Python Post-Submission Deviation Annotator (`deviation_annotator.py`)
-  • M2.2: Cross-Repository C# RiskGuard Plan-Friction Addon (`nt8-riskguard/addons/` milestone)
+  • M2.2: Cross-Repository C# RiskGuard & MCP Plan Push Addon (`nt8-riskguard` + `nt8-mcp-bridge`)
   • M2.3: Blinded Deliberate-Practice Replay Engine (Hidden dates/outcomes, locked commitments, split custody)
-  • M2.4: Recurring-Error Targeted Drill Generator (Automated practice curriculum from delta logs)
+  • M2.4: Recurring-Error Targeted Drill Generator (User-controlled practice curriculum from delta logs)
   
                                   │
                                   ▼
@@ -67,14 +67,14 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 
 ---
 
-### Milestone 0.1: Canonical SQLite Schema & Complete Table Manifest (18 Tables)
+### Milestone 0.1: Canonical SQLite Schema & Complete Table Manifest (21 Tables)
 * **Target Paths**:
-  * `scripts/trading_brain/db/schema.sql`: Complete DDL for all 18 tables.
+  * `scripts/trading_brain/db/schema.sql`: Complete DDL for all 21 tables.
   * `scripts/trading_brain/db/init_db.py`: Initializer with WAL mode, busy timeout, and foreign key verification (`PRAGMA foreign_keys = ON`).
   * `scripts/trading_brain/db/connection.py`: Thread-safe context manager enforcing foreign key constraints on every connection.
   * `tests/test_trading_brain_db.py`: Schema and trigger test suite registered in `pytest`.
 * **Database Location**: `data/wargaming/db/trading_brain.sqlite`.
-* **Canonical 18-Table Schema Manifest**:
+* **Canonical 21-Table Schema Manifest**:
 
 | Table Name | Schema Classification | Immutability Protection | Role & Description |
 | :--- | :--- | :---: | :--- |
@@ -95,18 +95,22 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 | **`candidate_finding_events`**| Transition Ledger | 2 Triggers (UP/DEL) | Append-only review history for staged statistical hypotheses. |
 | **`strategy_versions`** | Immutable Version Registry | 2 Triggers (UP/DEL) | Frozen strategy rules, parameter hashes, and execution policies. |
 | **`model_versions`** | Immutable Version Registry | 2 Triggers (UP/DEL) | Frozen model weights, feature manifests, and calibration states. |
+| **`forecast_runs`** | Operational Staging | State Machine | Pre-commit forecast execution state machine (`CREATED` -> `INPUTS_SEALED` -> `COMMITTED`). |
+| **`forecast_run_inputs`** | Operational Staging | Append-Only | Immutable snapshot of sealed input references and checksums per run. |
+| **`legacy_projection_outbox`** | Operational Staging | State Machine | Transactional outbox for asynchronous projection to legacy DBs. |
 | **`broker_ingest_state`** | Operational State | Direct Schema | Cursor and pagination checkpoint state for broker adapters. |
 
-* **Immutability Protection Count**: Exactly **15 tables** are protected by paired `BEFORE UPDATE` and `BEFORE DELETE` triggers, totaling **30 triggers**.
+* **Immutability Protection Count**: Exactly **17 tables** are protected by paired `BEFORE UPDATE` and `BEFORE DELETE` triggers, totaling **34 triggers**.
 * **Review Queue Current-State Projections**:
   * `v_unmatched_links_open`: Evaluates current unresolved state from `unmatched_link_events`.
   * `v_candidate_findings_staged`: Evaluates active hypothesis pipeline from `candidate_finding_events`.
+* **Trust Boundary Contract**: All evidence insertions must route through Python service classes (`PlanAdapter`, `ForecastRegistrar`) which construct SQL omitting receipt timestamp columns, allowing SQLite `CURRENT_TIMESTAMP` to bind server time. Direct raw SQL inserts bypassing services are prohibited by application policy.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_trading_brain_db.py`
   * Assertions:
-    - All 18 tables initialize cleanly with foreign keys enforced.
-    - All 30 triggers exist and raise immediate SQLite exceptions on `UPDATE` or `DELETE`.
-    - Unique partial index permits exactly one `LIVE_PRODUCTION` forecast per `(session_date, ticker, effective_cutoff_utc)`.
+    - All 21 tables initialize cleanly with foreign keys enforced.
+    - All 34 triggers exist and raise immediate SQLite exceptions on `UPDATE` or `DELETE`.
+    - Partial unique index permits exactly one `LIVE_PRODUCTION` forecast per `(session_date, ticker, effective_cutoff_utc)`.
 
 ---
 
@@ -117,6 +121,7 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
   CREATE TABLE plan_snapshots (
       plan_snapshot_id TEXT PRIMARY KEY,        -- UUID v4
       plan_family_id TEXT NOT NULL,             -- UUID grouping all revisions for (session_date, ticker)
+      revision_seq INTEGER NOT NULL,            -- Monotonic 1-indexed revision sequence
       session_date DATE NOT NULL,
       ticker TEXT NOT NULL,
       preparation_cutoff_utc TIMESTAMP NOT NULL,
@@ -137,7 +142,8 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
       provenance_class TEXT NOT NULL,           -- 'EX_ANTE_DECLARED' or 'POST_HOC_RECONSTRUCTION'
       created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (supersedes_plan_snapshot_id) REFERENCES plan_snapshots(plan_snapshot_id),
-      CONSTRAINT ck_no_self_supersession CHECK (supersedes_plan_snapshot_id <> plan_snapshot_id)
+      CONSTRAINT ck_no_self_supersession CHECK (supersedes_plan_snapshot_id <> plan_snapshot_id),
+      UNIQUE(plan_family_id, revision_seq)
   );
 
   CREATE TABLE plan_lifecycle_events (
@@ -177,8 +183,8 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
          with recorded_at_utc <= :decision_time_utc.
       3. Filter out snapshots whose ID is referenced as supersedes_plan_snapshot_id by any newer 
          valid snapshot received by :decision_time_utc.
-      4. Deterministic tie-breaker for remaining eligible snapshots:
-         ORDER BY received_at_utc DESC, plan_snapshot_id DESC LIMIT 1.
+      4. Deterministic authority resolution:
+         ORDER BY received_at_utc DESC, revision_seq DESC LIMIT 1.
       5. Attach all plan_amendments for this snapshot where received_at_utc <= :decision_time_utc 
          AND effective_at_utc <= :decision_time_utc ORDER BY amendment_seq ASC.
       6. Invariant: Post-hoc reconstructions can NEVER supersede an ex-ante plan.
@@ -208,47 +214,49 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 
 ---
 
-### Milestone 0.3b: Transactional Outbox Projector, Writer Cutover & Rollback Fence
-* **Target Path**: `scripts/trading_brain/migrations/outbox_projector.py`
-* **Outbox Architecture for Rollback Guarantee**:
-  ```
-  Canonical Writer Transaction in trading_brain.sqlite:
-    1. INSERT into canonical table (e.g. forecast_snapshots)
-    2. INSERT into legacy_projection_outbox (outbox_id, destination_db, payload_json, status='PENDING')
-    3. COMMIT (Single-DB Atomic)
-  
-  Outbox Projector Daemon:
-    4. Reads PENDING rows from outbox
-    5. Writes row to legacy SQLite database
-    6. Updates outbox row to status='PROJECTED', projected_at_utc=CURRENT_TIMESTAMP
-  ```
-* **Rollback Protocol**:
-  1. Writers paused via application flag `WARGAME_DB_TARGET=PAUSED`.
-  2. Projector drains all `PENDING` outbox rows to legacy databases and verifies count.
-  3. Router switches primary writer to legacy DBs via `WARGAME_DB_TARGET=LEGACY`.
-  4. Result: Zero lost writes during the rollback window.
-* **Acceptance Gate**:
-  * Command: `pytest tests/test_outbox_rollback.py`
-  * Assertions: Simulates 10 post-cutover canonical writes; executes rollback command; verifies 100% of rows exist in legacy DBs.
-
----
-
 ### Milestone 0.4: Two-Phase Sealed Forecast Snapshot Registrar
 * **Target Path**: `scripts/trading_brain/forecast/forecast_registrar.py`
+* **Schema**:
+  ```sql
+  CREATE TABLE forecast_runs (
+      forecast_run_id TEXT PRIMARY KEY,         -- UUID v4
+      session_date DATE NOT NULL,
+      ticker TEXT NOT NULL,
+      model_version_id TEXT NOT NULL,
+      effective_cutoff_utc TIMESTAMP NOT NULL,
+      commit_grace_period_sec INTEGER NOT NULL, -- Pinned from model contract at run creation
+      status TEXT NOT NULL,                     -- 'CREATED', 'INPUTS_SEALED', 'COMMITTED', 'FAILED', 'EXPIRED'
+      started_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      inputs_sealed_at_utc TIMESTAMP,
+      committed_at_utc TIMESTAMP,
+      created_at_utc TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE forecast_run_inputs (
+      input_id TEXT PRIMARY KEY,
+      forecast_run_id TEXT NOT NULL,
+      provider_name TEXT NOT NULL,
+      data_type TEXT NOT NULL,
+      max_timestamp_utc TIMESTAMP NOT NULL,
+      content_hash TEXT NOT NULL,
+      FOREIGN KEY (forecast_run_id) REFERENCES forecast_runs(forecast_run_id)
+  );
+  ```
 * **Two-Phase Registration Protocol**:
   1. **Phase 1: Pre-Cutoff Run Initiation (`create_forecast_run`)**:
      - Called before cutoff (`08:45 ET`).
-     - Registrar resolves and seals input bar manifests, computes input SHA-256 hashes, records `started_at_utc`, and stores state in database.
-     - Enforces: $\text{input\_manifest\_sealed\_at\_utc} \le \text{cutoff}$ and $\text{inputs.available\_at\_utc} \le \text{cutoff}$.
+     - Registrar resolves and seals input bar manifests, writes to `forecast_run_inputs`, records `inputs_sealed_at_utc`, and transitions status to `INPUTS_SEALED`.
+     - Enforces: $\text{inputs\_sealed\_at\_utc} \le \text{cutoff}$ and $\text{every input max\_timestamp\_utc} \le \text{cutoff}$.
      - Returns an unforgeable local `forecast_run_id`.
   2. **Phase 2: Commit Completion (`commit_forecast_run`)**:
      - Accepts prediction payload for `forecast_run_id`.
      - Generates database clock timestamp `received_at_utc` (`CURRENT_TIMESTAMP`).
-     - Enforces: $\text{received\_at\_utc} \le \text{effective\_cutoff\_utc} + \text{model\_input\_contract.commit\_grace\_period}$.
+     - Enforces: $\text{received\_at\_utc} \le \text{effective\_cutoff\_utc} + \text{commit\_grace\_period\_sec}$.
+     - Writes immutable row to `forecast_snapshots` and transitions run status to `COMMITTED`.
      - Late commits fail closed with `ForecastCutoffExpiredError` or convert to `REPLAY_AUDIT`.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_forecast_registrar.py`
-  * Assertions: Two-phase registration succeeds before deadline; late job start or late commit fails closed.
+  * Assertions: Two-phase registration succeeds before deadline; late job start or late commit fails closed; abandoned/failed runs transition to `EXPIRED`/`FAILED`.
 
 ---
 
@@ -256,7 +264,31 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 * **Target Paths**:
   * `scripts/trading_brain/signals/opportunity_logger.py`
   * `scripts/trading_brain/strategies/artifacts/` (Machine-readable JSON strategy definitions)
-* **Operating Scope**: Explicitly labeled `EXPERIMENTAL_CAPTURE_ONLY` (no live execution authority, no trade recommendations).
+* **Required Strategy JSON Artifact Schema**:
+  ```json
+  {
+    "strategy_version_id": "STRAT_ALN_LPEU_V0_1",
+    "strategy_family": "ALN_LPEU",
+    "content_hash": "sha256:...",
+    "ticker_scope": ["NQ1", "-NQ"],
+    "required_providers": ["ALNSessionsProvider_v1"],
+    "session_window_et": { "start": "09:30:00", "end": "15:45:00" },
+    "trigger_expression": "london_expansion_up && pullback_to_session_poc",
+    "decision_timing": "BAR_CLOSE",
+    "entry_convention": "MARKET_AT_BAR_CLOSE",
+    "signal_expiry_seconds": 900,
+    "invalidation_expression": "close < asia_low",
+    "max_signals_per_session": 1,
+    "stop_loss_bps": 12.0,
+    "target_1_bps": 10.0,
+    "target_2_bps": 30.0,
+    "outcome_horizon_et": "16:00:00",
+    "intrabar_ambiguity_policy": "RECORD_AMBIGUOUS_EVALUATE_DUAL_BOUNDS",
+    "cost_model_bps": 2.0,
+    "missing_data_policy": "FAIL_CLOSED",
+    "status": "EXPERIMENTAL_CAPTURE_ONLY"
+  }
+  ```
 * **Strict As-Of Decision Time Contract**:
   * Evaluates strategy rules on bar-close:
     $$\text{bar\_end\_utc} \le \text{decision\_time\_utc}$$
@@ -265,11 +297,6 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
   * Zero future bar lookahead.
   * Deduplication key: `(session_date, ticker, strategy_version_id, bar_timestamp_utc)`.
   * **Intrabar Ambiguity Preservation**: For 1m bars touching both stop and target, records `observed_outcome = 'AMBIGUOUS_INTRABAR_ORDER'`. Evaluators compute both `pessimistic_bound` (loss) and `optimistic_bound` (win) without collapsing raw data.
-* **Strategy V0 Frozen Machine-Readable Definitions**:
-  1. `strat_aln_lpeu_v0.json`: London Protrusion Expansion Up breakout pullback; fails closed on missing sessions.
-  2. `strat_firecracker_v0.json`: Overnight range compression (<35% DRO spent) opening drive.
-  3. `strat_goalpost_bb_v0.json`: Broken-Broken Asia/London sweep fade toward opposite extreme.
-  4. `strat_p12_mid_retest_v0.json`: P12 Midline equilibrium retest before 09:45 ET.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_opportunity_logger.py`
   * Golden Fixtures: Tested against 5 golden session datasets with verified expected-event ledgers.
@@ -279,7 +306,7 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 ### Milestone 0.6: Hardened NT8 Broker Ingestion & Durable State Reconciliation
 * **Target Path**: `scripts/trading_brain/ingest/nt8_broker_adapter.py`
 * **Durable Ingestion Channels**:
-  * **Fills & Executions (Lossless)**: Polled from `nt_fill_events` REST endpoint with persisted cursor checkpoints in `broker_ingest_state`. Ingests into `execution_events`.
+  * **Fills & Executions (Lossless within measured retention)**: Polled from `nt_fill_events` REST endpoint with persisted cursor checkpoints in `broker_ingest_state`. Ingests into `execution_events`. Reconciled against extracted broker trade history at session end.
   * **Interventions & Lockouts (Lossless)**: Tailer for durable `interventions.jsonl` log file + SSE live notification with gap recovery.
   * **Order & Position State (Periodic Snapshots)**: `nt_orders` and `nt_positions` polled at session boundaries to reconcile live account positions against reconstructed fills.
 * **Expanded `intervention_events` Audit Schema**:
@@ -327,14 +354,47 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 
 ### Milestone 0.7: Measured Tape Actuals Extractor
 * **Target Paths**:
-  * `scripts/utils/live_storage_resolver.py`: Resolves live storage paths (`NQ1` -> `data/live/live_storage_-NQ.parquet`, `ES1` -> `data/live/live_storage_-ES.parquet`, `YM1`, `RTY1`, `GC1`, `CL1`).
+  * `scripts/utils/live_storage_resolver.py`: Explicit deliverable resolving live storage paths (`NQ1` -> `data/live/live_storage_-NQ.parquet`, `ES1` -> `data/live/live_storage_-ES.parquet`, `YM1`, `RTY1`, `GC1`, `CL1`).
   * `scripts/trading_brain/tape/tape_extractor.py`: Tape metrics extractor.
-* **Named Authorities**:
-  * RTH 16:00 Close: Last traded 1m bar close at 16:00:00 ET from live storage parquet.
-  * Daily Settlement: Official daily settlement from exchange settlement feed (`data/daily/{ticker}_daily.parquet`).
+* **Explicit Close Authorities**:
+  * `rth_close`: Last traded 1m bar close at 16:00:00 ET from live storage parquet.
+  * `daily_bar_close`: Daily bar close from fused historical loader (`scripts/utils/fused_data_loader.py`).
+  * `exchange_settlement`: Explicitly marked `NOT_AVAILABLE_IN_P0` (no official CME settlement feed currently exists in repository). Do not conflate 16:00 RTH close with exchange settlement.
 * **Tape Row Schema**: Captures `ingest_id`, `source_system`, `expected_bar_count`, `actual_bar_count`, `content_hash`, `quality_state` (`CLEAN`, `SUSPECT_TICKS`, `INCOMPLETE_BARS`), `LABEL_DAY_TYPE_V1`, and `LABEL_EOD_CLASSIFICATION_V1`.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_tape_extractor.py` + `pytest tests/test_live_storage_resolver.py`
+
+---
+
+### Milestone 0.3b: Transactional Outbox Projector, Verified Rollback Fence & Canonical Writer Cutover
+* **Target Path**: `scripts/trading_brain/migrations/outbox_projector.py`
+* **Sequencing Invariant**: Executed **only after** Milestones M0.4, M0.5, M0.6, and M0.7 are complete and verified in shadow mode.
+* **Outbox Schema**:
+  ```sql
+  CREATE TABLE legacy_projection_outbox (
+      outbox_id TEXT PRIMARY KEY,
+      destination_db TEXT NOT NULL,             -- 'system_wargames', 'market_actuals', 'mickey_ground_truth'
+      canonical_table TEXT NOT NULL,
+      canonical_id TEXT NOT NULL,
+      schema_version TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL,                     -- 'PENDING', 'PROJECTED', 'FAILED', 'DEAD_LETTER'
+      attempt_count INTEGER DEFAULT 0,
+      last_error TEXT,
+      lease_token TEXT,
+      lease_expires_at_utc TIMESTAMP,
+      created_at_utc TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      projected_at_utc TIMESTAMP
+  );
+  ```
+* **Rollback Protocol**:
+  1. Writers paused via application flag `WARGAME_DB_TARGET=PAUSED`.
+  2. Projector drains all `PENDING` outbox rows to legacy databases and verifies count.
+  3. Router switches primary writer to legacy DBs via `WARGAME_DB_TARGET=LEGACY`.
+  4. Result: Zero lost writes during the rollback window.
+* **Acceptance Gate**:
+  * Command: `pytest tests/test_outbox_rollback.py`
+  * Assertions: Injects crashes before and after legacy writes; verifies exactly-once projection; executes rollback command and verifies 100% of rows exist in legacy DBs.
 
 ---
 
@@ -343,7 +403,11 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 * **Operational Acceptance Criteria**:
   * Phase 0 achieves `OPERATIONALLY_ACCEPTED_CAPTURE_V1` operational acceptance when it passes:
     1. **Automated Scenario Suite**: 6 scenario tests (no-trade, early close, DST transition, contract roll, feed outage & reconnect, crash & recovery).
-    2. **Live Soak Metrics**: 10 consecutive live trading sessions captured with 0 unexplained data loss, 0 duplicate events, 100% gap reconciliation, and operator review time < 5 minutes on >= 90% of sessions.
+    2. **Live Soak Metrics**: 10 consecutive live trading sessions captured with:
+       - 0 unquarantined data loss.
+       - 0 duplicate events.
+       - Every detected feed/broker gap recovered or explicitly quarantined in `unmatched_link_events`.
+       - Operator review time < 5 minutes on >= 90% of sessions.
 
 ---
 
@@ -408,19 +472,30 @@ Bridge the gap between pre-market analysis and live execution through real-time 
 
 ---
 
-### Milestone 2.2: Cross-Repository C# RiskGuard Plan-Friction Addon
-* **Target Path**: `C:\Users\vinay\nt8-riskguard\addons\PlanFrictionRule.cs` (in `nt8-riskguard` repo).
+### Milestone 2.2: Cross-Repository C# RiskGuard & MCP Plan Push Addon
+* **Target Paths**:
+  * `C:\Users\vinay\nt8-riskguard\addons\PlanFrictionRule.cs` (in `nt8-riskguard` repo).
+  * `C:\Users\vinay\nt8-mcp-bridge\src\Rules\PlanPushHandler.cs` (in `nt8-mcp-bridge` repo).
+  * `C:\Users\vinay\nt8-mcp-bridge\mcp\` (MCP tool definitions).
 * **Plan Distribution Protocol**:
-  * Python pushes plan constraints via MCP `nt_riskguard_config` at 08:45 ET (includes `plan_hash`, active strategy whitelist, max risk budget bps, and expiration timestamp).
-  * Addon validates freshness; if bridge is down or plan is stale, plan friction **defaults to disabled/shadow** and **NEVER blocks trades**.
+  * Python pushes plan constraints via new MCP tool `nt_riskguard_plan_push` at 08:45 ET (`account_id`, `plan_hash`, `active_strategies`, `max_daily_risk_bps`, `expires_at_utc`).
+  * Bridge and Addon validate freshness; if bridge is down or plan is stale, plan friction **defaults to disabled/shadow** and **NEVER blocks trades**.
   * **Exit Preservation**: Plan friction **NEVER intercepts or delays risk-reducing or protective exit orders**.
-* **Acceptance Gate in `nt8-riskguard`**:
-  * Commands:
+* **Cross-Repository Acceptance Gate**:
+  * Commands in `nt8-riskguard`:
     ```powershell
     dotnet build tests/RiskGuardTests.csproj
     dotnet run --project tests/RiskGuardTests.csproj --no-build
     python tools/check_no_stray_copies.py
     python tools/check_ci_runs_every_battery.py
+    ```
+  * Commands in `nt8-mcp-bridge`:
+    ```powershell
+    dotnet build tests/BridgeTests.csproj
+    dotnet run --project tests/BridgeTests.csproj --no-build
+    python tools/check_bridge_parses.py
+    python tools/check_ci_runs_every_battery.py
+    cd mcp && node --test
     ```
   * Verification: `nt_compile` compiles cleanly; test suite proves protective exits are never delayed.
 
@@ -440,9 +515,10 @@ Bridge the gap between pre-market analysis and live execution through real-time 
 
 ### Milestone 2.4: Recurring-Error Targeted Drill Generator
 * **Target Path**: `scripts/trading_brain/practice/drill_generator.py`
-* **Functionality**:
-  * Scans `intervention_events` and `daily_process_delta` logs for recurring deviations (e.g. repeated chases past +15 bps, missed stops).
-  * Automatically schedules targeted practice drills from historical market replay library addressing the specific weakness.
+* **User-Controlled Curriculum**:
+  * Scans `intervention_events` and `daily_process_delta` logs for recurring deviations (requires minimum recurrence evidence, e.g. >= 3 occurrences).
+  * Requires user approval before scheduling drills.
+  * Generates drills addressing the specific weakness along with near-miss/contrast examples.
   * Drills are tagged `PRACTICE_DRILL` and strictly quarantined from live statistical evidence.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_drill_generator.py`
@@ -474,7 +550,11 @@ Provide statistical machinery for discovering, testing, and promoting decision r
 
 ### Milestone 3.3: Preregistered Shadow Validation Gate
 * **Target Path**: `scripts/trading_brain/research/shadow_gate.py`
-* **Execution Contract**: Task-specific MDE, power >= 0.80, 1-time sealed shadow data evaluation with custody access logging. Terminal states: `PROMOTED`, `REJECTED`, `INCONCLUSIVE_WAITING`, `INVALID_TEST`. Fail-closed policy (inconclusive is rejected).
+* **Execution Contract**: Task-specific MDE, power >= 0.80, 1-time sealed shadow data evaluation with custody access logging. Terminal states:
+  - `PROMOTED`: Validated and passed all criteria.
+  - `INCONCLUSIVE_WAITING`: Unpromoted; remains frozen while new data accumulates.
+  - `REJECTED`: Permanently closed.
+  - `INVALID_TEST`: Test execution flaw; cannot be promoted.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_shadow_gate.py`
 
@@ -525,13 +605,13 @@ Provide a unified, human-native intake interface and interactive web dashboard f
 
 | Milestone ID | Action Item | Target Delivery | Prerequisite / Dependency |
 | :---: | :--- | :--- | :--- |
-| **M0.1** | **Canonical SQLite Schema & 30-Trigger Matrix** (`schema.sql`, `test_trading_brain_db.py`) | Phase 0 Start | Implementation Plan Approved |
+| **M0.1** | **Canonical SQLite Schema & 34-Trigger Matrix** (`schema.sql`, `test_trading_brain_db.py`) | Phase 0 Start | Implementation Plan Approved |
 | **M0.2** | **Plan Snapshot Ledger & `get_plan_as_of`** (`plan_adapter.py`, `test_plan_adapter.py`) | Milestone 0.1 | M0.1 |
 | **M0.3a**| **Shadow Legacy Import & Dual-Hash Check** (`import_legacy_shadow.py`) | Milestone 0.1 | M0.1 |
-| **M0.3b**| **Outbox Projector, Writer Cutover & Fence** (`outbox_projector.py`) | Milestone 0.3a | M0.1, M0.2, M0.3a |
 | **M0.4** | **Two-Phase Sealed Forecast Registrar** (`forecast_registrar.py`, `test_forecast_registrar.py`) | Milestone 0.1 | M0.1 |
 | **M0.5** | **As-Of Signal Opportunity Logger** (`opportunity_logger.py` + V0 JSON artifacts) | Milestone 0.1 | M0.1, Frozen Strategy V0 |
 | **M0.6** | **Hardened NT8 Ingestion & Cursor Tailer** (`nt8_broker_adapter.py`, `test_nt8_broker_adapter.py`) | Milestone 0.1 | M0.1, Durable Ingest Surface |
 | **M0.7** | **Tape Extractor & Live Storage Resolver** (`tape_extractor.py`, `live_storage_resolver.py`) | Milestone 0.1 | M0.1 |
-| **M0.8** | **Operational Verification Gate** (`OPERATIONALLY_ACCEPTED_CAPTURE_V1` - Scenario suite + soak) | Phase 0 Done | M0.1–M0.7, Outbox Rollback Tested |
+| **M0.3b**| **Outbox Projector, Writer Cutover & Rollback Fence** (`outbox_projector.py`) | Milestone 0.7 | M0.1, M0.2, M0.3a, M0.4, M0.5, M0.6, M0.7 |
+| **M0.8** | **Operational Verification Gate** (`OPERATIONALLY_ACCEPTED_CAPTURE_V1` - Scenario suite + soak) | Phase 0 Done | M0.3b Passed |
 | **M1.0** | **Phase 1 Re-Approval Review** | Formal Sign-Off | M0.8 Passed |
