@@ -1,13 +1,30 @@
 """Standard Concept Provider Implementations
 
-Wraps all specialized engines into the unified BaseConceptProvider interface
-and registers them automatically in the ConceptRegistry.
+Wraps all specialized engines into the unified BaseConceptProvider interface.
+Enforces strict production vs. scaffold segregation and real live data feeds.
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+from datetime import datetime, date, time, timedelta
 from typing import Dict, Any, Optional, List
-from scripts.concepts.base import BaseConceptProvider, ConceptPayload, ChartOverlays
+import pandas as pd
+import pytz
+
+REPO_ROOT = Path(__file__).parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.concepts.base import (
+    BaseConceptProvider,
+    ConceptPayload,
+    ChartOverlays,
+    STATUS_PRODUCTION,
+    STATUS_SCAFFOLD,
+)
 from scripts.concepts.registry import ConceptRegistry
+from scripts.utils.fused_data_loader import load_fused_data
 
 from scripts.candle_science.run_candle_science import analyze_candle_science, format_candle_science_markdown
 from scripts.wargaming.htf_macro_levels import compute_htf_macro_levels, format_htf_macro_markdown
@@ -16,8 +33,10 @@ from scripts.wargaming.p12_scenario_engine import compute_p12_scenarios, format_
 from scripts.wargaming.session_budget_engine import compute_session_budget, format_session_budget_markdown
 from scripts.wargaming.signature_setup_scanner import scan_signature_setups, format_signature_setups_markdown
 
+ET = pytz.timezone("America/New_York")
 
-# 1. CANDLE SCIENCE PROVIDER
+
+# 1. CANDLE SCIENCE PROVIDER (PRODUCTION)
 class CandleScienceProvider(BaseConceptProvider):
     @property
     def name(self) -> str:
@@ -26,6 +45,10 @@ class CandleScienceProvider(BaseConceptProvider):
     @property
     def description(self) -> str:
         return "3-Candle sequence patterns and empirical MFE/MAE percentiles (P30, P50, P70)."
+
+    @property
+    def status(self) -> str:
+        return STATUS_PRODUCTION
 
     def compute(self, ticker: str = "NQ1", target_date: Optional[str] = None, cutoff_time: str = "08:45", context: Optional[Dict[str, Any]] = None) -> ConceptPayload:
         data = analyze_candle_science(ticker=ticker, target_date=target_date, mode="open")
@@ -36,14 +59,16 @@ class CandleScienceProvider(BaseConceptProvider):
             target_date=data["target_date"],
             spot_price=data["spot_price"],
             data=data,
-            markdown_report=md
+            markdown_report=md,
+            status=self.status,
+            is_success=True,
         )
 
     def format_markdown(self, data: Dict[str, Any]) -> str:
         return format_candle_science_markdown(data)
 
 
-# 2. HTF MACRO PROVIDER
+# 2. HTF MACRO PROVIDER (PRODUCTION)
 class HTFMacroProvider(BaseConceptProvider):
     @property
     def name(self) -> str:
@@ -52,6 +77,10 @@ class HTFMacroProvider(BaseConceptProvider):
     @property
     def description(self) -> str:
         return "Prior Monthly Midpoint, NFP Benchmark Midpoint, and Weekly EMA(5) 52-week excursions."
+
+    @property
+    def status(self) -> str:
+        return STATUS_PRODUCTION
 
     def compute(self, ticker: str = "NQ1", target_date: Optional[str] = None, cutoff_time: str = "08:45", context: Optional[Dict[str, Any]] = None) -> ConceptPayload:
         data = compute_htf_macro_levels(ticker=ticker, target_date=target_date)
@@ -62,14 +91,16 @@ class HTFMacroProvider(BaseConceptProvider):
             target_date=data["target_date"],
             spot_price=data["spot_price"],
             data=data,
-            markdown_report=md
+            markdown_report=md,
+            status=self.status,
+            is_success=True,
         )
 
     def format_markdown(self, data: Dict[str, Any]) -> str:
         return format_htf_macro_markdown(data)
 
 
-# 3. WEEKLY OUTLOOK PROVIDER
+# 3. WEEKLY OUTLOOK PROVIDER (PRODUCTION)
 class WeeklyOutlookProvider(BaseConceptProvider):
     @property
     def name(self) -> str:
@@ -78,6 +109,10 @@ class WeeklyOutlookProvider(BaseConceptProvider):
     @property
     def description(self) -> str:
         return "Day-of-Week Macro Cycles (Mon/Tue vs Thu/Fri), Weekly Candle state, and 0DTE->Next Friday Expected Moves."
+
+    @property
+    def status(self) -> str:
+        return STATUS_PRODUCTION
 
     def compute(self, ticker: str = "NQ1", target_date: Optional[str] = None, cutoff_time: str = "08:45", context: Optional[Dict[str, Any]] = None) -> ConceptPayload:
         data = compute_weekly_outlook(ticker=ticker, target_date=target_date)
@@ -88,14 +123,16 @@ class WeeklyOutlookProvider(BaseConceptProvider):
             target_date=data["eval_date"],
             spot_price=data["spot_price"],
             data=data,
-            markdown_report=md
+            markdown_report=md,
+            status=self.status,
+            is_success=True,
         )
 
     def format_markdown(self, data: Dict[str, Any]) -> str:
         return format_weekly_outlook_markdown(data)
 
 
-# 4. P12 SCENARIOS PROVIDER
+# 4. P12 SCENARIOS PROVIDER (PRODUCTION)
 class P12ScenariosProvider(BaseConceptProvider):
     @property
     def name(self) -> str:
@@ -104,6 +141,10 @@ class P12ScenariosProvider(BaseConceptProvider):
     @property
     def description(self) -> str:
         return "P12 Directional Vectors, 88.5% Midline Gravity Wells, 99.26% Goalposts, and Handshake Vectors."
+
+    @property
+    def status(self) -> str:
+        return STATUS_PRODUCTION
 
     def compute(self, ticker: str = "NQ1", target_date: Optional[str] = None, cutoff_time: str = "08:45", context: Optional[Dict[str, Any]] = None) -> ConceptPayload:
         data = compute_p12_scenarios(ticker=ticker, target_date=target_date, cutoff_time=cutoff_time)
@@ -114,14 +155,16 @@ class P12ScenariosProvider(BaseConceptProvider):
             target_date=data["date"],
             spot_price=data["spot_price"],
             data=data,
-            markdown_report=md
+            markdown_report=md,
+            status=self.status,
+            is_success=True,
         )
 
     def format_markdown(self, data: Dict[str, Any]) -> str:
         return format_p12_scenarios_markdown(data)
 
 
-# 5. SESSION BUDGET PROVIDER
+# 5. SESSION BUDGET PROVIDER (PRODUCTION)
 class SessionBudgetProvider(BaseConceptProvider):
     @property
     def name(self) -> str:
@@ -130,6 +173,10 @@ class SessionBudgetProvider(BaseConceptProvider):
     @property
     def description(self) -> str:
         return "Overnight Volatility Checkbook Spending % against 10-Day Median Range (DRO Baseline)."
+
+    @property
+    def status(self) -> str:
+        return STATUS_PRODUCTION
 
     def compute(self, ticker: str = "NQ1", target_date: Optional[str] = None, cutoff_time: str = "08:45", context: Optional[Dict[str, Any]] = None) -> ConceptPayload:
         data = compute_session_budget(ticker=ticker, target_date=target_date, cutoff_time=cutoff_time)
@@ -140,14 +187,16 @@ class SessionBudgetProvider(BaseConceptProvider):
             target_date=data["date"],
             spot_price=0.0,
             data=data,
-            markdown_report=md
+            markdown_report=md,
+            status=self.status,
+            is_success=True,
         )
 
     def format_markdown(self, data: Dict[str, Any]) -> str:
         return format_session_budget_markdown(data)
 
 
-# 6. SIGNATURE SETUPS SCANNER PROVIDER
+# 6. SIGNATURE SETUPS SCANNER PROVIDER (PRODUCTION)
 class SignatureSetupsProvider(BaseConceptProvider):
     @property
     def name(self) -> str:
@@ -156,6 +205,10 @@ class SignatureSetupsProvider(BaseConceptProvider):
     @property
     def description(self) -> str:
         return "Automated detection of Firecracker, Spongebob, and Broken-Broken Goalpost trade setups."
+
+    @property
+    def status(self) -> str:
+        return STATUS_PRODUCTION
 
     def compute(self, ticker: str = "NQ1", target_date: Optional[str] = None, cutoff_time: str = "08:45", context: Optional[Dict[str, Any]] = None) -> ConceptPayload:
         data = scan_signature_setups(ticker=ticker, target_date=target_date, cutoff_time=cutoff_time)
@@ -166,14 +219,16 @@ class SignatureSetupsProvider(BaseConceptProvider):
             target_date=data["date"],
             spot_price=data["spot_price"],
             data=data,
-            markdown_report=md
+            markdown_report=md,
+            status=self.status,
+            is_success=True,
         )
 
     def format_markdown(self, data: Dict[str, Any]) -> str:
         return format_signature_setups_markdown(data)
 
 
-# 7. NQSTATS ALN (ASIA / LONDON / NY) SESSION DYNAMICS PROVIDER
+# 7. NQSTATS ALN SESSION DYNAMICS PROVIDER (PRODUCTION - LIVE DATA FEEDED)
 class ALNSessionsProvider(BaseConceptProvider):
     @property
     def name(self) -> str:
@@ -183,19 +238,85 @@ class ALNSessionsProvider(BaseConceptProvider):
     def description(self) -> str:
         return "NQStats ALN Sessions: Asia-London-NY structural relationships (LPEU, LPED, LEA, AEL) and break probabilities."
 
+    @property
+    def status(self) -> str:
+        return STATUS_PRODUCTION
+
     def compute(self, ticker: str = "NQ1", target_date: Optional[str] = None, cutoff_time: str = "08:45", context: Optional[Dict[str, Any]] = None) -> ConceptPayload:
         from scripts.libs_py.nqstats.classifiers import compute_aln_bias, ALN_PATTERN_META
+        from scripts.libs_py.profiler.engine import SessionBoxEngine
+
+        df_1m = load_fused_data(ticker, timeframe="1m", require_historical=False)
+        if df_1m.index.tz is None:
+            df_1m.index = df_1m.index.tz_localize("US/Eastern")
+        else:
+            df_1m.index = df_1m.index.tz_convert("US/Eastern")
+
+        t_dt = datetime.strptime(target_date, "%Y-%m-%d").date() if target_date else datetime.now(ET).date()
+        c_h, c_m = map(int, cutoff_time.split(":"))
+        cutoff_dt = pd.Timestamp(datetime.combine(t_dt, time(c_h, c_m)), tz="America/New_York")
+        df_cutoff = df_1m[df_1m.index <= cutoff_dt]
+
+        if df_cutoff.empty:
+            raise ValueError(f"No market data available for {ticker} up to {cutoff_dt}")
+
+        spot = float(df_cutoff["close"].iloc[-1])
+
+        # Compute live session bounds
+        engine = SessionBoxEngine(df_cutoff, ticker=ticker).process()
+        live_sessions = engine.get_live_sessions()
         
-        # Default active session context
-        pattern_code = "LPEU"
-        broken_status = "Held/Held"
-        bias_info = compute_aln_bias(code=pattern_code, broken_status=broken_status, spot=29657.50, london_high=29654.0, london_low=29596.0)
-        
+        asia = live_sessions.get("Asia", {})
+        london = live_sessions.get("London", {})
+
+        asia_h = asia.get("high", spot + 20.0)
+        asia_l = asia.get("low", spot - 20.0)
+        asia_broken = asia.get("broken", False)
+
+        lon_h = london.get("high", spot + 10.0)
+        lon_l = london.get("low", spot - 10.0)
+        lon_broken = london.get("broken", False)
+
+        # Classify ALN Pattern Code from Session Structure
+        if lon_h > asia_h and lon_l >= asia_l:
+            pattern_code = "LPEU"
+        elif lon_l < asia_l and lon_h <= asia_h:
+            pattern_code = "LPED"
+        elif lon_h > asia_h and lon_l < asia_l:
+            pattern_code = "LEA"
+        else:
+            pattern_code = "AEL"
+
+        # Broken / Held Status
+        if asia_broken and lon_broken:
+            broken_status = "Broken/Broken"
+        elif asia_broken and not lon_broken:
+            broken_status = "Broken/Held"
+        elif not asia_broken and lon_broken:
+            broken_status = "Held/Broken"
+        else:
+            broken_status = "Held/Held"
+
+        bias_info = compute_aln_bias(
+            code=pattern_code,
+            broken_status=broken_status,
+            spot=spot,
+            london_high=lon_h,
+            london_low=lon_l
+        )
+
+        pattern_meta = ALN_PATTERN_META.get(pattern_code, {})
+        full_name = pattern_meta.get("full_name", pattern_code)
+
         data = {
             "ticker": ticker,
-            "target_date": target_date or "Today",
+            "target_date": t_dt.strftime("%Y-%m-%d"),
+            "cutoff_time": cutoff_time,
+            "spot_price": round(spot, 2),
+            "asia_range": {"high": round(asia_h, 2), "low": round(asia_l, 2), "broken": asia_broken},
+            "london_range": {"high": round(lon_h, 2), "low": round(lon_l, 2), "broken": lon_broken},
             "pattern_code": pattern_code,
-            "pattern_name": "London Protrusion Expansion Up (LPEU)",
+            "pattern_name": full_name,
             "broken_status": broken_status,
             "bias": bias_info["bias"],
             "conviction": bias_info["conviction"],
@@ -205,10 +326,11 @@ class ALNSessionsProvider(BaseConceptProvider):
             "break_high_pct": bias_info["break_high_pct"],
             "break_low_pct": bias_info["break_low_pct"],
         }
-        
+
         md = f"""# 🌐 NQStats ALN (Asia-London-NY) Session Report: {ticker} ({data['target_date']})
+* **Analysis Cutoff**: `{cutoff_time} ET` | **Current Spot**: `{spot:,.2f}`
 * **Pattern Classification**: `{data['pattern_code']}` &mdash; **{data['pattern_name']}**
-* **Broken / Held Status**: `{data['broken_status']}`
+* **Broken / Held Status**: `{data['broken_status']}` (Asia Broken: {asia_broken} | Lon Broken: {lon_broken})
 * **Directional Bias**: **{data['bias']}** (Conviction: `{data['conviction']}`)
 
 ---
@@ -225,16 +347,18 @@ class ALNSessionsProvider(BaseConceptProvider):
             name=self.name,
             ticker=ticker,
             target_date=data["target_date"],
-            spot_price=29657.50,
+            spot_price=spot,
             data=data,
-            markdown_report=md
+            markdown_report=md,
+            status=self.status,
+            is_success=True,
         )
 
     def format_markdown(self, data: Dict[str, Any]) -> str:
         return f"# NQStats ALN Session Report for {data.get('ticker')}"
 
 
-# 8. HERMAN PROBABILITIES PROVIDER (Scaffold / Ready for Extension)
+# 8. HERMAN PROBABILITIES PROVIDER (EXPLICIT SCAFFOLD - NOT PRODUCTION)
 class HermanProbabilitiesProvider(BaseConceptProvider):
     @property
     def name(self) -> str:
@@ -242,45 +366,36 @@ class HermanProbabilitiesProvider(BaseConceptProvider):
 
     @property
     def description(self) -> str:
-        return "Herman Statistical Boundary Probabilities: Empirical probability cones and outlier thresholds."
+        return "Herman Statistical Boundary Probabilities (Cones & Outlier Thresholds)."
+
+    @property
+    def status(self) -> str:
+        return STATUS_SCAFFOLD
+
+    @property
+    def version(self) -> str:
+        return "0.1.0-scaffold"
 
     def compute(self, ticker: str = "NQ1", target_date: Optional[str] = None, cutoff_time: str = "08:45", context: Optional[Dict[str, Any]] = None) -> ConceptPayload:
-        spot = 29650.0
-        data = {
-            "ticker": ticker,
-            "target_date": target_date or "Today",
-            "spot_price": spot,
-            "herman_cones": {
-                "upper_1sd": round(spot + 85.0, 2),
-                "upper_2sd": round(spot + 160.0, 2),
-                "lower_1sd": round(spot - 85.0, 2),
-                "lower_2sd": round(spot - 160.0, 2),
-            },
-            "status": "Herman Probability Scaffolding Active. Plug in Herman distribution engine."
-        }
-        md = f"""# 🎲 Herman Statistical Boundary Probabilities: {ticker} ({data['target_date']})
-* **Spot Price**: `{spot:,.2f}` | **Status**: `{data['status']}`
-
-### 📊 Herman Probability Cones
-* **Upper 2 Standard Deviations (Outlier Ceiling)**: `{spot+160:,.2f}` (95.4% boundary)
-* **Upper 1 Standard Deviation (Standard Range)**: `{spot+85:,.2f}` (68.2% boundary)
-* **Lower 1 Standard Deviation (Standard Range)**: `{spot-85:,.2f}` (68.2% boundary)
-* **Lower 2 Standard Deviations (Outlier Floor)**: `{spot-160:,.2f}` (95.4% boundary)
-"""
+        # Explicitly marked scaffold warning
         return ConceptPayload(
             name=self.name,
             ticker=ticker,
-            target_date=data["target_date"],
-            spot_price=spot,
-            data=data,
-            markdown_report=md
+            target_date=target_date or "Today",
+            spot_price=0.0,
+            data={"status": "scaffold_pending_engine", "note": "Herman mathematical engine pending implementation."},
+            markdown_report="""# ⚠️ Herman Statistical Probabilities [SCAFFOLD]
+> **Status**: Mathematical calculation engine is pending implementation. Excluded from production synthesis.
+""",
+            status=self.status,
+            is_success=True,
         )
 
     def format_markdown(self, data: Dict[str, Any]) -> str:
-        return f"# Herman Probabilities Report for {data.get('ticker')}"
+        return f"# Herman Probabilities Report (Scaffold)"
 
 
-# AUTO-REGISTER ALL PROVIDERS
+# REGISTER ALL PROVIDERS
 ConceptRegistry.register(CandleScienceProvider())
 ConceptRegistry.register(HTFMacroProvider())
 ConceptRegistry.register(WeeklyOutlookProvider())

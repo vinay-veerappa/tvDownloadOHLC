@@ -1,14 +1,17 @@
 """Base Concept Provider Interface
 
 Every trading concept (Candle Science, HTF Macro, Weekly Outlook, P12 Scenarios,
-ALN Levels, Herman Probabilities, etc.) inherits from BaseConceptProvider.
+NQStats ALN, etc.) inherits from BaseConceptProvider.
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
-from datetime import date
+
+STATUS_PRODUCTION = "production"
+STATUS_SCAFFOLD = "scaffold"
+STATUS_EXPERIMENTAL = "experimental"
 
 
 @dataclass
@@ -29,6 +32,9 @@ class ConceptPayload:
     spot_price: float
     data: Dict[str, Any]
     markdown_report: str
+    status: str = STATUS_PRODUCTION
+    is_success: bool = True
+    error_message: Optional[str] = None
     overlays: ChartOverlays = field(default_factory=ChartOverlays)
 
 
@@ -38,7 +44,7 @@ class BaseConceptProvider(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Unique concept identifier (e.g. 'candle_science', 'aln_levels')."""
+        """Unique concept identifier (e.g. 'candle_science', 'aln_sessions')."""
         pass
 
     @property
@@ -46,6 +52,21 @@ class BaseConceptProvider(ABC):
     def description(self) -> str:
         """Brief human-readable description of what this concept computes."""
         pass
+
+    @property
+    def status(self) -> str:
+        """Lifecycle status: 'production', 'scaffold', or 'experimental'."""
+        return STATUS_PRODUCTION
+
+    @property
+    def version(self) -> str:
+        """Provider version (semver)."""
+        return "1.0.0"
+
+    @property
+    def is_production(self) -> bool:
+        """Helper to verify if provider is ready for live production wargaming."""
+        return self.status == STATUS_PRODUCTION
 
     @abstractmethod
     def compute(
@@ -59,7 +80,7 @@ class BaseConceptProvider(ABC):
         pass
 
     @abstractmethod
-    def format_markdown(self, payload: Dict[str, Any]) -> str:
+    def format_markdown(self, data: Dict[str, Any]) -> str:
         """Format the concept's results into a clean, standalone GitHub markdown report."""
         pass
 
