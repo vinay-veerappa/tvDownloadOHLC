@@ -104,8 +104,85 @@ def _upper_tail_z_from_p(p: float) -> float:
     return -_norminv_one_sided(p)
 
 
+def _labels_for_stream(seq: Sequence[Any]) -> List[Any]:
+    """Passes through a label/prediction stream (hook kept for normalization evolution)."""
+    return list(seq)
+
+
 class WalkForwardGate:
     """Validator that executes purged cross-validation and multiple comparison corrections."""
+
+    @staticmethod
+    def _block_bootstrap_accuracy_p(
+        correct_stream: Sequence[int],
+        n_boot: int = 2000,
+        block_len: int = None,
+        seed: int = 42,
+    ) -> float:
+        """Dependence-aware one-sided p for OOS accuracy > 0.5 via circular block bootstrap.
+
+        Walk-forward out-of-sample streams are autocorrelated (regimes cluster), so a
+        binomial test on each observation understates variance and fabricated fold
+        independence overstates evidence. The bootstrap resamples contiguous blocks of
+        the FULL chronological stream (preserving local dependence) under the null
+        (mean 0.5 centered), returning the fraction of resample means >= observed.
+        """
+        import random as _random
+        n = len(correct_stream)
+        if n == 0:
+            return 1.0
+        obs = sum(correct_stream) / n
+        blk = max(2, min(int(block_len or max(2, n // 10)), n))
+        rng = _random.Random(seed)
+        # Null distribution of the resampled mean (block bootstrap preserves the
+        # stream's local dependence while the CENTERING keeps the resampled mean
+        # centered at the 0.5 chance baseline - without it, a degenerate stream like
+        # all-1s yields a null distribution at 1.0 and inverts the test).
+        null_means: List[float] = []
+        for _ in range(max(1, int(n_boot))):
+            mean_sum = 0.0
+            remaining = n
+            while remaining > 0:
+                start = rng.randrange(n)
+                take = min(blk, remaining)
+                for k in range(take):
+                    mean_sum += correct_stream[(start + k) % n]
+                remaining -= take
+            null_means.append(mean_sum / n)
+        mean_null = sum(null_means) / len(null_means)
+        excess = sum(1 for m in null_means if (m - mean_null) >= (obs - 0.5))
+        p = excess / len(null_means)
+        # exact-style floor: with limited resamples the smallest attainable p is 1/B
+        return max(p, 1.0 / max(1, int(n_boot)))
+
+    @classmethod
+    def evaluate_candidate_family(
+        cls,
+        candidate_p_values: Sequence[Tuple[str, float]],
+        alpha: float = 0.05,
+    ) -> List[Dict[str, Any]]:
+        """THE single family-level multiplicity correction stage for a research round.
+
+        Every preregistered candidate's aggregate p-value (from evaluate_walk_forward's
+        aggregated_p_value) is submitted ONCE, together, so a raw p=0.02 that is rank-5
+        of 5 becomes q=0.10 instead of 'significant as a family of one'. Returns per-
+        candidate BH q-values and pass/fail against alpha; callers must gate on the
+        corrected q, never the raw p.
+        """
+        if not candidate_p_values:
+            return []
+        ids = [c for c, _ in candidate_p_values]
+        ps = [p for _, p in candidate_p_values]
+        results = cls.adjust_p_values(ps, alpha=alpha)
+        return [
+            {
+                "candidate_id": cid,
+                "raw_p_value": round(p, 8),
+                "bh_q_value": results[i].bh_q_value,
+                "significant_fdr_05": results[i].significant_fdr_05,
+            }
+            for i, (cid, p) in enumerate(zip(ids, ps))
+        ]
 
     @staticmethod
     def accuracy_scorer(y_true: Sequence[Any], y_pred: Sequence[Any]) -> float:
@@ -215,6 +292,8 @@ class WalkForwardGate:
         max_std_err: float = 2.0,
         require_significant_fdr: bool = False,
         family_p_values: Optional[Sequence[float]] = None,
+        bootstrap_b: int = 2000,
+        bootstrap_seed: int = 42,
     ) -> WalkForwardEvaluation:
         """Runs purged walk-forward validation with real model fitting per fold.
 
@@ -232,7 +311,12 @@ class WalkForwardGate:
                 aggregate p-values (this candidate's INCLUDED). BH correction is then
                 applied across the whole family, so a lone-significant candidate among
                 many tested ones cannot pass on raw p=0.02 alone. Omitting it treats
-                this as the only candidate (explicit family-of-one).
+                this as the only candidate (explicit family-of-one). The canonical
+                multi-candidate correction stage is evaluate_candidate_family().
+            bootstrap_b: resamples for the dependence-aware block-bootstrap aggregate
+                over the chronological out-of-sample stream (0 disables bootstrap and
+                falls back to the Stouffer fold aggregate).
+            bootstrap_seed: RNG seed for the bootstrap (deterministic gates).
         """
         if len(features) != len(labels):
             raise ValueError("features and labels must have the same length")
@@ -254,6 +338,8 @@ class WalkForwardGate:
             )
 
         fold_results: List[FoldResult] = []
+        oos_true: List[Any] = []       # full chronological out-of-sample label stream
+        oos_pred: List[Any] = []       # matching prediction stream (dependence-aware stats)
         for split in folds:
             model = model_factory()
             X_train = features[split.train_start:split.train_end]
@@ -265,6 +351,8 @@ class WalkForwardGate:
             model.fit(X_train, y_train)
             y_pred = model.predict(X_test)
             score = scorer(y_test, y_pred)
+            oos_true.extend(y_test)
+            oos_pred.extend(y_pred)
             fold_results.append(FoldResult(
                 fold_idx=split.fold_idx,
                 train_size=len(X_train),
@@ -301,16 +389,32 @@ class WalkForwardGate:
             f.p_value = p_value
             p_values.append(p_value)
 
-        # Candidate-level aggregation (Stouffer's weighted z): folds are repeated
-        # estimates of ONE candidate, not independent hypotheses. 'Any fold significant'
-        # would let one lucky fold approve a null candidate. The aggregated p-value is
-        # the candidate's evidence; multiplicity correction is applied ACROSS the
-        # preregistered candidate family, not across folds.
-        aggregated_p = cls._stouffer_aggregate_p(fold_results) if fold_results else 1.0
+        # Candidate-level aggregation. Expanding walk-forward folds share training
+        # history and overlapping test regimes, so plain Stouffer (which assumes fold
+        # independence) overstates evidence under positive dependence (F9). The
+        # DEPENDENCE-AWARE default computes the candidate p from the full chronological
+        # out-of-sample stream via a circular block bootstrap: it preserves the
+        # autocorrelation of the prediction stream without treating each observation
+        # as independent. Stouffer is retained as the cross-check aggregate.
+        aggregated_p_bootstrap: Optional[float] = None
+        aggregated_p_stouffer = cls._stouffer_aggregate_p(fold_results) if fold_results else 1.0
+        if oos_true and len(oos_true) >= 10:
+            correct_stream = [
+                1 if str(p).upper() == str(t).upper() else 0
+                for t, p in zip(_labels_for_stream(oos_true), _labels_for_stream(oos_pred))
+            ]
+            aggregated_p_bootstrap = cls._block_bootstrap_accuracy_p(
+                correct_stream, n_boot=bootstrap_b, block_len=max(2, len(correct_stream) // 10), seed=bootstrap_seed
+            )
+            aggregated_p = aggregated_p_bootstrap
+        else:
+            aggregated_p = aggregated_p_stouffer
 
         # Family-level multiplicity: BH correction runs across the PREREGISTERED
         # candidate family when the caller declares it. A family of one is the
-        # explicit fallback (documented, not silent).
+        # explicit fallback (documented, not silent). The family helper
+        # evaluate_candidate_family() is the canonical single correction stage for
+        # multi-candidate research rounds.
         if family_p_values is not None and len(family_p_values) > 0:
             mt_summary = cls.adjust_p_values(list(family_p_values), alpha=0.05)
         else:

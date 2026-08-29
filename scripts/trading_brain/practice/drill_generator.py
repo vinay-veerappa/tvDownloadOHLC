@@ -103,8 +103,13 @@ class TargetedDrillGenerator:
                 # Deterministic pool of independent incident dates from the intervention ledger.
                 weakness_sessions = cls._get_weakness_sessions(rule_id, ticker, db_path=db_path)
                 used_session_dates: set[str] = set()
+                fallback_sessions: List[str] = []
                 drills: List[BlindedDrillContext] = []
 
+                # F12: authentic-first curriculum material. Each drill attempts the REAL
+                # historical session for its weakness date; synthetic proxies are only a
+                # documented FALLBACK when authentic history is unavailable, and the
+                # curriculum notes disclose which sessions fell back.
                 for i in range(drills_per_weakness):
                     if i < len(weakness_sessions):
                         session_date = weakness_sessions[i]
@@ -122,20 +127,35 @@ class TargetedDrillGenerator:
                         continue
                     used_session_dates.add(session_date)
 
+                    authentic_loaded = False
                     try:
                         drill = BlindedDrillEngine.generate_blinded_drill(
                             drill_type="RECOGNITION",
                             dataset_split="TRAINING",
                             session_date=session_date,
                             ticker=ticker,
-                            synthetic_mode=True,
+                            synthetic_mode=False,
                             db_path=db_path
                         )
-                        drills.append(drill)
-                    except Exception as exc:
-                        # If a historical session cannot be loaded, skip rather than fabricate a drill.
-                        # (synthetic_mode=True currently avoids this, but we keep the guard for future history mode.)
-                        continue
+                        authentic_loaded = True
+                    except Exception:
+                        # Authentic history unavailable for this session (deep archive not
+                        # merged into live storage, market holiday, etc.). Fall back to a
+                        # synthetic proxy and mark it; the drill never claims transfer.
+                        try:
+                            drill = BlindedDrillEngine.generate_blinded_drill(
+                                drill_type="RECOGNITION",
+                                dataset_split="TRAINING",
+                                session_date=session_date,
+                                ticker=ticker,
+                                synthetic_mode=True,
+                                db_path=db_path
+                            )
+                        except Exception:
+                            continue
+                    drills.append(drill)
+                    if not authentic_loaded:
+                        fallback_sessions.append(session_date)
 
                 if not drills:
                     continue
@@ -169,8 +189,13 @@ class TargetedDrillGenerator:
                         f"Targeted curriculum addressing recurring deviation '{rule_id}' "
                         f"({count} independent incident sessions). Drills use {len(used_session_dates)} "
                         f"independent session date(s): {sorted(used_session_dates)}. "
-                        f"SYNTHETIC_PROXY_DRILLS: not derived from historical incident context; "
-                        f"requires user approval before activation."
+                        + (
+                            f"AUTHENTIC_HISTORY for all sessions. "
+                            if not fallback_sessions
+                            else f"SYNTHETIC_FALLBACK for sessions {sorted(fallback_sessions)} "
+                            "(authentic bars unavailable); not derived from historical incident context. "
+                        )
+                        + "Requires user approval before activation."
                     ),
                     # Durable approval state (F22): a persisted decision for this rule is
                     # restored on regeneration, so the user's choice survives.

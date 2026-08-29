@@ -133,3 +133,7 @@ scripts/trading_framework/research_optuna.db
 *.mov
 *.flac
 *.ogg
+# Python bytecode caches - appended LAST so this rule overrides any earlier
+# negation (e.g. '!scripts/trading_brain/reports/**') that re-includes package dirs.
+**/__pycache__/
+*.py[cod]

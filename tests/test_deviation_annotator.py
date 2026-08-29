@@ -28,7 +28,7 @@ def test_deviation_annotator_contrary_bias_and_unpermitted_strat(temp_db):
     register_all_v0_strategies(db_path=temp_db)
     
     # Declare BEARISH plan with only STRAT_GOALPOST_BB_V0_1 permitted
-    PlanAdapter.save_plan_snapshot(
+    plan_id = PlanAdapter.save_plan_snapshot(
         PlanContext(
             session_date=session_date,
             ticker=ticker,
@@ -45,6 +45,7 @@ def test_deviation_annotator_contrary_bias_and_unpermitted_strat(temp_db):
         override_reason="test-fixture historical migration",
         override_actor="TEST_FIXTURE",
     )
+    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db)
     
     # Execution 1: BUY order on STRAT_ALN_LPEU_V0_1 -> BOTH violations (Contrary Bias + Unpermitted Strategy)
     exec_event = {

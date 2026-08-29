@@ -345,6 +345,28 @@ def _bind_and_validate_ticker(
         sd = rec.get("session_date")
         if requested_session_date:
             if sd is None or str(sd).strip() == "":
+                # F14: never blindly inject the requested date. Derive the record's
+                # LOGICAL futures session from its own event timestamp; a timestampless
+                # record cannot be placed in any session and is fail-closed excluded.
+                ts = rec.get("event_timestamp_utc")
+                if not ts:
+                    mismatched_session += 1
+                    mismatch_details.append(
+                        f"{record_kind} {rec.get('broker_execution_id') or rec.get('intervention_id') or '?'} "
+                        f"has neither session_date nor event_timestamp_utc - cannot place in a session, EXCLUDED"
+                    )
+                    log.warning(f"[WS-1.2] {mismatch_details[-1]}")
+                    continue
+                from scripts.utils.market_calendar import derive_futures_session_date
+                derived = derive_futures_session_date(ts)
+                if derived != str(requested_session_date):
+                    mismatched_session += 1
+                    mismatch_details.append(
+                        f"{record_kind} {rec.get('broker_execution_id') or rec.get('intervention_id') or '?'} "
+                        f"timestamp {ts} belongs to logical session {derived} != requested {requested_session_date} - EXCLUDED"
+                    )
+                    log.warning(f"[WS-1.2] {mismatch_details[-1]}")
+                    continue
                 rec["session_date"] = requested_session_date
                 injected_session += 1
             elif str(sd).split("T")[0] != str(requested_session_date):

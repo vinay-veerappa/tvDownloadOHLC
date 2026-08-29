@@ -329,7 +329,9 @@ def test_shadow_evaluation_hash_mismatch_fails_closed(temp_db):
 
 def test_inconclusive_resume_re_evaluates_without_missing_key(temp_db):
     """F15: resume after INCONCLUSIVE_WAITING reads sealed registry values, not the stale
-    event payload, so a second evaluation does not raise a missing-effect-size KeyError."""
+    event payload, so a second evaluation does not raise a missing-effect-size KeyError.
+    Sample-extension custody (F17): the resume must supply a STRICTLY LARGER sample_size;
+    re-rolling the same prefix is refused."""
     finding_id = "f-resume"
     labels = LABELS_UNDER
     hash_ = HoldoutRegistry.register_holdout(
@@ -355,12 +357,21 @@ def test_inconclusive_resume_re_evaluates_without_missing_key(temp_db):
         finding_id=finding_id,
         model_version_id="MOD_RESUME",
         model_predict_fn=bound_mediocre_predictor,
-        sample_size=10,
+        sample_size=5,
         db_path=temp_db,
     )
     assert first.pipeline_stage == "INCONCLUSIVE_WAITING"
-    # Resume with MORE samples: must re-evaluate (not KeyError), still underpowered at
-    # the same N ceiling but readable from the registry.
+
+    # Same-size re-roll refused (no new evidence).
+    with pytest.raises(ShadowGateLockedError, match="STRICTLY LARGER"):
+        ShadowGate.evaluate_candidate_finding(
+            finding_id=finding_id,
+            model_version_id="MOD_RESUME",
+            model_predict_fn=bound_mediocre_predictor,
+            sample_size=5,
+            db_path=temp_db,
+        )
+    # Larger prefix re-evaluates from sealed registry values - no resume KeyError.
     second = ShadowGate.evaluate_candidate_finding(
         finding_id=finding_id,
         model_version_id="MOD_RESUME",
@@ -369,3 +380,55 @@ def test_inconclusive_resume_re_evaluates_without_missing_key(temp_db):
         db_path=temp_db,
     )
     assert second.pipeline_stage in ("INCONCLUSIVE_WAITING", "PROMOTED", "REJECTED")
+
+def test_binding_detects_closure_mutation(temp_db):
+    """F2 hardening: mutating a captured closure variable between preregistration and
+    evaluation changes the binding and is refused."""
+    labels = LABELS_PROMO[:40]
+
+    def make_predictor(pred_source_labels):
+        def predictor(features):
+            return pred_source_labels[: len(features)]
+        return predictor
+
+    hash_ = HoldoutRegistry.register_holdout(
+        holdout_dataset_id="HOLDOUT_CLOSURE",
+        features=list(range(len(labels))),
+        labels=labels,
+        benchmark_metric=0.55,
+        expected_effect_size_d=0.5,
+        db_path=temp_db,
+    )
+    predictor = make_predictor(labels)
+    ShadowGate.preregister_candidate_finding(
+        finding_id="f-closure",
+        model_version_id="MOD_CLOSURE",
+        benchmark_metric=0.55,
+        expected_effect_size_d=0.5,
+        feature_manifest={},
+        holdout_dataset_id="HOLDOUT_CLOSURE",
+        holdout_dataset_hash=hash_,
+        model_predict_fn=predictor,
+        db_path=temp_db,
+    )
+    result = ShadowGate.evaluate_candidate_finding(
+        finding_id="f-closure",
+        model_version_id="MOD_CLOSURE",
+        model_predict_fn=predictor,
+        sample_size=40,
+        db_path=temp_db,
+    )
+    # Terminal on first evaluation; the binding test resumes by a strictly larger N.
+    assert result.pipeline_stage == "PROMOTED"
+
+    # Mutate the captured list in place - same function object, different behavior.
+    # The resume is refused on the BINDING change before any sample-extension check.
+    labels[0] = "SHORT" if labels[0] == "LONG" else "LONG"
+    with pytest.raises(ModelBindingMismatchError):
+        ShadowGate.evaluate_candidate_finding(
+            finding_id="f-closure",
+            model_version_id="MOD_CLOSURE",
+            model_predict_fn=predictor,
+            sample_size=41,
+            db_path=temp_db,
+        )

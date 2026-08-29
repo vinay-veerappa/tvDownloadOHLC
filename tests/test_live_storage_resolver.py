@@ -90,3 +90,27 @@ def test_load_session_bars_as_of_cutoff(tmp_path):
     df = load_session_bars_as_of_cutoff("NQ1", session_date, cutoff, custom_dir=tmp_path)
     assert df["dt"].max() <= cutoff
     assert len(df) == 151
+
+
+def test_manifest_includes_prior_evening_leg_of_logical_session(tmp_path):
+    """F4 regression: the sealed manifest slices the LOGICAL futures session - the
+    prior-evening Globex bar (previous ET calendar day) must be inside the hash."""
+    from datetime import datetime as _dt, timezone as _tz
+    import pandas as _pd
+    from scripts.utils.live_storage_resolver import _DF_CACHE
+
+    records = [
+        # Prior-evening leg: Aug 27 20:00 ET = Aug 28 00:00Z (~midnight UTC Aug 28)
+        {"dt": _pd.Timestamp(_dt(2026, 8, 28, 0, 0, tzinfo=_tz.utc)),
+         "open": 20000.0, "high": 20004.0, "low": 19997.0, "close": 20001.0, "volume": 100},
+        # RTH leg: Aug 28 09:30 ET = 13:30Z
+        {"dt": _pd.Timestamp(_dt(2026, 8, 28, 13, 30, tzinfo=_tz.utc)),
+         "open": 20010.0, "high": 20014.0, "low": 20007.0, "close": 20011.0, "volume": 100},
+    ]
+    _pd.DataFrame(records).to_parquet(tmp_path / "live_storage_-NQ.parquet")
+
+    cutoff = _pd.Timestamp(_dt(2026, 8, 28, 14, 0, tzinfo=_tz.utc))
+    manifest = get_session_slice_manifest("NQ1", "2026-08-28", cutoff, custom_dir=tmp_path)
+    # Both the prior-evening bar AND the RTH bar are inside the sealed slice.
+    assert manifest["row_count"] == 2
+    assert manifest["max_timestamp_utc"] == "2026-08-28T13:30:00Z"

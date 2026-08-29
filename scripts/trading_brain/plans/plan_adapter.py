@@ -78,17 +78,28 @@ class PlanAdapter:
         """Persists a plan snapshot.
 
         Trust boundary: `received_at_utc` is the actual database receipt time by default.
-        An override is a PRIVILEGED migration action: it requires both `override_reason`
-        and `override_actor`, and writes an auditable RECEIPT_OVERRIDE lifecycle event
-        recording the claimed historical receipt, the actor, and the reason. The claimed
-        receipt can award EX_ANTE_DECLARED only through this audited path.
+        An override is a capability-gated MIGRATION action: it requires
+        (a) override_reason and override_actor, and (b) the migration capability flag
+        (env TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1) set by migration tooling. Normal
+        application code cannot grant itself this capability. A plan saved through the
+        override path gets provenance HISTORICAL_SOURCE_ASSERTED - NOT live ex-ante
+        authority - so get_plan_as_of excludes it from compliance evaluation unless a
+        separate verification step re-certifies it as EX_ANTE_DECLARED.
         """
-        if received_at_utc is not None and (not override_reason or not override_actor):
-            raise ValueError(
-                "received_at_utc override requires override_reason and override_actor "
-                "(privileged migration path). Unaudited caller-supplied receipt times can "
-                "forge ex-ante provenance."
-            )
+        if received_at_utc is not None:
+            if not override_reason or not override_actor:
+                raise ValueError(
+                    "received_at_utc override requires override_reason and override_actor "
+                    "(privileged migration path). Unaudited caller-supplied receipt times can "
+                    "forge ex-ante provenance."
+                )
+            import os
+            if os.environ.get("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE") != "1":
+                raise ValueError(
+                    "received_at_utc override requires the migration capability "
+                    "(TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1). Normal application APIs must "
+                    "not backdate evidence; run migrations through the migration tooling."
+                )
         snapshot_id = plan.plan_snapshot_id or str(uuid.uuid4())
         plan_family_id = plan.plan_family_id or str(uuid.uuid4())
         is_receipt_override = received_at_utc is not None
@@ -108,9 +119,13 @@ class PlanAdapter:
         prov = "EX_ANTE_DECLARED" if plan.provenance_class in ("EX_ANTE", "EX_ANTE_DECLARED") else "POST_HOC_RECONSTRUCTION"
 
         # Trust boundary: receipt must be on or before the session cutoff for ex-ante;
-        # otherwise degrade honestly.
+        # otherwise degrade honestly. Receipt OVERRIDE degrades further: a historical
+        # receipt ASSERTED by migration tooling carries HISTORICAL_SOURCE_ASSERTED, which
+        # get_plan_as_of does not treat as live ex-ante authority (F10).
         real_recv_iso = to_iso_utc(received_at_utc) if received_at_utc else now_iso_utc()
-        if prov == "EX_ANTE_DECLARED" and parse_iso_utc(real_recv_iso) > parse_iso_utc(cutoff_iso):
+        if is_receipt_override:
+            prov = "HISTORICAL_SOURCE_ASSERTED"
+        elif prov == "EX_ANTE_DECLARED" and parse_iso_utc(real_recv_iso) > parse_iso_utc(cutoff_iso):
             prov = "POST_HOC_RECONSTRUCTION"
         recv_iso = real_recv_iso
 
@@ -196,6 +211,55 @@ class PlanAdapter:
         return snapshot_id
 
     @classmethod
+    def verify_historical_snapshot(
+        cls,
+        plan_snapshot_id: str,
+        verifier: str,
+        reason: str,
+        db_path: Optional[Union[str, Path]] = None,
+    ) -> None:
+        """Re-certifies a HISTORICAL_SOURCE_ASSERTED snapshot as EX_ANTE_DECLARED.
+
+        Capability-gated like the receipt override: a migration tooling step verifies
+        the asserted plan against INDEPENDENT evidence (e.g. exported chart screenshots,
+        broker statements, VPS/audit logs). The ledger records the explicit
+        HISTORICAL_VERIFIED lifecycle event; without this re-certification, asserted
+        snapshots have no live-plan authority (F10).
+        """
+        import os
+        if os.environ.get("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE") != "1":
+            raise ValueError(
+                "verify_historical_snapshot requires the migration capability "
+                "(TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1)."
+            )
+        if not verifier or not reason:
+            raise ValueError("verify_historical_snapshot requires verifier and reason.")
+        with get_db_connection(db_path) as conn:
+            row = conn.execute(
+                "SELECT provenance_class FROM plan_snapshots WHERE plan_snapshot_id = ?;",
+                (plan_snapshot_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError(f"plan snapshot '{plan_snapshot_id}' not found.")
+            if row["provenance_class"] != "HISTORICAL_SOURCE_ASSERTED":
+                raise ValueError(
+                    f"snapshot '{plan_snapshot_id}' is '{row['provenance_class']}'; only "
+                    "HISTORICAL_SOURCE_ASSERTED snapshots can be re-certified."
+                )
+            # plan_snapshots is immutable by trigger; re-certification is therefore
+            # granted via the append-only HISTORICAL_VERIFIED lifecycle event, which
+            # get_plan_as_of treats as the authority grant (event + verifier recorded).
+            conn.execute(
+                """
+                INSERT INTO plan_lifecycle_events (
+                    event_id, plan_snapshot_id, event_type, recorded_at_utc, reason
+                ) VALUES (?, ?, 'HISTORICAL_VERIFIED', ?, ?);
+                """,
+                (str(uuid.uuid4()), plan_snapshot_id, now_iso_utc(),
+                 f"Re-certified by {verifier}: {reason}")
+            )
+
+    @classmethod
     def get_plan_as_of(
         cls,
         session_date: str,
@@ -210,7 +274,6 @@ class PlanAdapter:
                 """
                 SELECT p.* FROM plan_snapshots p
                 WHERE p.session_date = ? AND p.ticker = ?
-                  AND p.provenance_class IN ('EX_ANTE', 'EX_ANTE_DECLARED')
                   AND p.received_at_utc <= ?
                   AND p.preparation_cutoff_utc <= ?
                   AND NOT EXISTS (
@@ -227,7 +290,24 @@ class PlanAdapter:
             row = cur.fetchone()
             if not row:
                 return None
-                
+            # Provenance authority gate (F10): HISTORICAL_SOURCE_ASSERTED rows have no
+            # live-plan authority UNLESS a capability-gated migration verification step
+            # recorded an append-only HISTORICAL_VERIFIED event for them.
+            effective_provenance = row["provenance_class"]
+            if effective_provenance == "HISTORICAL_SOURCE_ASSERTED":
+                verified = conn.execute(
+                    """
+                    SELECT 1 FROM plan_lifecycle_events
+                    WHERE plan_snapshot_id = ? AND event_type = 'HISTORICAL_VERIFIED'
+                    ORDER BY recorded_at_utc DESC LIMIT 1;
+                    """,
+                    (row["plan_snapshot_id"],)
+                ).fetchone()
+                if not verified:
+                    row = None
+            if row is None:
+                return None
+
             snapshot_id = row["plan_snapshot_id"]
             strats = json.loads(row["permitted_strategies_json"]) if row["permitted_strategies_json"] else []
             scenarios = json.loads(row["wargamed_scenarios_json"]) if row["wargamed_scenarios_json"] else {}

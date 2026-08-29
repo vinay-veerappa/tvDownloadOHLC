@@ -125,10 +125,15 @@ class DailyProcessDeltaScorecard:
     bias_direction_respected: bool
     permitted_strategies_respected: bool
     risk_budget_respected: bool
-    
     # Quadrant Classification
     process_outcome_quadrant: str              # 'GOOD_PROCESS_GOOD_OUTCOME', 'GOOD_PROCESS_BAD_OUTCOME', 'BAD_PROCESS_GOOD_OUTCOME', 'BAD_PROCESS_BAD_OUTCOME'
     reconciliation_timestamp_utc: str
+    # F15 honesty: VERIFIED when declared stops/quantities via matched opportunities
+    # actually establish risk; RISK_UNASSESSABLE when executions exist but the ledger
+    # cannot establish actual risk (discretionary fills, missing stops/qty/protective
+    # state). Unassessable is NOT compliant evidence. (Keyword-only default; placed
+    # after required fields.)
+    risk_assessment_state: str = "VERIFIED"
 
 
 class DailyProcessDeltaReconciler:
@@ -331,12 +336,14 @@ class DailyProcessDeltaReconciler:
             )
 
             # 5. Strict Process Compliance Derivation
+            risk_state = "VERIFIED"
             if not plan_summary.plan_found:
                 # If no plan exists, any execution is non-compliant
                 plan_compliant = (total_execs == 0)
                 bias_respected = (total_execs == 0)
                 strat_respected = (total_execs == 0)
                 risk_respected = (total_execs == 0)
+                risk_state = "VERIFIED" if total_execs == 0 else "RISK_UNASSESSABLE"
             else:
                 # Bias respected: no deviation annotations (PLAN_BIAS_DIRECTION_DEVIATION / NO_TRADE_PLAN_DEVIATION)
                 # against the effective plan. Generic interventions are orthogonal to plan adherence.
@@ -377,12 +384,16 @@ class DailyProcessDeltaReconciler:
                 # within 5% of the plan's risk budget. FAIL-CLOSED on unmatched discretionary
                 # fills: a discretionary execution carries no declared stop distance, so its
                 # risk compliance CANNOT be verified from the ledger — unverified is not
-                # compliant.
+                # compliant. Such sessions are marked RISK_UNASSESSABLE (F15): actual
+                # quantity, protective stop state, live exposure, and the discretionary
+                # execution's own risk are simply not in this ledger's evidence.
                 if total_execs > 0:
                     if plan_summary.max_intended_risk_bps is None or plan_summary.max_intended_risk_bps <= 0.0:
                         risk_respected = False
+                        risk_state = "RISK_UNASSESSABLE"
                     else:
                         risk_respected = True
+                        risk_state = "VERIFIED"
                         verified_via_opportunity = 0
                         for r in opp_rows:
                             if r["active_disposition"] == "EXECUTED":
@@ -395,8 +406,10 @@ class DailyProcessDeltaReconciler:
                         # the matched set are discretionary/unverifiable risk.
                         if verified_via_opportunity < total_execs:
                             risk_respected = False
+                            risk_state = "RISK_UNASSESSABLE"
                 else:
                     risk_respected = True
+                    risk_state = "VERIFIED"
 
                 plan_compliant = bias_respected and strat_respected and risk_respected
 
@@ -427,6 +440,7 @@ class DailyProcessDeltaReconciler:
                 bias_direction_respected=bias_respected,
                 permitted_strategies_respected=strat_respected,
                 risk_budget_respected=risk_respected,
+                risk_assessment_state=risk_state,
                 process_outcome_quadrant=quadrant,
                 reconciliation_timestamp_utc=now_iso_utc()
             )

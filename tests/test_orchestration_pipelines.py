@@ -228,3 +228,25 @@ def test_post_market_pipeline_end_to_end(temp_db, tmp_path):
     report_path = Path("data/wargaming/reports") / f"daily_process_delta_{session_date}_NQ1.md"
     if report_path.exists():
         assert report_path.read_text(encoding="utf-8").startswith("# Daily Process Delta")
+
+def test_bind_and_validate_ticker_derives_session_from_timestamp():
+    """F14: a record WITHOUT session_date is placed via its event timestamp's logical
+    futures session; a timestamp from another session is fail-closed excluded."""
+    from scripts.trading_brain.orchestration.pre_market_pipeline import _bind_and_validate_ticker
+
+    records = [
+        # Aug 27 21:00Z = Aug 27 17:00 ET -> still belongs to the Aug 27 LOGICAL session
+        {"broker_execution_id": "b-ok", "event_timestamp_utc": "2026-08-27T21:00:00Z"},
+        # Aug 27 23:00 ET = within Aug 28 logical session? 23:00 ET >= 18:00 roll -> Aug 28 session
+        {"broker_execution_id": "b-next", "event_timestamp_utc": "2026-08-27T23:00:00Z"},
+        # No timestamp at all -> cannot place, excluded
+        {"broker_execution_id": "b-nots"},
+    ]
+    bound, meta = _bind_and_validate_ticker(records, "NQ1", "fill", requested_session_date="2026-08-27")
+    ids = [r["broker_execution_id"] for r in bound]
+    assert "b-ok" in ids
+    assert "b-next" not in ids          # belongs to the NEXT logical session
+    assert "b-nots" not in ids          # timestampless -> excluded
+    assert meta["mismatched_session_date"] == 2
+    assert meta["injected_session_date"] == 1
+    assert bound[0]["session_date"] == "2026-08-27"

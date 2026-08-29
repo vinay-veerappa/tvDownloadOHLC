@@ -1,12 +1,15 @@
 ﻿"""Pytest suite for Daily Process Delta & 4-Way Institutional Reconciliation (Milestone 1.1)."""
 
 import sqlite3
+import os
 import tempfile
 from pathlib import Path
 import pytest
 
 from scripts.trading_brain.db.init_db import init_trading_brain_db
 from scripts.trading_brain.evaluation.daily_process_delta import DailyProcessDeltaReconciler
+
+os.environ.setdefault("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE", "1")
 from scripts.trading_brain.plans.plan_adapter import PlanAdapter, PlanContext
 
 @pytest.fixture
@@ -20,7 +23,7 @@ def test_4way_reconciler_live_production_and_replay_scoring(temp_db):
     session_date = "2026-08-28"
     ticker = "NQ1"
     
-    PlanAdapter.save_plan_snapshot(
+    plan_id = PlanAdapter.save_plan_snapshot(
         PlanContext(
             session_date=session_date, ticker=ticker, preparation_cutoff_utc="2026-08-28T12:45:00Z",
             verbatim_plan_text="Bullish plan", primary_bias="BULLISH", wargamed_scenarios={},
@@ -31,6 +34,7 @@ def test_4way_reconciler_live_production_and_replay_scoring(temp_db):
         override_reason="test-fixture historical migration",
         override_actor="TEST_FIXTURE",
     )
+    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db)
     
     with sqlite3.connect(str(temp_db)) as conn:
         conn.execute(
@@ -112,3 +116,54 @@ def test_no_plan_executions_flagged_non_compliant(temp_db):
     assert scorecard.plan.plan_found is False
     assert scorecard.plan_compliant is False
 
+
+
+def test_discretionary_fills_marked_risk_unassessable(temp_db):
+    """F15: executions beyond the matched opportunity set cannot establish actual risk -
+    the scorecard must carry RISK_UNASSESSABLE instead of compliant-risk evidence."""
+    session_date = "2026-08-28"
+    ticker = "NQ1"
+
+    plan_id = PlanAdapter.save_plan_snapshot(
+        PlanContext(
+            session_date=session_date, ticker=ticker, preparation_cutoff_utc="2026-08-28T12:45:00Z",
+            verbatim_plan_text="Bullish plan", primary_bias="BULLISH", wargamed_scenarios={},
+            invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["STRAT_ALN_LPEU_V0_1"]
+        ),
+        db_path=temp_db,
+        received_at_utc="2026-08-28T12:30:00Z",
+        override_reason="test-fixture historical migration",
+        override_actor="TEST_FIXTURE",
+    )
+    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db)
+
+    with sqlite3.connect(str(temp_db)) as conn:
+        conn.execute(
+            """
+            INSERT INTO session_tape_actuals (
+                actual_id, session_date, ticker, revision_seq, source_system,
+                session_open, session_high, session_low, session_close, rth_close,
+                hod_timestamp_utc, lod_timestamp_utc, session_range_bps,
+                day_type_classification, content_hash, quality_state
+            ) VALUES ('act-f15', ?, ?, 1, 'TEST', 20000, 20100, 19900, 20050, 20050,
+                      '2026-08-28T14:00:00Z', '2026-08-28T14:30:00Z', 0.5,
+                      'R1', 'hash', 'CLEAN');
+            """,
+            (session_date, ticker)
+        )
+        # An execution with NO matching opportunity -> discretionary/unverifiable.
+        conn.execute(
+            """
+            INSERT INTO execution_events (
+                execution_id, session_date, ticker, account_id, broker_execution_id,
+                broker_order_id, order_action, order_type, quantity, fill_price,
+                strategy_version_id, idempotency_key, event_timestamp_utc
+            ) VALUES ('exec-f15', ?, ?, 'ACC1', 'b-f15', 'o-f15', 'BUY', 'LIMIT', 1, 20000.0,
+                      'STRAT_ALN_LPEU_V0_1', 'idemp-f15', '2026-08-28T13:35:00Z');
+            """,
+            (session_date, ticker)
+        )
+
+    scorecard = DailyProcessDeltaReconciler.reconcile_session(session_date, ticker, db_path=temp_db)
+    assert scorecard.risk_assessment_state == "RISK_UNASSESSABLE"
+    assert scorecard.risk_budget_respected is False

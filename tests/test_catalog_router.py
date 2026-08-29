@@ -10,6 +10,11 @@ import pytest
 from scripts.trading_brain.db.init_db import init_trading_brain_db
 from scripts.trading_brain.intake.catalog_router import CatalogRouter, InformationItemPayload
 
+import os as _os
+# Fixture capability: these tests verify MIGRATION-path receipt semantics (historical
+# receipts asserted by tooling). Production callers do not have this capability flag.
+_os.environ.setdefault("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE", "1")
+
 
 @pytest.fixture
 def temp_db():
@@ -238,3 +243,29 @@ def test_catalog_router_as_of_pagination_offset(temp_db):
     ids_two = {r["information_id"] for r in page_two}
     assert len(ids_one) == 2 and len(ids_two) == 2
     assert ids_one.isdisjoint(ids_two)
+
+
+
+
+def test_catalog_router_capability_flag_gates_override(temp_db):
+    """F7: with the capability flag explicitly REMOVED, the override is refused even
+    with reason+actor supplied (production default)."""
+    item = InformationItemPayload(
+        evidence_class="DOCTRINE",
+        time_orientation="EX_ANTE",
+        source_type="TRANSCRIPT",
+        title="Capability gate",
+        verbatim_text="...",
+        available_at_utc="2026-08-28T08:00:00Z"
+    )
+    env_flag = _os.environ.pop("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE", None)
+    try:
+        with pytest.raises(ValueError, match="migration capability"):
+            CatalogRouter.create_item(
+                item, db_path=temp_db,
+                received_at_utc="2026-08-28T07:00:00Z",
+                override_reason="attempt", override_actor="ROGUE",
+            )
+    finally:
+        if env_flag is not None:
+            _os.environ["TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE"] = env_flag

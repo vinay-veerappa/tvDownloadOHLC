@@ -87,6 +87,14 @@ class CatalogRouter:
                 "(privileged migration path). Unaudited caller-supplied receipt times forge "
                 "historical as-of evidence."
             )
+        if received_at_utc is not None:
+            import os
+            if os.environ.get("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE") != "1":
+                raise ValueError(
+                    "received_at_utc override requires the migration capability "
+                    "(TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1). Normal application APIs must "
+                    "not backdate evidence; run migrations through the migration tooling."
+                )
         recv_iso = to_iso_utc(received_at_utc) if received_at_utc else now_iso_utc()
 
         with get_db_connection(db_path) as conn:

@@ -66,10 +66,23 @@ class ModelBindingMismatchError(Exception):
 def _predictor_binding(fn: Callable[[Any], Sequence[Any]]) -> Dict[str, str]:
     """Produces a stable identity binding for a prediction function.
 
-    Identity = module + qualified name + sha256 of source. Callables with the same
-    identity execute the same code; an oracle-style replacement fails the hash.
+    Identity covers (each independently hashed):
+      - source:       module + qualified name + sha256 of source
+      - closure:      the VALUES captured in fn.__closure__ cells (a re-bound free
+                      variable changes the binding)
+      - globals:      the module-level/global names the function's code references
+                      (fn.__code__.co_names ∩ fn.__globals__ and __builtins specials
+                      excluded), hashed from their repr
+      - defaults:     fn.__defaults__ and fn.__kwdefaults__ reprs
+
+    This is still not full artifact custody (weights files, loaded external data, or
+    the runtime environment are not captured) - documented follow-up: resolve and
+    execute a registered immutable model artifact in an isolated evaluation process.
+    It DOES close the cheap holes: swapping the function, mutating captured closure
+    state, or mutating a referenced global between preregistration and evaluation.
     """
     import inspect
+
     module = getattr(fn, "__module__", None) or "<unknown>"
     qualname = getattr(fn, "__qualname__", None) or repr(fn)
     try:
@@ -77,16 +90,51 @@ def _predictor_binding(fn: Callable[[Any], Sequence[Any]]) -> Dict[str, str]:
     except (OSError, TypeError):
         src = ""
     src_hash = hashlib.sha256(src.encode("utf-8")).hexdigest()[:32]
-    return {"module": module, "qualname": qualname, "source_hash": f"sha256:{src_hash}"}
+
+    closure_vals = []
+    for cell in (getattr(fn, "__closure__", None) or ()):
+        try:
+            closure_vals.append(repr(cell.cell_contents))
+        except ValueError:
+            closure_vals.append("<empty-cell>")
+    closure_hash = hashlib.sha256("|".join(closure_vals).encode("utf-8")).hexdigest()[:32] if closure_vals else "<none>"
+
+    code = getattr(fn, "__code__", None)
+    if code is not None:
+        g = getattr(fn, "__globals__", {}) or {}
+        referenced = sorted({n for n in code.co_names if n in g})
+        globals_hash = hashlib.sha256(
+            "|".join(f"{n}={repr(g[n])}" for n in referenced).encode("utf-8")
+        ).hexdigest()[:32] if referenced else "<none>"
+    else:
+        globals_hash = "<unknown>"
+
+    defaults_repr = repr((getattr(fn, "__defaults__", None), getattr(fn, "__kwdefaults__", None)))
+    defaults_hash = hashlib.sha256(defaults_repr.encode("utf-8")).hexdigest()[:32]
+
+    return {
+        "module": module,
+        "qualname": qualname,
+        "source_hash": f"sha256:{src_hash}",
+        "closure_hash": f"sha256:{closure_hash}",
+        "globals_hash": f"sha256:{globals_hash}",
+        "defaults_hash": f"sha256:{defaults_hash}",
+    }
+
+
+_REQUIRED_BINDING_KEYS = ("module", "qualname", "source_hash", "closure_hash", "globals_hash", "defaults_hash")
 
 
 def _bindings_match(a: Dict[str, str], b: Dict[str, str]) -> bool:
-    """A binding matches when module+qualname+source hash agree (declared, not guessed)."""
-    return (
-        a.get("module") == b.get("module")
-        and a.get("qualname") == b.get("qualname")
-        and a.get("source_hash") == b.get("source_hash")
-    )
+    """A binding matches when every tracked component agrees (declared, not guessed).
+
+    Legacy bindings (pre-closure/globals tracking) lack the newer keys; those match
+    only on their recorded keys - a re-preregistration is required to gain the full
+    custody chain.
+    """
+    keys = ("module", "qualname", "source_hash")
+    keys += tuple(k for k in _REQUIRED_BINDING_KEYS[3:] if k in a and k in b)
+    return all(a.get(k) == b.get(k) for k in keys)
 
 
 @dataclass
@@ -294,12 +342,6 @@ class ShadowGate:
                 )
 
             prev_stage = row["pipeline_stage"]
-            if prev_stage in ("PROMOTED", "REJECTED", "INVALID_TEST"):
-                raise ShadowGateLockedError(
-                    f"Candidate finding '{finding_id}' has already been evaluated to terminal stage "
-                    f"'{prev_stage}' and cannot be re-evaluated."
-                )
-
             prev_json = json.loads(row["evaluation_result_json"]) if row["evaluation_result_json"] else {}
             prereg_model = prev_json.get("model_version_id", row["model_version_id"])
             if prereg_model != model_version_id:
@@ -308,12 +350,9 @@ class ShadowGate:
                     f"for finding '{finding_id}'."
                 )
 
-            # Anti-oracle: the executed predictor must be the one bound at
-            # preregistration. A different callable (e.g. one returning the sealed
-            # labels) is refused outright. Resume contract (F15): an INCONCLUSIVE_WAITING
-            # event's payload re-derives its metrics from the holdout registry and does
-            # not carry the binding, so on resume fall back to the ORIGINAL
-            # preregistration (DISCOVERY) event's bound predictor.
+            # Anti-oracle binding check runs BEFORE the terminal-stage lock so a
+            # custody mismatch is always reported as a binding violation, even on a
+            # finding whose evaluation journey is already complete.
             bound = prev_json.get("bound_predictor")
             if not bound:
                 disc = conn.execute(
@@ -339,6 +378,34 @@ class ShadowGate:
                     f"(bound={bound.get('module')}.{''.join(bound.get('qualname', ''))}). "
                     "The gate executes ONLY the registered model's bound predictor."
                 )
+
+            if prev_stage in ("PROMOTED", "REJECTED", "INVALID_TEST"):
+                raise ShadowGateLockedError(
+                    f"Candidate finding '{finding_id}' has already been evaluated to terminal stage "
+                    f"'{prev_stage}' and cannot be re-evaluated."
+                )
+
+            # Sample-extension custody (F17): a resume must ADD observations. Re-running
+            # the same prefix of a stored holdout re-rolls the SAME data for a luckier
+            # draw - the previous evaluation already consumed those samples, and nothing
+            # proved new samples became available since. Sample sizes must strictly grow.
+            if prev_stage == "INCONCLUSIVE_WAITING":
+                try:
+                    prev_payload = json.loads(row["evaluation_result_json"] or "{}")
+                    prev_n = int(prev_payload.get("sample_size") or 0)
+                except (TypeError, ValueError):
+                    prev_n = 0
+                if sample_size is not None and prev_n and sample_size <= prev_n:
+                    raise ShadowGateLockedError(
+                        f"Sample-extension custody violation: previous evaluation used "
+                        f"n={prev_n}; a resume must supply a STRICTLY LARGER sample_size "
+                        "(new observations only), not re-roll the same holdout prefix."
+                    )
+                if sample_size is None:
+                    raise ShadowGateLockedError(
+                        "Resuming an INCONCLUSIVE_WAITING finding requires an explicit, "
+                        "STRICTLY LARGER sample_size (sample-extension custody)."
+                    )
 
             metric_kind = prev_json.get("metric_kind", "DIRECTIONAL_ACCURACY")
             holdout_dataset_id = prev_json["holdout_dataset_id"]

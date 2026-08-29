@@ -168,3 +168,27 @@ def test_walk_forward_family_p_values_correction():
     # rank 1: q = 0.02 * 5 / 1 = 0.10 -> NOT significant at 0.05
     assert mt[0].bh_q_value >= 0.10
     assert mt[0].significant_fdr_05 is False
+
+
+def test_bootstrap_aggregate_small_p_for_perfect_stream():
+    """F9: the dependence-aware block-bootstrap aggregate gives near-zero p for a
+    perfect OOS stream and a large p for a chance-level stream (fixed seed)."""
+    perfect = [1] * 60
+    p_good = WalkForwardGate._block_bootstrap_accuracy_p(perfect, n_boot=500, seed=42)
+    rng = __import__("random").Random(7)
+    chance = [1 if rng.random() < 0.5 else 0 for _ in range(60)]
+    p_chance = WalkForwardGate._block_bootstrap_accuracy_p(chance, n_boot=500, seed=42)
+    assert p_good <= 1.0 / 500
+    assert p_chance > 0.05
+
+
+def test_evaluate_candidate_family_bh_stage():
+    """F8: the family-level correction stage - raw p=0.02 at rank 5/5 -> q=0.10."""
+    rows = WalkForwardGate.evaluate_candidate_family(
+        [("cand_e", 0.02), ("cand_d", 0.30), ("cand_c", 0.60), ("cand_b", 0.80), ("cand_a", 0.90)]
+    )
+    by_id = {r["candidate_id"]: r for r in rows}
+    assert by_id["cand_e"]["raw_p_value"] == 0.02
+    assert by_id["cand_e"]["significant_fdr_05"] is False
+    assert by_id["cand_e"]["bh_q_value"] >= 0.10
+    assert all(not r["significant_fdr_05"] for r in rows)
