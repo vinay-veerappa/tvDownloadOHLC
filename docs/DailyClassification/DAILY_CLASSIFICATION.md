@@ -2,6 +2,15 @@
 
 This document provides a technical and visual reference for the four primary daily action types (R1, R2, DWP, DNP). These classifications are derived relative to the **09:30 1-minute Opening Range (OR)**.
 
+## ⛔ End-of-Day Outcome — NOT a Pre-Market Prediction
+
+> [!CRITICAL]
+> **R1, R2, DWP, DNP are EX-POST labels.** Classification requires the **full session's hourly structure through 16:00 ET** (breaks, returns after 11:00, pullback counts across all boxes). A day cannot be classified until the session is complete. The mechanical classifier runs at EOD (e.g., the 16:15 ET tape extractor); the value only exists afterward.
+>
+> **During wargaming, do not predict these labels.** Pre-market planning uses the *overnight structural profile states* (LT/ST/LF/SF), P12 directional vectors, and session alignment — see `.agents/rules/daily_profiler_wargaming.md`. In the canonical `forecast_snapshots` schema, `prob_r1/prob_r2/prob_dnp/prob_dwp` are calibrated model *targets* evaluated after the fact (Brier/log-loss), never wargame inputs.
+>
+> Given an ex-ante plan, the correct use is conditional: *"If the day develops X (breaks hold, no return), it is trending toward DNP-like action — here is the play."* The label itself is still assigned at close.
+
 ## ⚖️ Precedence & Hierarchy
 
 To ensure unambiguous classification, the system follows a strict hierarchy. If a day meets multiple criteria, the higher-priority type is chosen:
