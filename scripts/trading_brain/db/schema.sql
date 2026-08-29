@@ -655,3 +655,29 @@ CREATE TRIGGER IF NOT EXISTS trg_prevent_delete_model_versions
 BEFORE DELETE ON model_versions BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table model_versions');
 END;
+
+-- 23. MODEL_DEPLOYMENT_EVENTS (Append-Only Deployment Ledger)
+CREATE TABLE IF NOT EXISTS model_deployment_events (
+    deployment_event_id TEXT PRIMARY KEY,     -- UUID v4
+    model_version_id TEXT NOT NULL,           -- FK -> model_versions.model_version_id
+    tier INTEGER NOT NULL,                    -- 1, 2, 3, 4
+    deployment_status TEXT NOT NULL,          -- 'CANDIDATE', 'CHAMPION', 'SHADOW', 'RETIRED', 'REJECTED'
+    eval_metrics_json TEXT,                   -- JSON metrics payload
+    actor TEXT NOT NULL,                      -- Operator or orchestrator ID
+    reason TEXT,                              -- Rationale for deployment transition
+    event_timestamp_utc TIMESTAMP NOT NULL,
+    created_at_utc TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (model_version_id) REFERENCES model_versions (model_version_id)
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_immutable_model_deployment_events_update
+BEFORE UPDATE ON model_deployment_events
+BEGIN
+    SELECT RAISE(ABORT, 'MUTATION_FORBIDDEN: model_deployment_events is an immutable ledger');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_immutable_model_deployment_events_delete
+BEFORE DELETE ON model_deployment_events
+BEGIN
+    SELECT RAISE(ABORT, 'MUTATION_FORBIDDEN: model_deployment_events is an immutable ledger');
+END;

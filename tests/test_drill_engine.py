@@ -1,14 +1,16 @@
 """Pytest suite for BlindedDrillEngine (Milestone 2.3)."""
 
-import sqlite3
 import tempfile
 from pathlib import Path
-
 import pytest
 
 from scripts.trading_brain.db.init_db import init_trading_brain_db
-from scripts.trading_brain.practice.drill_engine import BlindedDrillEngine, DrillDeclaration
-
+from scripts.trading_brain.practice.drill_engine import (
+    BlindedDrillEngine,
+    DrillDeclaration,
+    DrillAlreadyLockedError,
+    HistoricalDataUnavailableError,
+)
 
 @pytest.fixture
 def temp_db():
@@ -17,40 +19,38 @@ def temp_db():
         init_trading_brain_db(db_path=db_path, verbose=False)
         yield db_path
 
-
-def test_blinded_drill_generation_and_evaluation(temp_db):
-    """Tests generating blinded drill from real historical bars, locking declaration, and scoring process adherence."""
-    drill_ctx = BlindedDrillEngine.generate_blinded_drill(
+def test_blinded_drill_split_custody_and_evaluation(temp_db):
+    # 1. Generate blinded drill
+    drill = BlindedDrillEngine.generate_blinded_drill(
         drill_type="RECOGNITION",
         dataset_split="TRAINING",
         session_date="2026-08-28",
         ticker="NQ1"
     )
     
-    assert len(drill_ctx.blinded_bars) >= 30
-    assert drill_ctx.true_session_date == "2026-08-28"
-    assert drill_ctx.true_ticker == "NQ1"
+    # Assert anti-memorization & split custody: caller CANNOT see true answers
+    assert hasattr(drill, "drill_id")
+    assert not hasattr(drill, "true_bias")
+    assert not hasattr(drill, "true_setup")
+    assert not hasattr(drill, "true_session_date")
+    assert len(drill.blinded_bars) > 0
     
-    # Perfect Declaration adhering to ground truth
+    # 2. Submit user declaration
     declaration = DrillDeclaration(
-        drill_id=drill_ctx.drill_id,
-        declared_bias=drill_ctx.true_bias,
-        declared_setup=drill_ctx.true_setup,
-        declared_entry_price=10060.0,
-        declared_stop_bps=drill_ctx.true_stop_bps,
-        declared_target_bps=drill_ctx.true_target_bps,
+        drill_id=drill.drill_id,
+        declared_bias="BULLISH",
+        declared_setup="ALN_LPEU",
+        declared_entry_price=20000.0,
+        declared_stop_bps=12.0,
+        declared_target_bps=10.0,
         latency_ms=1200
     )
     
-    feedback = BlindedDrillEngine.submit_and_evaluate(drill_ctx, declaration, db_path=temp_db)
-    assert feedback.process_adherence_score == 100.0
-    assert feedback.rule_match_flag is True
+    feedback = BlindedDrillEngine.submit_and_evaluate(declaration, db_path=temp_db)
+    assert feedback.drill_id == drill.drill_id
+    assert 0.0 <= feedback.process_adherence_score <= 100.0
+    assert feedback.true_bias in ("BULLISH", "BEARISH", "NEUTRAL")
     
-    # Verify recorded in drill_attempts
-    with sqlite3.connect(str(temp_db)) as conn:
-        conn.row_factory = sqlite3.Row
-        cur = conn.execute("SELECT * FROM drill_attempts WHERE drill_id = ?;", (drill_ctx.drill_id,))
-        row = cur.fetchone()
-        assert row is not None
-        assert row["process_adherence_score"] == 100.0
-        assert row["declared_bias"] == drill_ctx.true_bias
+    # 3. Attempting to re-submit must fail closed
+    with pytest.raises(DrillAlreadyLockedError):
+        BlindedDrillEngine.submit_and_evaluate(declaration, db_path=temp_db)

@@ -5,9 +5,10 @@ Handles:
 - Session pre-market cutoff calculations (default 08:45:00 ET -> UTC).
 - Session open (09:30:00 ET) and close (16:00:00 ET / 16:15:00 ET).
 - Canonical ISO-8601 UTC string serialization (YYYY-MM-DDTHH:MM:SSZ).
+- Logical CME Futures Trading Session date derivation (18:00 ET roll).
 """
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Union
 from zoneinfo import ZoneInfo
 
@@ -69,3 +70,24 @@ def is_market_weekday(session_date: Union[str, date, datetime]) -> bool:
     """Returns True if the date is a standard trading weekday (Monday-Friday)."""
     d = parse_date(session_date)
     return d.weekday() < 5
+
+
+def derive_futures_session_date(dt_val: Union[str, datetime]) -> str:
+    """Derives the logical CME futures trading session date (YYYY-MM-DD) from timestamp.
+    
+    CME Globex futures trading sessions roll at 18:00 ET:
+    - Fills from 18:00 ET to 23:59 ET belong to the NEXT business day's session.
+    - Fills from 00:00 ET to 17:00 ET belong to TODAY's trading session.
+    """
+    dt_utc = parse_iso_utc(dt_val)
+    dt_et = dt_utc.astimezone(EASTERN_TZ)
+    if dt_et.hour >= 18:
+        next_day = dt_et.date() + timedelta(days=1)
+        while next_day.weekday() >= 5:
+            next_day += timedelta(days=1)
+        return next_day.strftime("%Y-%m-%d")
+    else:
+        cur_day = dt_et.date()
+        while cur_day.weekday() >= 5:
+            cur_day += timedelta(days=1)
+        return cur_day.strftime("%Y-%m-%d")

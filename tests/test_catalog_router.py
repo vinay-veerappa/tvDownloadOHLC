@@ -31,7 +31,7 @@ def test_catalog_router_creation_and_as_of_retrieval(temp_db):
         structured_payload={"principle": "risk_management", "bracket_bps": 10.0}
     )
     id_1 = CatalogRouter.create_item(item_1, db_path=temp_db)
-    CatalogRouter.transition_review_state(id_1, "ACCEPTED", reviewer="EXPERT_TRADER", db_path=temp_db)
+    CatalogRouter.transition_review_state(id_1, "ACCEPTED", reviewer="EXPERT_TRADER", event_timestamp_utc="2026-08-28T08:15:00Z", db_path=temp_db)
     
     # 2. Insert item available at 16:00 UTC (Post-hoc)
     item_2 = InformationItemPayload(
@@ -43,7 +43,7 @@ def test_catalog_router_creation_and_as_of_retrieval(temp_db):
         available_at_utc="2026-08-28T16:00:00Z"
     )
     id_2 = CatalogRouter.create_item(item_2, db_path=temp_db)
-    CatalogRouter.transition_review_state(id_2, "ACCEPTED", reviewer="TRADER", db_path=temp_db)
+    CatalogRouter.transition_review_state(id_2, "ACCEPTED", reviewer="TRADER", event_timestamp_utc="2026-08-28T16:15:00Z", db_path=temp_db)
     
     # 3. Query as of 09:30 UTC -> only item 1 must be returned
     items_early = CatalogRouter.query_as_of("2026-08-28T09:30:00Z", db_path=temp_db)

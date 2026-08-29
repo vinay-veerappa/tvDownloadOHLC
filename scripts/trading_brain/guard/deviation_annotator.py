@@ -1,7 +1,12 @@
 """Post-Submission Deviation Annotator & Compliance Engine (Milestone 2.1).
 
-Consumes execution fills post-submission, evaluates them against get_plan_as_of, and logs
+Consumes execution fills post-submission, evaluates them against effective get_plan_as_of, and logs
 OBSERVED_DEVIATION_ANNOTATION events in intervention_events when execution deviates from plan.
+
+Key Invariants:
+1. Position Reduction Awareness: An exit order (e.g. SELL reducing long position) is NEVER a contrary bias violation.
+2. Effective Plan Resolution: Assesses against plan after applying active amendments up to execution time.
+3. No Hindsight Plans: If no contemporaneous ex-ante plan existed at execution time, records UNASSESSABLE_NO_EX_ANTE_PLAN.
 """
 
 import json
@@ -33,6 +38,7 @@ class DeviationAnnotator:
     def evaluate_execution(
         cls,
         execution: Dict[str, Any],
+        current_net_position_before_fill: int = 0,
         db_path: Optional[Union[str, Path]] = None
     ) -> List[str]:
         """Evaluates a single execution event and persists any detected deviation annotations."""
@@ -44,73 +50,83 @@ class DeviationAnnotator:
         strat_id = execution.get("strategy_version_id")
         account_id = execution.get("account_id", "PRIMARY")
         exec_id = execution.get("execution_id") or str(uuid.uuid4())
+        qty = int(execution.get("quantity", 1))
         
-        plan_ctx = PlanAdapter.get_plan_as_of(session_date, ticker, event_ts, db_path=db_path)
-        if not plan_ctx:
-            # Fallback to query post-hoc plan
-            with get_db_connection(db_path) as conn:
-                cur = conn.execute(
-                    "SELECT * FROM plan_snapshots WHERE session_date = ? AND ticker = ? ORDER BY revision_seq DESC LIMIT 1;",
-                    (session_date, ticker)
-                )
-                row = cur.fetchone()
-                if row:
-                    strats = json.loads(row["permitted_strategies_json"]) if row["permitted_strategies_json"] else []
-                    plan_bias = row["primary_bias"]
-                    max_risk = row["max_intended_risk_bps"]
-                    snapshot_id = row["plan_snapshot_id"]
-                else:
-                    plan_bias = "NEUTRAL"
-                    max_risk = 15.0
-                    strats = []
-                    snapshot_id = None
-        else:
-            plan_bias = plan_ctx.primary_bias
-            max_risk = plan_ctx.max_intended_risk_bps
-            strats = plan_ctx.permitted_strategies
-            snapshot_id = plan_ctx.plan_snapshot_id
+        # Position reduction check (exits are not directional entries)
+        is_exit_or_reduction = False
+        if current_net_position_before_fill > 0 and action in ("SELL", "SELL_SHORT", "SHORT"):
+            is_exit_or_reduction = True
+        elif current_net_position_before_fill < 0 and action in ("BUY", "LONG"):
+            is_exit_or_reduction = True
 
+        plan_ctx = PlanAdapter.get_plan_as_of(session_date, ticker, event_ts, db_path=db_path)
         findings: List[DeviationFinding] = []
         
-        # 1. Plan Bias Violation (e.g. Buying when plan is strictly BEARISH)
-        if plan_bias == "BEARISH" and action in ("BUY", "LONG"):
+        if not plan_ctx:
+            # Missing contemporaneous ex-ante plan
             findings.append(DeviationFinding(
-                rule_id="PLAN_BIAS_DIRECTION_DEVIATION",
+                rule_id="UNASSESSABLE_NO_EX_ANTE_PLAN",
                 authority_class="OBSERVED_DEVIATION_ANNOTATION",
                 action_mode="ACTING",
                 observed_value=1.0,
                 threshold_value=0.0,
-                description=f"Long order executed contrary to declared BEARISH plan bias"
+                description="Execution occurred without a valid contemporaneous ex-ante plan"
             ))
-        elif plan_bias == "BULLISH" and action in ("SELL", "SELL_SHORT", "SHORT"):
-            findings.append(DeviationFinding(
-                rule_id="PLAN_BIAS_DIRECTION_DEVIATION",
-                authority_class="OBSERVED_DEVIATION_ANNOTATION",
-                action_mode="ACTING",
-                observed_value=1.0,
-                threshold_value=0.0,
-                description=f"Short order executed contrary to declared BULLISH plan bias"
-            ))
-            
-        # 2. Unpermitted Strategy Violation
-        if strats and strat_id and strat_id not in strats:
-            findings.append(DeviationFinding(
-                rule_id="UNPERMITTED_STRATEGY_DEVIATION",
-                authority_class="OBSERVED_DEVIATION_ANNOTATION",
-                action_mode="ACTING",
-                observed_value=1.0,
-                threshold_value=0.0,
-                description=f"Strategy '{strat_id}' executed but not in permitted strategies list {strats}"
-            ))
+            snapshot_id = None
+        else:
+            plan_bias = plan_ctx.effective_primary_bias
+            max_risk = plan_ctx.effective_max_intended_risk_bps
+            strats = plan_ctx.effective_permitted_strategies
+            snapshot_id = plan_ctx.plan_snapshot_id
+
+            # 1. Plan Bias Violation (Only for directional entry / increasing position)
+            if not is_exit_or_reduction:
+                if plan_bias == "BEARISH" and action in ("BUY", "LONG"):
+                    findings.append(DeviationFinding(
+                        rule_id="PLAN_BIAS_DIRECTION_DEVIATION",
+                        authority_class="OBSERVED_DEVIATION_ANNOTATION",
+                        action_mode="ACTING",
+                        observed_value=1.0,
+                        threshold_value=0.0,
+                        description="Long entry executed contrary to declared BEARISH effective plan bias"
+                    ))
+                elif plan_bias == "BULLISH" and action in ("SELL", "SELL_SHORT", "SHORT"):
+                    findings.append(DeviationFinding(
+                        rule_id="PLAN_BIAS_DIRECTION_DEVIATION",
+                        authority_class="OBSERVED_DEVIATION_ANNOTATION",
+                        action_mode="ACTING",
+                        observed_value=1.0,
+                        threshold_value=0.0,
+                        description="Short entry executed contrary to declared BULLISH effective plan bias"
+                    ))
+                elif plan_bias == "NO_TRADE":
+                    findings.append(DeviationFinding(
+                        rule_id="NO_TRADE_PLAN_DEVIATION",
+                        authority_class="OBSERVED_DEVIATION_ANNOTATION",
+                        action_mode="ACTING",
+                        observed_value=1.0,
+                        threshold_value=0.0,
+                        description="Trade entry executed contrary to declared NO_TRADE plan bias"
+                    ))
+                
+            # 2. Unpermitted Strategy Violation
+            if strats and strat_id and strat_id not in strats:
+                findings.append(DeviationFinding(
+                    rule_id="UNPERMITTED_STRATEGY_DEVIATION",
+                    authority_class="OBSERVED_DEVIATION_ANNOTATION",
+                    action_mode="ACTING",
+                    observed_value=1.0,
+                    threshold_value=0.0,
+                    description=f"Strategy '{strat_id}' executed but not in permitted strategies list {strats}"
+                ))
             
         # Record findings into intervention_events
         annotation_ids = []
         with get_db_connection(db_path) as conn:
             for f in findings:
                 ann_id = str(uuid.uuid4())
-                idemp_key = f"dev_{exec_id}_{f.rule_id}"
+                idemp_key = f"dev_{exec_id}_{f.rule_id}_{f.observed_value}"
                 
-                # Check for existing
                 cur = conn.execute(
                     "SELECT intervention_id FROM intervention_events WHERE producer = 'PYTHON_DEVIATION_ANNOTATOR' AND idempotency_key = ?;",
                     (idemp_key,)

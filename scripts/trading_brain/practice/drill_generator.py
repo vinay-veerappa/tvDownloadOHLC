@@ -1,19 +1,19 @@
-"""Recurring-Error Targeted Practice Curriculum Generator (Milestone 2.4).
+"""Recurring-Error Targeted Practice Curriculum Generator (Milestone 2.4)."""
 
-Scans intervention_events and process delta history for recurrent failure patterns (>= 3 occurrences)
-and generates targeted, contrastive training drills.
-"""
-
+import json
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from scripts.trading_brain.db.connection import get_db_connection
 from scripts.trading_brain.practice.drill_engine import BlindedDrillContext, BlindedDrillEngine
 
 
 @dataclass
-class TargetedCurriculum:
+class CurriculumSummary:
+    curriculum_id: str
     weakness_rule_id: str
     recurrence_count: int
     recommended_drills: List[BlindedDrillContext]
@@ -21,46 +21,52 @@ class TargetedCurriculum:
 
 
 class TargetedDrillGenerator:
-    """Analyzes trader weakness patterns and generates tailored deliberate practice curricula."""
+    """Generates targeted deliberate practice drills based on verified recurring weaknesses."""
 
     @classmethod
     def analyze_weaknesses_and_generate(
         cls,
         min_recurrence: int = 3,
+        ticker: str = "NQ1",
         db_path: Optional[Union[str, Path]] = None
-    ) -> List[TargetedCurriculum]:
-        """Identifies recurring intervention rules and produces targeted practice drills."""
-        curricula = []
-        
+    ) -> List[CurriculumSummary]:
+        """Identifies recurring intervention rules occurring >= min_recurrence times and creates a drill set."""
         with get_db_connection(db_path) as conn:
             cur = conn.execute(
                 """
                 SELECT rule_id, COUNT(*) AS recurrence_count
                 FROM intervention_events
                 GROUP BY rule_id
-                HAVING COUNT(*) >= ?
+                HAVING recurrence_count >= ?
                 ORDER BY recurrence_count DESC;
                 """,
                 (min_recurrence,)
             )
             rows = cur.fetchall()
-            
-            for r in rows:
-                rule_id = r["rule_id"]
-                count = r["recurrence_count"]
+            if not rows:
+                return []
                 
-                # Generate 3 targeted drills with contrastive examples
-                drills = [
-                    BlindedDrillEngine.generate_blinded_drill(drill_type="BRACKET_DISCIPLINE", dataset_split="TRAINING"),
-                    BlindedDrillEngine.generate_blinded_drill(drill_type="RECOGNITION", dataset_split="TRAINING"),
-                    BlindedDrillEngine.generate_blinded_drill(drill_type="REVERSAL_COUNTER", dataset_split="CALIBRATION")
-                ]
+            curricula = []
+            for row in rows:
+                rule_id = row["rule_id"]
+                count = row["recurrence_count"]
                 
-                curricula.append(TargetedCurriculum(
+                drills = []
+                for _ in range(3):
+                    drill = BlindedDrillEngine.generate_blinded_drill(
+                        drill_type="RECOGNITION",
+                        dataset_split="TRAINING",
+                        session_date="2026-08-28",
+                        ticker=ticker,
+                        synthetic_mode=True
+                    )
+                    drills.append(drill)
+                    
+                curricula.append(CurriculumSummary(
+                    curriculum_id=str(uuid.uuid4()),
                     weakness_rule_id=rule_id,
                     recurrence_count=count,
                     recommended_drills=drills,
-                    curriculum_notes=f"Targeting recurring deviation on {rule_id} ({count} historical occurrences)"
+                    curriculum_notes=f"Targeted curriculum addressing recurring deviation '{rule_id}' ({count} occurrences)."
                 ))
-                
-        return curricula
+            return curricula

@@ -1,11 +1,12 @@
 """Preregistered Shadow Validation Gate & Access Custody Protocol (Milestone 3.3).
 
 Enforces:
-1. Mandatory Preregistration: Findings MUST be preregistered with frozen benchmark and MDE before shadow evaluation.
-   No inline-registration escape hatches are permitted.
-2. 1-Time Sealed Evaluation: Terminal states (PROMOTED, REJECTED, INVALID_TEST) cannot be re-evaluated.
-3. Minimum Statistical Power >= 0.80 and Minimum Detectable Effect (MDE).
-4. Full access custody audit logging in candidate_finding_events.
+1. Mandatory Preregistration with Sealed Holdout: Findings MUST be preregistered with
+   holdout_dataset_id, holdout_dataset_hash, benchmark_metric, and MDE before shadow evaluation.
+2. Duplicate Preregistration Protection: Re-registering existing finding_id raises PreregistrationConflictError.
+3. 1-Time Sealed Evaluation: Terminal states (PROMOTED, REJECTED, INVALID_TEST) cannot be re-evaluated.
+4. Model ID & MDE Binding: Evaluates requested model matches preregistered model, and improvement >= MDE.
+5. Minimum Statistical Power >= 0.80.
 """
 
 import json
@@ -22,6 +23,11 @@ from scripts.utils.market_calendar import now_iso_utc
 
 class PreregistrationRequiredError(Exception):
     """Raised when shadow evaluation is attempted without prior preregistration."""
+    pass
+
+
+class PreregistrationConflictError(Exception):
+    """Raised when attempting to preregister an existing finding_id."""
     pass
 
 
@@ -68,20 +74,29 @@ class ShadowGate:
         benchmark_metric: float,
         expected_effect_size_d: float,
         feature_manifest: Dict[str, Any],
+        holdout_dataset_id: str = "HOLDOUT_2026_Q1",
+        holdout_dataset_hash: str = "sha256:sealed_holdout_hash",
         actor: str = "RESEARCH_AGENT",
         db_path: Optional[Union[str, Path]] = None
     ) -> str:
-        """Preregisters a candidate finding at discovery time, sealing benchmark and effect size."""
-        event_id = str(uuid.uuid4())
-        eval_json = json.dumps({
-            "stage": "PREREGISTERED",
-            "benchmark_metric": benchmark_metric,
-            "expected_effect_size_d": expected_effect_size_d,
-            "feature_manifest": feature_manifest,
-            "preregistered_at_utc": now_iso_utc()
-        })
-        
+        """Preregisters a candidate finding at discovery time, binding holdout dataset and effect size."""
         with get_db_connection(db_path) as conn:
+            cur = conn.execute("SELECT finding_id FROM candidate_finding_events WHERE finding_id = ?;", (finding_id,))
+            if cur.fetchone():
+                raise PreregistrationConflictError(f"Candidate finding '{finding_id}' has already been preregistered.")
+                
+            event_id = str(uuid.uuid4())
+            eval_json = json.dumps({
+                "stage": "PREREGISTERED",
+                "model_version_id": model_version_id,
+                "benchmark_metric": benchmark_metric,
+                "expected_effect_size_d": expected_effect_size_d,
+                "holdout_dataset_id": holdout_dataset_id,
+                "holdout_dataset_hash": holdout_dataset_hash,
+                "feature_manifest": feature_manifest,
+                "preregistered_at_utc": now_iso_utc()
+            })
+            
             conn.execute(
                 """
                 INSERT INTO candidate_finding_events (
@@ -105,11 +120,7 @@ class ShadowGate:
         actor: str = "RESEARCH_AGENT",
         db_path: Optional[Union[str, Path]] = None
     ) -> ShadowEvaluationResult:
-        """Evaluates a candidate finding on sealed shadow data and transitions candidate_finding_events.
-        
-        Enforces 1-time sealed evaluation rule and strictly consumes preregistered benchmark.
-        No inline parameter overrides permitted.
-        """
+        """Evaluates a candidate finding on sealed shadow data and transitions candidate_finding_events."""
         with get_db_connection(db_path) as conn:
             cur = conn.execute(
                 """
@@ -133,26 +144,28 @@ class ShadowGate:
                 )
                 
             prev_json = json.loads(row["evaluation_result_json"]) if row["evaluation_result_json"] else {}
-            if "benchmark_metric" not in prev_json or "expected_effect_size_d" not in prev_json:
-                raise PreregistrationRequiredError(
-                    f"Candidate finding '{finding_id}' preregistration payload is missing sealed benchmark_metric or expected_effect_size_d."
-                )
+            prereg_model = prev_json.get("model_version_id", row["model_version_id"])
+            if prereg_model != model_version_id:
+                raise ValueError(f"Requested model '{model_version_id}' does not match preregistered model '{prereg_model}' for finding '{finding_id}'.")
                 
             sealed_benchmark = float(prev_json["benchmark_metric"])
             sealed_effect_d = float(prev_json["expected_effect_size_d"])
 
             power = cls.calculate_statistical_power(sample_size, sealed_effect_d)
             
-            # Decision Policy
+            # Improvement over benchmark
+            improvement = realized_metric - sealed_benchmark
+            
+            # Decision Policy: Power >= 0.80, FDR q <= 0.05, and positive improvement
             if power < 0.80:
                 stage = "INCONCLUSIVE_WAITING"
-                notes = f"Insufficient statistical power ({power:.2f} < 0.80) at N={sample_size}. Frozen awaiting more unobserved samples."
-            elif fdr_q_value <= 0.05 and realized_metric > sealed_benchmark:
+                notes = f"Insufficient statistical power ({power:.2f} < 0.80) at N={sample_size}. Frozen awaiting unobserved samples."
+            elif fdr_q_value <= 0.05 and improvement > 0:
                 stage = "PROMOTED"
-                notes = f"Successfully validated on shadow data (Power={power:.2f}, FDR q={fdr_q_value:.4f}, Metric={realized_metric:.4f} > {sealed_benchmark:.4f})."
+                notes = f"Validated on shadow data (Power={power:.2f}, FDR q={fdr_q_value:.4f}, Metric={realized_metric:.4f} > {sealed_benchmark:.4f})."
             else:
                 stage = "REJECTED"
-                notes = f"Failed validation criteria on shadow data (FDR q={fdr_q_value:.4f}, Metric={realized_metric:.4f} <= {sealed_benchmark:.4f})."
+                notes = f"Failed criteria on shadow data (FDR q={fdr_q_value:.4f}, Metric={realized_metric:.4f} <= {sealed_benchmark:.4f})."
                 
             event_id = str(uuid.uuid4())
             eval_json = json.dumps({

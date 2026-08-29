@@ -6,8 +6,10 @@ Manages universal typed intake for the 9 evidence classes:
   DISCRETIONARY_OBSERVATION.
 
 Enforces:
-1. Temporal Availability Cutoff: Decision retrieval queries strictly filter `available_at_utc <= decision_cutoff_utc`.
-2. Append-Only Immutability: Information items are immutable; review state transitions are recorded in `information_item_review_events`.
+1. Temporal Availability & Creation Cutoffs: Decision retrieval strictly filters
+   `available_at_utc <= decision_cutoff_utc` AND `created_at_utc <= decision_cutoff_utc`.
+2. As-Of Review State Resolution: Resolves item review state as of the historical query timestamp
+   by inspecting `information_item_review_events` where `event_timestamp_utc <= decision_cutoff_utc`.
 """
 
 import json
@@ -99,33 +101,38 @@ class CatalogRouter:
         limit: int = 50,
         db_path: Optional[Union[str, Path]] = None
     ) -> List[Dict[str, Any]]:
-        """Queries information items strictly available as of decision_cutoff_utc."""
+        """Queries information items strictly available and created as of decision_cutoff_utc,
+        resolving historical review state as of the cutoff."""
         cutoff_iso = to_iso_utc(decision_cutoff_utc)
         
         with get_db_connection(db_path) as conn:
-            conditions = ["available_at_utc <= ?"]
-            params: List[Any] = [cutoff_iso]
+            query = """
+            SELECT i.*,
+                   COALESCE((
+                       SELECT r.review_state FROM information_item_review_events r
+                       WHERE r.information_id = i.information_id
+                         AND r.event_timestamp_utc <= ?
+                       ORDER BY r.event_timestamp_utc DESC, r.created_at_utc DESC, r.rowid DESC
+                       LIMIT 1
+                   ), 'CAPTURED') AS active_review_state
+            FROM information_items i
+            WHERE i.available_at_utc <= ?
+            """
+            params: List[Any] = [cutoff_iso, cutoff_iso]
             
             if evidence_class:
-                conditions.append("evidence_class = ?")
+                query += " AND i.evidence_class = ?"
                 params.append(evidence_class.upper())
                 
-            if only_accepted:
-                conditions.append("active_review_state = 'ACCEPTED'")
-                
-            where_clause = " AND ".join(conditions)
-            query = f"""
-            SELECT * FROM v_information_items_active
-            WHERE {where_clause}
-            ORDER BY available_at_utc DESC
-            LIMIT ?;
-            """
+            query += " ORDER BY i.available_at_utc DESC LIMIT ?;"
             params.append(limit)
             
             cur = conn.execute(query, params)
             results = []
             for r in cur.fetchall():
                 d = dict(r)
+                if only_accepted and d["active_review_state"] != "ACCEPTED":
+                    continue
                 if d.get("structured_payload_json"):
                     d["structured_payload"] = json.loads(d["structured_payload_json"])
                 results.append(d)
@@ -138,11 +145,12 @@ class CatalogRouter:
         review_state: str,      # 'ACCEPTED', 'REJECTED', 'QUARANTINED'
         reviewer: str,
         review_notes: Optional[str] = None,
+        event_timestamp_utc: Optional[str] = None,
         db_path: Optional[Union[str, Path]] = None
     ) -> str:
         """Appends an immutable transition event to information_item_review_events."""
         event_id = str(uuid.uuid4())
-        now_iso = now_iso_utc()
+        now_iso = to_iso_utc(event_timestamp_utc) if event_timestamp_utc else now_iso_utc()
         
         with get_db_connection(db_path) as conn:
             conn.execute(

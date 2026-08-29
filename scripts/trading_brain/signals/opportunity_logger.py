@@ -1,14 +1,15 @@
 """As-Of Signal Opportunity Logger & Mechanical Disposition Engine (Milestone 0.5).
 
 Enforces:
-1. Strict as-of bar-close decision contracts with direction checks (zero future lookahead).
-2. Deduplication key (session_date, ticker, strategy_version_id, bar_timestamp_utc).
-3. Production-grade mechanical disposition derivation:
-   - EXECUTED: Order filled within forward validity window matching direction and trigger price (+- 2 bps).
-   - PASSED: Trader was active in the market during the signal window (0 <= time_diff <= expiry_seconds), but did not execute this signal (or executed another strategy).
-   - MISSED: Trader was connected but no trade was taken during the entire signal expiry window, or RiskGuard was locked out.
-   - OFFLINE: Market session had zero broker connectivity or platform heartbeat during the signal window.
-4. Intrabar ambiguity preservation for 1m bars touching stop and target.
+1. Strict as-of bar-close decision contracts with direction checks.
+2. Deduplication key (session_date, ticker, strategy_version_id, bar_timestamp_utc) returning existing ID on duplicate.
+3. Strategy-specific expiry duration: reads expiry from execution policy starting from decision_time_utc.
+4. Window-Open Awareness: An opportunity whose window has not elapsed is marked PENDING_WINDOW_OPEN, not MISSED.
+5. Production-Grade Dispositions:
+   - EXECUTED: Matched fill within forward validity window matching direction and trigger price (+- 2 bps).
+   - PASSED: Trader was active in the market during the window, but did not execute this setup.
+   - MISSED: Validity window elapsed while trader was online with zero executions taken.
+   - OFFLINE: Platform or broker was disconnected during window.
 """
 
 import json
@@ -49,15 +50,27 @@ class OpportunityLogger:
         opportunity: SignalOpportunity,
         db_path: Optional[Union[str, Path]] = None
     ) -> str:
-        """Records an as-of setup trigger into signal_opportunities."""
+        """Records an as-of setup trigger into signal_opportunities and returns the authoritative opportunity_id."""
         opp_id = opportunity.opportunity_id or str(uuid.uuid4())
         bar_ts_iso = to_iso_utc(opportunity.bar_timestamp_utc)
         dec_ts_iso = to_iso_utc(opportunity.decision_time_utc)
         
         with get_db_connection(db_path) as conn:
+            # Check for existing opportunity on deduplication key
+            cur = conn.execute(
+                """
+                SELECT opportunity_id FROM signal_opportunities
+                WHERE session_date = ? AND ticker = ? AND strategy_version_id = ? AND bar_timestamp_utc = ?;
+                """,
+                (opportunity.session_date, opportunity.ticker, opportunity.strategy_version_id, bar_ts_iso)
+            )
+            existing = cur.fetchone()
+            if existing:
+                return existing["opportunity_id"]
+                
             conn.execute(
                 """
-                INSERT OR IGNORE INTO signal_opportunities (
+                INSERT INTO signal_opportunities (
                     opportunity_id, session_date, ticker, strategy_version_id,
                     bar_timestamp_utc, decision_time_utc, signal_direction, trigger_price,
                     declared_stop_price, declared_target_1_price, declared_target_2_price,
@@ -89,14 +102,17 @@ class OpportunityLogger:
         session_date: str,
         ticker: str,
         tolerance_bps: float = 2.0,
-        expiry_seconds: int = 900,
+        default_expiry_seconds: int = 900,
         is_platform_online: bool = True,
+        as_of_time_utc: Optional[Union[str, datetime]] = None,
         db_path: Optional[Union[str, Path]] = None
     ) -> Dict[str, Any]:
         """Mechanically matches execution_events to signal_opportunities to derive dispositions.
         
-        Evaluates EXECUTED, PASSED, MISSED, and OFFLINE states idempotently.
+        Respects strategy-specific expiry, decision timestamps, and window-open states.
         """
+        now_dt = parse_iso_utc(as_of_time_utc) if as_of_time_utc else datetime.now(timezone.utc)
+        
         with get_db_connection(db_path) as conn:
             opp_cursor = conn.execute(
                 "SELECT * FROM signal_opportunities WHERE session_date = ? AND ticker = ?;",
@@ -110,38 +126,32 @@ class OpportunityLogger:
             )
             executions = exec_cursor.fetchall()
             
-            existing_disp_cursor = conn.execute(
-                """
-                SELECT d.* FROM signal_disposition_events d
-                JOIN signal_opportunities o ON d.opportunity_id = o.opportunity_id
-                WHERE o.session_date = ? AND o.ticker = ?;
-                """,
-                (session_date, ticker)
-            )
-            existing_disps = {d["opportunity_id"]: d for d in existing_disp_cursor.fetchall()}
-            
+            # Load strategy-specific expiries from strategy_versions
+            strat_cursor = conn.execute("SELECT strategy_version_id, execution_policy_json FROM strategy_versions;")
+            strat_expiries = {}
+            for s in strat_cursor.fetchall():
+                pol = json.loads(s["execution_policy_json"]) if s["execution_policy_json"] else {}
+                strat_expiries[s["strategy_version_id"]] = pol.get("expiry_seconds", default_expiry_seconds)
+                
             matched_exec_ids = set()
-            disposition_counts = {"EXECUTED": 0, "PASSED": 0, "MISSED": 0, "OFFLINE": 0}
+            disposition_counts = {"EXECUTED": 0, "PASSED": 0, "MISSED": 0, "OFFLINE": 0, "PENDING_WINDOW_OPEN": 0}
             
             for opp in opportunities:
                 opp_id = opp["opportunity_id"]
-                if opp_id in existing_disps:
-                    prev_state = existing_disps[opp_id]["disposition_state"]
-                    disposition_counts[prev_state] = disposition_counts.get(prev_state, 0) + 1
-                    if existing_disps[opp_id]["matched_execution_id"]:
-                        matched_exec_ids.add(existing_disps[opp_id]["matched_execution_id"])
-                    continue
-                    
+                strat_id = opp["strategy_version_id"]
+                expiry_seconds = strat_expiries.get(strat_id, default_expiry_seconds)
+                
                 trigger_price = opp["trigger_price"]
                 direction = opp["signal_direction"]
-                opp_ts = parse_iso_utc(opp["bar_timestamp_utc"])
+                dec_ts = parse_iso_utc(opp["decision_time_utc"] or opp["bar_timestamp_utc"])
+                window_end_dt = dec_ts + timedelta(seconds=expiry_seconds)
                 
                 matched_exec = None
                 other_trade_taken_in_window = False
                 
                 for ex in executions:
                     ex_ts = parse_iso_utc(ex["event_timestamp_utc"])
-                    time_diff = (ex_ts - opp_ts).total_seconds()
+                    time_diff = (ex_ts - dec_ts).total_seconds()
                     
                     if 0 <= time_diff <= expiry_seconds:
                         other_trade_taken_in_window = True
@@ -152,7 +162,13 @@ class OpportunityLogger:
                         action = ex["order_action"].upper()
                         dir_ok = (direction == "LONG" and action in ("BUY", "LONG")) or \
                                  (direction == "SHORT" and action in ("SELL", "SELL_SHORT", "SHORT"))
-                        if dir_ok:
+                        
+                        # Strategy correlation check if tagged
+                        strat_match = True
+                        if "strategy_version_id" in ex.keys() and ex["strategy_version_id"] and ex["strategy_version_id"] != strat_id:
+                            strat_match = False
+                            
+                        if dir_ok and strat_match:
                             fill_price = ex["fill_price"]
                             price_diff_bps = abs(fill_price - trigger_price) / trigger_price * 10000.0
                             if price_diff_bps <= tolerance_bps:
@@ -163,13 +179,18 @@ class OpportunityLogger:
                 if matched_exec:
                     state = "EXECUTED"
                     exec_id = matched_exec["execution_id"]
-                    latency = (parse_iso_utc(matched_exec["event_timestamp_utc"]) - opp_ts).total_seconds()
+                    latency = (parse_iso_utc(matched_exec["event_timestamp_utc"]) - dec_ts).total_seconds()
                     reason = f"Matched execution {exec_id} with latency {latency:.1f}s"
                 elif not is_platform_online:
                     state = "OFFLINE"
                     exec_id = None
                     latency = None
                     reason = "Platform or broker data feed was offline during signal window"
+                elif now_dt < window_end_dt and not other_trade_taken_in_window:
+                    state = "PENDING_WINDOW_OPEN"
+                    exec_id = None
+                    latency = None
+                    reason = f"Signal window remains open until {to_iso_utc(window_end_dt)}"
                 elif other_trade_taken_in_window:
                     state = "PASSED"
                     exec_id = None
@@ -179,7 +200,7 @@ class OpportunityLogger:
                     state = "MISSED"
                     exec_id = None
                     latency = None
-                    reason = "Setup triggered while trader was online but no execution event occurred"
+                    reason = "Setup validity window elapsed without execution"
                     
                 disp_id = str(uuid.uuid4())
                 conn.execute(
@@ -206,7 +227,7 @@ class OpportunityLogger:
                     ex_ts = parse_iso_utc(ex["event_timestamp_utc"])
                     candidates = [
                         opp["opportunity_id"] for opp in opportunities
-                        if abs((ex_ts - parse_iso_utc(opp["bar_timestamp_utc"])).total_seconds()) <= 3600
+                        if abs((ex_ts - parse_iso_utc(opp["decision_time_utc"] or opp["bar_timestamp_utc"])).total_seconds()) <= 3600
                     ]
                     link_id = str(uuid.uuid4())
                     conn.execute(
@@ -224,40 +245,3 @@ class OpportunityLogger:
                 "dispositions": disposition_counts,
                 "unmatched_executions": len(executions) - len(matched_exec_ids)
             }
-
-    @staticmethod
-    def record_signal_outcome(
-        opportunity_id: str,
-        observed_outcome: str,
-        pessimistic_bound: str,
-        optimistic_bound: str,
-        realized_mfe_bps: float,
-        realized_mae_bps: float,
-        bars_held: int,
-        db_path: Optional[Union[str, Path]] = None
-    ) -> str:
-        """Records theoretical post-hoc evaluation outcome with preserved ambiguity bounds."""
-        outcome_id = str(uuid.uuid4())
-        now_iso = now_iso_utc()
-        
-        with get_db_connection(db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO signal_outcomes (
-                    outcome_id, opportunity_id, observed_outcome, pessimistic_bound,
-                    optimistic_bound, realized_mfe_bps, realized_mae_bps, bars_held, evaluated_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
-                """,
-                (
-                    outcome_id,
-                    opportunity_id,
-                    observed_outcome,
-                    pessimistic_bound,
-                    optimistic_bound,
-                    realized_mfe_bps,
-                    realized_mae_bps,
-                    bars_held,
-                    now_iso
-                )
-            )
-        return outcome_id

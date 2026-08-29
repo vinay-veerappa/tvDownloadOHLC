@@ -36,6 +36,7 @@ EXPECTED_TABLES = [
     "candidate_finding_events",
     "strategy_versions",
     "model_versions",
+    "model_deployment_events",
     "legacy_projection_outbox",
     "broker_ingest_state"
 ]

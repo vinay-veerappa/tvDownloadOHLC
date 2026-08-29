@@ -4,9 +4,9 @@ Computes:
 1. Multiclass Brier Score across 5 MECE day types: sum_{i=1}^5 (p_i - o_i)^2
 2. Multiclass Log Loss: -ln(max(p_realized, 1e-6))
 3. Skill Scores vs 3 Baselines:
-   - Base Rate Prior (unconditional historical frequency)
+   - Base Rate Prior (unconditional empirical historical frequency)
    - Rolling 50-Session Frequency
-   - Incumbent Champion Model
+   - Incumbent Champion Model (evaluated over identical sample series)
 4. Expected Calibration Error (ECE) across reliability bins.
 """
 
@@ -57,6 +57,18 @@ class CalibrationEngine:
         return -math.log(p)
 
     @classmethod
+    def compute_unconditional_prior(cls, realized_outcomes: List[str]) -> Dict[str, float]:
+        """Derives empirical unconditional base rate frequencies from historical outcome series."""
+        n = len(realized_outcomes)
+        if n == 0:
+            return {dt: 1.0 / len(DAY_TYPES) for dt in DAY_TYPES}
+        counts = {dt: 0 for dt in DAY_TYPES}
+        for r in realized_outcomes:
+            if r in counts:
+                counts[r] += 1
+        return {dt: (counts[dt] / n) for dt in DAY_TYPES}
+
+    @classmethod
     def evaluate_forecast_series(
         cls,
         forecasts: List[Dict[str, float]],
@@ -69,7 +81,11 @@ class CalibrationEngine:
         if n == 0 or len(realized_outcomes) != n:
             raise ValueError(f"Mismatched or empty series: {n} forecasts, {len(realized_outcomes)} outcomes")
             
-        default_prior = prior_probs or {dt: 1.0 / len(DAY_TYPES) for dt in DAY_TYPES}
+        if champion_forecasts is not None and len(champion_forecasts) != n:
+            raise ValueError(f"Champion series length ({len(champion_forecasts)}) must match model series length ({n})")
+
+        # Derive empirical prior from data if not provided
+        default_prior = prior_probs or cls.compute_unconditional_prior(realized_outcomes)
         
         model_briers = []
         model_logs = []
@@ -84,7 +100,7 @@ class CalibrationEngine:
             model_logs.append(cls.compute_single_log_loss(f, r))
             prior_briers.append(cls.compute_single_brier_score(default_prior, r))
             
-            if champion_forecasts and i < len(champion_forecasts):
+            if champion_forecasts:
                 champ_briers.append(cls.compute_single_brier_score(champion_forecasts[i], r))
                 
         mean_brier = sum(model_briers) / n
@@ -95,14 +111,18 @@ class CalibrationEngine:
         
         bss_champ = None
         if champ_briers:
-            mean_champ_brier = sum(champ_briers) / len(champ_briers)
+            mean_champ_brier = sum(champ_briers) / n
             bss_champ = 1.0 - (mean_brier / mean_champ_brier) if mean_champ_brier > 0 else 0.0
             
-        # Compute ECE across 5 bins
-        ece = cls.compute_ece(forecasts, realized_outcomes, n_bins=5)
+        ece = cls.compute_expected_calibration_error(forecasts, realized_outcomes)
         
-        status = "CALIBRATED" if ece <= 0.08 and bss_prior >= 0.0 else ("OVERCONFIDENT" if ece > 0.15 else "UNCALIBRATED")
-        
+        if ece <= 0.08:
+            status = "CALIBRATED"
+        elif mean_brier > 0.60:
+            status = "OVERCONFIDENT"
+        else:
+            status = "UNDERCONFIDENT"
+            
         return CalibrationMetrics(
             sample_size=n,
             mean_brier_score=round(mean_brier, 4),
@@ -113,36 +133,36 @@ class CalibrationEngine:
             calibration_status=status
         )
 
-    @classmethod
-    def compute_ece(
-        cls,
+    @staticmethod
+    def compute_expected_calibration_error(
         forecasts: List[Dict[str, float]],
         realized_outcomes: List[str],
-        n_bins: int = 5
+        n_bins: int = 10
     ) -> float:
-        """Computes multiclass Expected Calibration Error (ECE) across confidence bins."""
-        bin_limits = [i / n_bins for i in range(n_bins + 1)]
-        total_samples = 0
-        total_weighted_error = 0.0
+        """Calculates Expected Calibration Error (ECE) across reliability probability bins."""
+        bin_sums = [0.0] * n_bins
+        bin_true = [0.0] * n_bins
+        bin_counts = [0] * n_bins
         
-        for b in range(n_bins):
-            low, high = bin_limits[b], bin_limits[b + 1]
-            bin_confidences = []
-            bin_accuracies = []
-            
-            for i, f in enumerate(forecasts):
-                realized = realized_outcomes[i].upper()
-                for dt in DAY_TYPES:
-                    p = f.get(dt, 0.0)
-                    if low <= p < high or (b == n_bins - 1 and p == high):
-                        bin_confidences.append(p)
-                        bin_accuracies.append(1.0 if dt == realized else 0.0)
-                        
-            if bin_confidences:
-                bin_size = len(bin_confidences)
-                avg_conf = sum(bin_confidences) / bin_size
-                avg_acc = sum(bin_accuracies) / bin_size
-                total_weighted_error += bin_size * abs(avg_acc - avg_conf)
-                total_samples += bin_size
+        for f, r in zip(forecasts, realized_outcomes):
+            for dt in DAY_TYPES:
+                conf = f.get(dt, 0.0)
+                actual = 1.0 if dt == r else 0.0
+                bin_idx = min(int(conf * n_bins), n_bins - 1)
+                bin_sums[bin_idx] += conf
+                bin_true[bin_idx] += actual
+                bin_counts[bin_idx] += 1
                 
-        return total_weighted_error / total_samples if total_samples > 0 else 0.0
+        total_evals = len(forecasts) * len(DAY_TYPES)
+        if total_evals == 0:
+            return 0.0
+            
+        ece = 0.0
+        for i in range(n_bins):
+            if bin_counts[i] > 0:
+                acc = bin_true[i] / bin_counts[i]
+                conf = bin_sums[i] / bin_counts[i]
+                weight = bin_counts[i] / total_evals
+                ece += weight * abs(acc - conf)
+                
+        return ece
