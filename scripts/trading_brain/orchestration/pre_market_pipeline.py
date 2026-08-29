@@ -446,7 +446,28 @@ def annotate_executions_for_session(
         )
         unannotated = [dict(row) for row in cur.fetchall()]
 
-    running_position = 0
+        # Reconstruct the net position from fills that were ALREADY annotated before this
+        # backfill run (e.g. a partial prior run, or annotation by another service using
+        # this producer). Without this, a resumed backfill would evaluate the first
+        # unannotated fill with position 0 and could misread an exit as an entry.
+        if unannotated:
+            first_ts = unannotated[0]["event_timestamp_utc"]
+            pos_cur = conn.execute(
+                """
+                SELECT COALESCE(SUM(
+                    CASE WHEN order_action IN ('BUY', 'LONG') THEN quantity
+                         ELSE -quantity END
+                ), 0) AS net_pos
+                FROM execution_events
+                WHERE session_date = ? AND ticker = ? AND account_id = ?
+                  AND event_timestamp_utc < ?;
+                """,
+                (session_date, ticker, account_id, first_ts),
+            )
+            running_position = int(pos_cur.fetchone()["net_pos"] or 0)
+        else:
+            running_position = 0
+
     for exec_row in unannotated:
         qty = int(exec_row.get("quantity", 1))
         action = str(exec_row.get("order_action", "")).upper()

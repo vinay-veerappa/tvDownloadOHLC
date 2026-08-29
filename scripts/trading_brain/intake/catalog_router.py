@@ -156,9 +156,10 @@ class CatalogRouter:
                 state = d["active_review_state"]
                 if only_accepted:
                     if min_review_state:
-                        # Require at least the requested state in the review-state hierarchy.
-                        hierarchy = {"CAPTURED": 0, "REJECTED": 0, "QUARANTINED": 0, "ACCEPTED": 1}
-                        if hierarchy.get(state, 0) < hierarchy.get(min_review_state.upper(), 1):
+                        # Review-state hierarchy: negative states disqualify an item outright.
+                        # CAPTURED is the neutral floor; only ACCEPTED is a positive credential.
+                        hierarchy = {"REJECTED": -1, "QUARANTINED": -1, "CAPTURED": 0, "ACCEPTED": 1}
+                        if hierarchy.get(state, -2) < hierarchy.get(min_review_state.upper(), 1):
                             continue
                     else:
                         if state != "ACCEPTED":

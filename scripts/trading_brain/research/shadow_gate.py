@@ -52,11 +52,6 @@ class ShadowGateLockedError(Exception):
     pass
 
 
-class HoldoutHashMismatchError(Exception):
-    """Raised when the sealed holdout hash does not match the preregistered hash."""
-    pass
-
-
 @dataclass
 class ShadowEvaluationResult:
     finding_event_id: str

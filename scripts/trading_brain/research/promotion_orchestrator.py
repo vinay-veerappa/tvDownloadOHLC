@@ -14,6 +14,7 @@ Governance rules:
 """
 
 import json
+import math
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -384,6 +385,3 @@ class PromotionOrchestrator:
                 (model_version_id,),
             )
             return {row[0]: row[1] for row in cur.fetchall()}
-
-
-import math  # noqa: E402

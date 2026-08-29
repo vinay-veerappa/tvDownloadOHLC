@@ -197,13 +197,13 @@ class OpportunityLogger:
                     latency = (parse_iso_utc(matched_exec["event_timestamp_utc"]) - dec_ts).total_seconds()
                     reason = f"Matched execution {exec_id} with latency {latency:.1f}s"
                 elif ambiguity_candidates:
-                    # The best single ambiguous candidate is logged; review is required.
+                    # The best ambiguous candidate is logged for review. It is NOT added to
+                    # matched_exec_ids: doing so would block a later opportunity from making a
+                    # legitimate exact match on the same fill. Ambiguity is an annotation, not a claim.
                     state = "AMBIGUOUS_LINK"
                     exec_id = ambiguity_candidates[0][0]["execution_id"]
                     latency = None
                     reason = f"Ambiguous fill {exec_id}: " + ", ".join(r for _, r in ambiguity_candidates[:3])
-                    matched_exec_ids.add(exec_id)
-                    exec_to_opps.setdefault(exec_id, []).append(opp_id)
                 elif not is_platform_online:
                     state = "OFFLINE"
                     exec_id = None

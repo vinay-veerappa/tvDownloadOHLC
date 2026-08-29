@@ -250,15 +250,17 @@ class WalkForwardGate:
         var = sum((s - mean_score) ** 2 for s in fold_scores) / max(1, n_eval - 1)
         se = math.sqrt(var / n_eval) if n_eval > 1 else 0.0
 
-        # Binomial p-value against a 0.5 random baseline per fold (one-sided).
+        # Wald z-test p-value against a 0.5 chance baseline per fold (one-sided).
+        # NOTE: this contract assumes `score` is an accuracy-like proportion in [0, 1]
+        # where 0.5 is the random baseline. For other scorer kinds, supply fold_p_values
+        # explicitly via evaluate_walk_forward_folds instead of relying on this default.
         p_values: List[float] = []
         for f in fold_results:
-            successes = int(round(f.score * f.test_size))
-            # Clopper-Pearson-style normal approximation for the p-value
             if f.test_size > 0:
                 se_binom = math.sqrt(0.5 * 0.5 / f.test_size)
                 z = (f.score - 0.5) / max(se_binom, 1e-9)
                 p_value = 1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+                p_value = min(max(p_value, 0.0), 1.0)
             else:
                 p_value = 1.0
             f.p_value = p_value
