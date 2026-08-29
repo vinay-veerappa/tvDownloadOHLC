@@ -14,6 +14,7 @@
 
 ## 🏗️ Core Architecture
 - **[Trading Second Brain Master Architecture](architecture/TRADING_SECOND_BRAIN_MASTER_ARCHITECTURE.md)**: End-to-end integration of Semantic Knowledge (LanceDB), Quantitative Engines (ALN, CS, P12), Pre-Market Wargaming, Trade Journaling, and EOD Reengineering.
+- **[Trading Second Brain Master Implementation Plan](architecture/TRADING_SECOND_BRAIN_IMPLEMENTATION_PLAN.md)**: 5-Phase engineering roadmap for Zero-Human Capture Spine, ACID Database, Daily Process Delta, Practice Replay, and Promotion Gate.
 - **[System Architecture](architecture/ARCHITECTURE.md)**: Frontend (Next.js), Backend (FastAPI), and Database design.
 - **[Developer Guide](setup/DEVELOPER_GUIDE.md)**: "Cookbook" for adding new Indicators and Drawing Tools.
 - **[Indicator Standards](architecture/INDICATOR_DEVELOPMENT_STANDARDS.md)**: Performance & interaction patterns.
