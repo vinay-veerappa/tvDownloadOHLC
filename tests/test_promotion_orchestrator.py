@@ -19,23 +19,36 @@ def temp_db(tmp_path):
 
 
 def _register_cleared_model(db, model_version_id="MOD_VERIFIED", finding_id="SF-1"):
-    """Full verified evidence chain: model record + sealed holdout + PROMOTED shadow event."""
+    """Full verified evidence chain: model record + sealed holdout + PROMOTED shadow event.
+
+    Design power must reach 0.80 (frozen from the PREREGISTERED effect): with N=100
+    holdout samples and effect h=0.5, power ~= 0.93, so the gate can actually PROMOTE
+    the perfect bound predictor. Benchmark/MDE here mirror the sealed registry values.
+    """
+    import pytest as _pytest
     HoldoutRegistry.register_holdout(
         holdout_dataset_id="H-1",
-        features=["f1", "f2", "f3", "f4"],
-        labels=["LONG", "SHORT", "LONG", "SHORT"],
+        features=[f"f{i}" for i in range(100)],
+        labels=(["LONG", "SHORT"] * 50),
         benchmark_metric=0.5,
-        expected_effect_size_d=0.0,
+        expected_effect_size_d=0.5,
         db_path=db,
     )
+
+    def bound_registry_predictor(feats):
+        # Rule-faithful predictor: 100% accurate against the alternating sealed labels.
+        n = len(feats) if hasattr(feats, "__len__") else 0
+        return ["LONG" if i % 2 == 0 else "SHORT" for i in range(n)]
+
     ShadowGate.preregister_candidate_finding(
         finding_id=finding_id,
         model_version_id=model_version_id,
         benchmark_metric=0.5,
-        expected_effect_size_d=0.05,
+        expected_effect_size_d=0.5,
         feature_manifest={},
         holdout_dataset_id="H-1",
         holdout_dataset_hash=None,
+        model_predict_fn=bound_registry_predictor,
         db_path=db,
     )
     # Model record must exist BEFORE orchestration (immutable registry seeded by research pipeline)
@@ -52,7 +65,7 @@ def _register_cleared_model(db, model_version_id="MOD_VERIFIED", finding_id="SF-
     res = ShadowGate.evaluate_candidate_finding(
         finding_id=finding_id,
         model_version_id=model_version_id,
-        model_predict_fn=lambda feats: ["LONG", "SHORT", "LONG", "SHORT"],
+        model_predict_fn=bound_registry_predictor,
         db_path=db,
     )
     assert res.pipeline_stage in ("PROMOTED", "INCONCLUSIVE_WAITING", "REJECTED")

@@ -172,33 +172,81 @@ class TargetedDrillGenerator:
                         f"SYNTHETIC_PROXY_DRILLS: not derived from historical incident context; "
                         f"requires user approval before activation."
                     ),
-                    approval_status="PENDING_USER_APPROVAL",
+                    # Durable approval state (F22): a persisted decision for this rule is
+                    # restored on regeneration, so the user's choice survives.
+                    approval_status=cls._load_rule_approval(rule_id, db_path=db_path) or "PENDING_USER_APPROVAL",
                     source_rule_event_samples=source_samples,
                 ))
             return curricula
+
+    @classmethod
+    def _load_rule_approval(
+        cls,
+        rule_id: str,
+        db_path: Optional[Union[str, Path]] = None
+    ) -> Optional[str]:
+        """Returns the persisted decision ('APPROVED'/'DISMISSED') for a weakness rule, if any."""
+        with get_db_connection(db_path) as conn:
+            row = conn.execute(
+                "SELECT decision FROM curriculum_rule_approvals WHERE weakness_rule_id = ?;",
+                (rule_id,)
+            ).fetchone()
+        return row["decision"] if row else None
+
+    @classmethod
+    def _record_rule_approval(
+        cls,
+        rule_id: str,
+        decision: str,
+        actor: Optional[str],
+        db_path: Optional[Union[str, Path]] = None
+    ) -> None:
+        """Persists an approve/dismiss decision keyed by weakness rule (durable across regenerations)."""
+        with get_db_connection(db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO curriculum_rule_approvals (approval_id, weakness_rule_id, decision, actor)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(weakness_rule_id) DO UPDATE SET
+                    decision = excluded.decision,
+                    actor = excluded.actor,
+                    decided_at_utc = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
+                """,
+                (str(uuid.uuid4()), rule_id, decision, actor)
+            )
 
     @classmethod
     def approve_curriculum(
         cls,
         curriculum: CurriculumSummary,
         approved_by: str,
+        db_path: Optional[Union[str, Path]] = None,
     ) -> CurriculumSummary:
         """Records explicit user approval; a curriculum is not activated without it.
 
         Interpretation of repeated rule events as a 'weakness' is automatic, but
         SCHEDULING practice from it is a behavior intervention requiring human consent.
+        The decision is PERSISTED by weakness_rule_id: regenerating the curriculum for
+        the same rule restores the saved decision instead of silently re-prompting.
         """
         if curriculum.approval_status != "PENDING_USER_APPROVAL":
             raise ValueError(f"Curriculum {curriculum.curriculum_id} is already '{curriculum.approval_status}'.")
         curriculum.approval_status = "APPROVED"
         curriculum.approved_by = approved_by
         curriculum.approved_at_utc = now_iso_utc()
+        cls._record_rule_approval(curriculum.weakness_rule_id, "APPROVED", approved_by, db_path=db_path)
         return curriculum
 
     @classmethod
-    def dismiss_curriculum(cls, curriculum: CurriculumSummary) -> CurriculumSummary:
+    def dismiss_curriculum(
+        cls,
+        curriculum: CurriculumSummary,
+        dismissed_by: Optional[str] = None,
+        db_path: Optional[Union[str, Path]] = None,
+    ) -> CurriculumSummary:
         """Records explicit dismissal; dismissed curricula are terminal."""
         if curriculum.approval_status != "PENDING_USER_APPROVAL":
             raise ValueError(f"Curriculum {curriculum.curriculum_id} is already '{curriculum.approval_status}'.")
         curriculum.approval_status = "DISMISSED"
+        cls._record_rule_approval(curriculum.weakness_rule_id, "DISMISSED", dismissed_by, db_path=db_path)
         return curriculum

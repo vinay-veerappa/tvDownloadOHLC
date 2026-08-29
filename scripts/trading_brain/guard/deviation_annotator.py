@@ -52,12 +52,31 @@ class DeviationAnnotator:
         exec_id = execution.get("execution_id") or str(uuid.uuid4())
         qty = int(execution.get("quantity", 1))
         
-        # Position reduction check (exits are not directional entries)
-        is_exit_or_reduction = False
-        if current_net_position_before_fill > 0 and action in ("SELL", "SELL_SHORT", "SHORT"):
-            is_exit_or_reduction = True
-        elif current_net_position_before_fill < 0 and action in ("BUY", "LONG"):
-            is_exit_or_reduction = True
+        # Position reduction check (exits are not directional entries) - QUANTITY-AWARE.
+        # A fill larger than the open position FLIPS: only min(qty, |pos|) contracts are
+        # a reduction; the excess opens a NEW opposite-direction position and is treated
+        # as a directional ENTRY for bias/NO_TRADE purposes. Selling 2 while long 1 is
+        # one reduction + one short entry, never a pure exit.
+        entry_direction = None          # effective direction of any NEW position opened
+        if current_net_position_before_fill == 0:
+            is_exit_or_reduction = False
+            entry_direction = "LONG" if action in ("BUY", "LONG") else "SHORT"
+        elif action in ("SELL", "SELL_SHORT", "SHORT") and current_net_position_before_fill > 0:
+            reducing_qty = min(qty, current_net_position_before_fill)
+            excess_qty = qty - reducing_qty
+            is_exit_or_reduction = excess_qty == 0
+            if excess_qty > 0:
+                entry_direction = "SHORT"
+        elif action in ("BUY", "LONG") and current_net_position_before_fill < 0:
+            reducing_qty = min(qty, abs(current_net_position_before_fill))
+            excess_qty = qty - reducing_qty
+            is_exit_or_reduction = excess_qty == 0
+            if excess_qty > 0:
+                entry_direction = "LONG"
+        else:
+            # Same-direction add to an existing position: fully an entry.
+            is_exit_or_reduction = False
+            entry_direction = "LONG" if action in ("BUY", "LONG") else "SHORT"
 
         plan_ctx = PlanAdapter.get_plan_as_of(session_date, ticker, event_ts, db_path=db_path)
         findings: List[DeviationFinding] = []
@@ -80,24 +99,38 @@ class DeviationAnnotator:
             snapshot_id = plan_ctx.plan_snapshot_id
 
             # 1. Plan Bias Violation (Only for directional entry / increasing position)
-            if not is_exit_or_reduction:
-                if plan_bias == "BEARISH" and action in ("BUY", "LONG"):
+            # The EXCESS over the reducing quantity is an entry in `entry_direction`.
+            if entry_direction == "SHORT":
+                if plan_bias == "BULLISH":
                     findings.append(DeviationFinding(
                         rule_id="PLAN_BIAS_DIRECTION_DEVIATION",
                         authority_class="OBSERVED_DEVIATION_ANNOTATION",
                         action_mode="ACTING",
                         observed_value=1.0,
                         threshold_value=0.0,
-                        description="Long entry executed contrary to declared BEARISH effective plan bias"
+                        description="Short ENTRY executed contrary to declared BULLISH effective plan bias "
+                                    "(position-flip: only the reducing quantity is exempt)"
                     ))
-                elif plan_bias == "BULLISH" and action in ("SELL", "SELL_SHORT", "SHORT"):
+                elif plan_bias == "NO_TRADE":
+                    findings.append(DeviationFinding(
+                        rule_id="NO_TRADE_PLAN_DEVIATION",
+                        authority_class="OBSERVED_DEVIATION_ANNOTATION",
+                        action_mode="ACTING",
+                        observed_value=1.0,
+                        threshold_value=0.0,
+                        description="Short ENTRY executed contrary to declared NO_TRADE plan bias "
+                                    "(position-flip: only the reducing quantity is exempt)"
+                    ))
+            elif entry_direction == "LONG":
+                if plan_bias == "BEARISH":
                     findings.append(DeviationFinding(
                         rule_id="PLAN_BIAS_DIRECTION_DEVIATION",
                         authority_class="OBSERVED_DEVIATION_ANNOTATION",
                         action_mode="ACTING",
                         observed_value=1.0,
                         threshold_value=0.0,
-                        description="Short entry executed contrary to declared BULLISH effective plan bias"
+                        description="Long ENTRY executed contrary to declared BEARISH effective plan bias "
+                                    "(position-flip: only the reducing quantity is exempt)"
                     ))
                 elif plan_bias == "NO_TRADE":
                     findings.append(DeviationFinding(

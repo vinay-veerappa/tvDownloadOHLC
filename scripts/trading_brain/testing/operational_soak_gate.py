@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from scripts.trading_brain.db.init_db import init_trading_brain_db
+from scripts.trading_brain.db.connection import get_db_connection
 from scripts.trading_brain.forecast.forecast_registrar import (
     ForecastRegistrar,
     ForecastSnapshotPayload,
@@ -278,6 +279,20 @@ class OperationalSoakGate:
             data_loss = max(0, expected_records - total_records)
             extra_records = max(0, total_records - expected_records)
 
+            # F24 honesty: distinct sessions actually exercised by the fixture canon,
+            # not the number of replay scenarios that passed.
+            with get_db_connection(test_db) as conn:
+                distinct_sessions = conn.execute(
+                    """
+                    SELECT COUNT(DISTINCT session_date) FROM (
+                        SELECT session_date FROM plan_snapshots
+                        UNION SELECT session_date FROM execution_events
+                        UNION SELECT session_date FROM signal_opportunities
+                        UNION SELECT session_date FROM session_tape_actuals
+                    );
+                    """
+                ).fetchone()[0]
+
             status = (
                 "FIXTURE_REPLAY_ACCEPTED"
                 if (scenarios_passed == 5 and data_loss == 0 and duplicates == 0
@@ -286,7 +301,7 @@ class OperationalSoakGate:
             )
 
             return OperationalSoakReport(
-                total_sessions_tested=5,
+                total_sessions_tested=distinct_sessions,
                 scenarios_passed=scenarios_passed,
                 total_records_inserted=total_records,
                 expected_records=expected_records,

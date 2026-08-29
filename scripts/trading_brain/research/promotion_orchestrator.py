@@ -8,13 +8,25 @@ Maintains 4 independent promotion tiers using append-only model_deployment_event
 
 Governance rules:
 * Every tier evaluation records a deployment event in the immutable ledger.
-* A real model_version record must exist (or be auto-created as a placeholder) before any event is written.
+* A real model_version record MUST pre-exist; the orchestrator NEVER auto-creates
+  placeholder rows (audit-forgery prevention; the old 'auto-created as a placeholder'
+  behavior was removed).
+* Any CHAMPION outcome additionally requires a linked PROMOTED shadow-gate event for
+  the same model with a matching holdout hash (verified-evidence chain).
+* Tier metrics are CALLER_ATTESTED unless bound to an evaluation artifact: the
+  eval_metrics_json records 'metric_provenance'. Full artifact-derived metrics
+  (computed from immutable evaluation artifacts) are the follow-up workstream; until
+  then every promotion carries the honest provenance tag plus the shadow chain.
+* CHAMPION uniqueness per (family, tier): activating a new champion atomically logs
+  DEMOTED events for the previous champions of the same family+tier in the SAME
+  transaction (single-connection atomicity on SQLite).
 * The immutable `model_versions.status` column is never updated by this orchestrator.
 * Each tier can independently be 'PENDING' (insufficient evidence), 'CANDIDATE', 'CHAMPION'/'PROMOTED', or 'REJECTED'.
 """
 
 import json
 import math
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -115,11 +127,57 @@ class PromotionOrchestrator:
         actor: str,
         reason: str,
         prereq: Optional[Dict[str, Any]] = None,
+        metric_provenance: str = "CALLER_ATTESTED",
     ) -> str:
         event_id = str(uuid.uuid4())
         payload = dict(metrics)
+        payload["metric_provenance"] = metric_provenance
         if prereq:
             payload["prerequisite_chain"] = prereq
+
+        # F11 champion uniqueness: within THIS SAME transaction, any other model in the
+        # same family currently holding CHAMPION on this tier is atomically DEMOTED
+        # (SUPERSEDED_BY_NEW_CHAMPION), so two current champions per family+tier can
+        # never coexist in the ledger's current-state view.
+        if deployment_status == "CHAMPION":
+            fam_row = conn.execute(
+                "SELECT model_family FROM model_versions WHERE model_version_id = ?;",
+                (model_version_id,)
+            ).fetchone()
+            if fam_row is not None:
+                family = fam_row["model_family"]
+                peers = conn.execute(
+                    """
+                    SELECT DISTINCT mv.model_version_id AS mvid
+                    FROM model_versions mv
+                    JOIN model_deployment_events e ON e.model_version_id = mv.model_version_id AND e.tier = ?
+                    WHERE mv.model_family = ? AND mv.model_version_id != ?
+                      AND e.deployment_status = 'CHAMPION'
+                      AND e.event_timestamp_utc = (
+                          SELECT MAX(e2.event_timestamp_utc) FROM model_deployment_events e2
+                          WHERE e2.model_version_id = mv.model_version_id AND e2.tier = ?
+                      )
+                    """,
+                    (tier, family, model_version_id, tier),
+                ).fetchall()
+                for p in peers:
+                    peer_id = p["mvid"] if not isinstance(p, sqlite3.Row) else p["mvid"]
+                    self_id = str(uuid.uuid4())
+                    conn.execute(
+                        """
+                        INSERT INTO model_deployment_events (
+                            deployment_event_id, model_version_id, tier, deployment_status,
+                            eval_metrics_json, actor, reason, event_timestamp_utc
+                        ) VALUES (?, ?, ?, 'DEMOTED', ?, ?, ?, ?);
+                        """,
+                        (
+                            self_id, peer_id, tier,
+                            json.dumps({"superseded_by": model_version_id, "tier": tier}),
+                            actor,
+                            f"Champion superseded by {model_version_id} (family {family}, tier {tier} uniqueness).",
+                            now_iso_utc(),
+                        ),
+                    )
         conn.execute(
             """
             INSERT INTO model_deployment_events (

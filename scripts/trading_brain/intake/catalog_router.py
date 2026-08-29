@@ -59,12 +59,16 @@ class CatalogRouter:
         db_path: Optional[Union[str, Path]] = None,
         *,
         received_at_utc: Optional[Union[str, datetime]] = None,
+        override_reason: Optional[str] = None,
+        override_actor: Optional[str] = None,
     ) -> str:
         """Persists a new typed information item into information_items.
 
-        `received_at_utc` is normally the actual database receipt time. An optional
-        override is accepted for audited backfills or tests, but it is recorded
-        verbatim and subject to the same query cutoffs as the default clock time.
+        Trust boundary: `received_at_utc` is normally the actual database receipt time.
+        A caller override is a PRIVILEGED migration action: it requires non-empty
+        `override_reason` and `override_actor` and is refused otherwise. Normal
+        application writes must never accept receipt-time overrides - a caller-supplied
+        receipt is what makes historical as-of queries forgeable.
         """
         ev_class = payload.evidence_class.upper()
         if ev_class not in VALID_EVIDENCE_CLASSES:
@@ -77,6 +81,12 @@ class CatalogRouter:
         info_id = payload.information_id or str(uuid.uuid4())
         avail_ts_iso = to_iso_utc(payload.available_at_utc)
         payload_json = json.dumps(payload.structured_payload) if payload.structured_payload else None
+        if received_at_utc is not None and (not override_reason or not override_actor):
+            raise ValueError(
+                "received_at_utc override requires override_reason and override_actor "
+                "(privileged migration path). Unaudited caller-supplied receipt times forge "
+                "historical as-of evidence."
+            )
         recv_iso = to_iso_utc(received_at_utc) if received_at_utc else now_iso_utc()
 
         with get_db_connection(db_path) as conn:
@@ -110,6 +120,7 @@ class CatalogRouter:
         only_accepted: bool = True,
         min_review_state: Optional[str] = None,
         limit: int = 50,
+        offset: int = 0,
         db_path: Optional[Union[str, Path]] = None
     ) -> List[Dict[str, Any]]:
         """Queries information items strictly available and received as of decision_cutoff_utc,
@@ -123,6 +134,9 @@ class CatalogRouter:
 
         Review state can be filtered by `min_review_state` (e.g., 'ACCEPTED' requires an
         explicit ACCEPTED event; 'CAPTURED' accepts items that have not been reviewed).
+        Pagination: `offset` skips the first N rows of the filtered, ordered result set
+        (review-state filtering happens in SQL BEFORE the offset/limit window, so paging
+        never hides older accepted evidence behind a page of rejected rows).
         """
         cutoff_iso = to_iso_utc(decision_cutoff_utc)
 
@@ -173,8 +187,9 @@ class CatalogRouter:
                 else:
                     query += " AND a.active_review_state = 'ACCEPTED'"
 
-            query += " ORDER BY i.available_at_utc DESC LIMIT ?;"
+            query += " ORDER BY i.available_at_utc DESC, i.received_at_utc DESC, i.information_id LIMIT ? OFFSET ?;"
             params.append(limit)
+            params.append(int(offset))
 
             cur = conn.execute(query, params)
             results = []

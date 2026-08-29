@@ -94,6 +94,16 @@ def _norminv_one_sided(p: float) -> float:
     return 0.5 * (lo + hi)
 
 
+def _upper_tail_z_from_p(p: float) -> float:
+    """Converts an UPPER-TAIL p-value to its z-score: z = Phi^{-1}(1 - p).
+
+    Fold p-values are upper-tail (p = 1 - Phi(z)), so small p must map to LARGE
+    positive z. Returning Phi^{-1}(p) here (the lower-tail quantile) would invert
+    the evidence sign and aggregate strong folds into p ~ 1.0.
+    """
+    return -_norminv_one_sided(p)
+
+
 class WalkForwardGate:
     """Validator that executes purged cross-validation and multiple comparison corrections."""
 
@@ -204,6 +214,7 @@ class WalkForwardGate:
         min_score_threshold: float = 0.0,
         max_std_err: float = 2.0,
         require_significant_fdr: bool = False,
+        family_p_values: Optional[Sequence[float]] = None,
     ) -> WalkForwardEvaluation:
         """Runs purged walk-forward validation with real model fitting per fold.
 
@@ -215,9 +226,13 @@ class WalkForwardGate:
             n_folds, min_train_size, embargo_size: fold construction parameters.
             min_score_threshold: minimum acceptable mean out-of-sample score.
             max_std_err: maximum acceptable standard error of the mean score.
-            require_significant_fdr: if True, gate also requires at least one fold-level
-                raw p-value to survive BH FDR at 0.05 (p-values are computed from a
-                binomial test against a 0.5 random baseline).
+            require_significant_fdr: if True, gate requires the AGGREGATED
+                candidate-level p-value to survive BH FDR at 0.05.
+            family_p_values: optional list of the PREREGISTERED candidate family's
+                aggregate p-values (this candidate's INCLUDED). BH correction is then
+                applied across the whole family, so a lone-significant candidate among
+                many tested ones cannot pass on raw p=0.02 alone. Omitting it treats
+                this as the only candidate (explicit family-of-one).
         """
         if len(features) != len(labels):
             raise ValueError("features and labels must have the same length")
@@ -293,9 +308,13 @@ class WalkForwardGate:
         # preregistered candidate family, not across folds.
         aggregated_p = cls._stouffer_aggregate_p(fold_results) if fold_results else 1.0
 
-        # Family-level multiplicity: the caller supplies the candidate family size
-        # (number of preregistered candidate models tested in this research round).
-        mt_summary = cls.adjust_p_values([aggregated_p] * 1, alpha=0.05)
+        # Family-level multiplicity: BH correction runs across the PREREGISTERED
+        # candidate family when the caller declares it. A family of one is the
+        # explicit fallback (documented, not silent).
+        if family_p_values is not None and len(family_p_values) > 0:
+            mt_summary = cls.adjust_p_values(list(family_p_values), alpha=0.05)
+        else:
+            mt_summary = cls.adjust_p_values([aggregated_p] * 1, alpha=0.05)
 
         failure_reasons: List[str] = []
         passed = True
@@ -342,8 +361,8 @@ class WalkForwardGate:
         w_sq_sum = 0.0
         for f in fold_results:
             p = min(max(f.p_value if f.p_value is not None else 1.0, 1e-12), 1.0)
-            # one-sided p -> z
-            z = _norminv_one_sided(p)
+            # Fold p-values are UPPER-tail: small p -> large positive z.
+            z = _upper_tail_z_from_p(p)
             w = math.sqrt(max(f.test_size, 1))
             z_sum += w * z
             w_sq_sum += w * w

@@ -22,6 +22,7 @@ Enforces:
 import hashlib
 import hmac
 import json
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, time, timezone
@@ -129,23 +130,58 @@ class BlindedDrillEngine:
         return {r["dataset_split"] for r in rows}
 
     @classmethod
-    def _register_session_split(
+    def _claim_session_split_atomic(
         cls,
         session_key: Tuple[str, str],
         dataset_split: str,
         db_path: Optional[Union[str, Path]] = None
     ) -> None:
-        """Persists a session/split assignment in the anti-memorization registry."""
+        """Atomically claims a (session, split) assignment in the custody registry.
+
+        The prior-split check and the registration happen inside ONE BEGIN IMMEDIATE
+        transaction: with separate transactions, two concurrent generators could both
+        read no-conflict and then both register - the pre-fix race stored both a
+        TRAINING and an ASSESSMENT row for the same session. BEGIN IMMEDIATE takes the
+        write lock before reading, serializing competing claimants on single-host SQLite.
+        """
         session_date, ticker = session_key
         with get_db_connection(db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO drill_split_registry (session_date, ticker, dataset_split)
-                VALUES (?, ?, ?)
-                ON CONFLICT(session_date, ticker, dataset_split) DO NOTHING;
-                """,
-                (session_date, ticker, dataset_split)
-            )
+            conn.execute("BEGIN IMMEDIATE;")
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT dataset_split FROM drill_split_registry
+                    WHERE session_date = ? AND ticker = ?;
+                    """,
+                    (session_date, ticker)
+                ).fetchall()
+                prior_splits = {r["dataset_split"] if not isinstance(r, sqlite3.Row) else r["dataset_split"] for r in rows}
+
+                assessment_splits = prior_splits & {"ASSESSMENT"}
+                training_splits = prior_splits & {"TRAINING", "CALIBRATION"}
+                if dataset_split == "ASSESSMENT" and training_splits:
+                    raise SplitCustodyViolationError(
+                        f"Session {session_key} was previously used in {sorted(training_splits)}; "
+                        f"it can never be used for ASSESSMENT (anti-memorization custody violation)."
+                    )
+                if dataset_split in ("TRAINING", "CALIBRATION") and assessment_splits:
+                    raise SplitCustodyViolationError(
+                        f"Session {session_key} is a sealed ASSESSMENT session and can never be reused "
+                        f"for {dataset_split} (anti-memorization custody violation)."
+                    )
+
+                conn.execute(
+                    """
+                    INSERT INTO drill_split_registry (session_date, ticker, dataset_split)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(session_date, ticker, dataset_split) DO NOTHING;
+                    """,
+                    (session_date, ticker, dataset_split)
+                )
+                conn.execute("COMMIT;")
+            except Exception:
+                conn.execute("ROLLBACK;")
+                raise
 
     @classmethod
     def generate_blinded_drill(
@@ -170,22 +206,20 @@ class BlindedDrillEngine:
         if split_upper not in _VALID_SPLITS:
             raise ValueError(f"Invalid dataset_split '{dataset_split}'. Must be one of {_VALID_SPLITS}.")
 
-        session_key = (str(session_date), str(ticker))
-        prior_splits = cls._load_session_splits(session_key, db_path=db_path)
+        # Assessment integrity (fail-closed): synthetic series carry no authentic
+        # provenance, so they can never become assessment evidence (F8).
+        if split_upper == "ASSESSMENT" and synthetic_mode:
+            raise ValueError(
+                "Synthetic drills are barred from ASSESSMENT at generation: a synthetic "
+                "series proves nothing about real-session recognition and carries no "
+                "authentic provenance."
+            )
 
-        assessment_splits = prior_splits & {"ASSESSMENT"}
-        training_splits = prior_splits & {"TRAINING", "CALIBRATION"}
-        if split_upper == "ASSESSMENT" and training_splits:
-            raise SplitCustodyViolationError(
-                f"Session {session_key} was previously used in {sorted(training_splits)}; "
-                f"it can never be used for ASSESSMENT (anti-memorization custody violation)."
-            )
-        if split_upper in ("TRAINING", "CALIBRATION") and assessment_splits:
-            raise SplitCustodyViolationError(
-                f"Session {session_key} is a sealed ASSESSMENT session and can never be reused "
-                f"for {split_upper} (anti-memorization custody violation)."
-            )
-        cls._register_session_split(session_key, split_upper, db_path=db_path)
+        session_key = (str(session_date), str(ticker))
+        # CHECK + REGISTER atomically (F7): the prior-split read and the claim happen
+        # inside one BEGIN IMMEDIATE transaction, so concurrent generators cannot both
+        # pass the violation check.
+        cls._claim_session_split_atomic(session_key, split_upper, db_path=db_path)
 
         if synthetic_mode:
             blinded_bars = []

@@ -52,6 +52,43 @@ class ShadowGateLockedError(Exception):
     pass
 
 
+class ModelBindingMismatchError(Exception):
+    """Raised when the supplied prediction function does not match the one bound at preregistration.
+
+    The gate executes ONLY the predictor bound at preregistration time (identified by
+    module, qualified name, and source hash). Any other callable - including one that
+    trivially returns the sealed labels - is refused: an oracle callback would receive
+    perfect accuracy regardless of what the registered model artifact actually predicts.
+    """
+    pass
+
+
+def _predictor_binding(fn: Callable[[Any], Sequence[Any]]) -> Dict[str, str]:
+    """Produces a stable identity binding for a prediction function.
+
+    Identity = module + qualified name + sha256 of source. Callables with the same
+    identity execute the same code; an oracle-style replacement fails the hash.
+    """
+    import inspect
+    module = getattr(fn, "__module__", None) or "<unknown>"
+    qualname = getattr(fn, "__qualname__", None) or repr(fn)
+    try:
+        src = inspect.getsource(fn)
+    except (OSError, TypeError):
+        src = ""
+    src_hash = hashlib.sha256(src.encode("utf-8")).hexdigest()[:32]
+    return {"module": module, "qualname": qualname, "source_hash": f"sha256:{src_hash}"}
+
+
+def _bindings_match(a: Dict[str, str], b: Dict[str, str]) -> bool:
+    """A binding matches when module+qualname+source hash agree (declared, not guessed)."""
+    return (
+        a.get("module") == b.get("module")
+        and a.get("qualname") == b.get("qualname")
+        and a.get("source_hash") == b.get("source_hash")
+    )
+
+
 @dataclass
 class ShadowEvaluationResult:
     finding_event_id: str
@@ -154,13 +191,48 @@ class ShadowGate:
         holdout_dataset_hash: str,
         metric_kind: str = "DIRECTIONAL_ACCURACY",
         actor: str = "RESEARCH_AGENT",
-        db_path: Optional[Union[str, Path]] = None
+        db_path: Optional[Union[str, Path]] = None,
+        model_predict_fn: Optional[Callable[[Any], Sequence[Any]]] = None,
     ) -> str:
-        """Preregisters a candidate finding at discovery time, binding holdout dataset and effect size."""
+        """Preregisters a candidate finding at discovery time, binding holdout dataset and effect size.
+
+        Predictor binding (anti-oracle): `model_predict_fn` MUST be supplied here; it is
+        bound by identity (module, qualified name, source hash) and stored in the
+        preregistration payload. Evaluation later refuses any callable that does not
+        match this binding, so a caller cannot swap in a callback that returns the
+        sealed labels.
+        """
+        if model_predict_fn is None:
+            raise ValueError(
+                "preregister_candidate_finding requires model_predict_fn: the predictor "
+                "executed at evaluation is bound NOW, not chosen later."
+            )
         with get_db_connection(db_path) as conn:
             cur = conn.execute("SELECT finding_id FROM candidate_finding_events WHERE finding_id = ?;", (finding_id,))
             if cur.fetchone():
                 raise PreregistrationConflictError(f"Candidate finding '{finding_id}' has already been preregistered.")
+
+            # Sealed-holdout authority check (fail-closed): the caller's benchmark and
+            # expected effect MUST equal the values sealed in the holdout registry when
+            # the holdout pre-exists. A weak caller benchmark cannot silently replace a
+            # stricter sealed one.
+            held = HoldoutRegistry.load_holdout(
+                holdout_dataset_id=holdout_dataset_id,
+                expected_hash=holdout_dataset_hash,
+                db_path=db_path,
+            )
+            if abs(held.benchmark_metric - benchmark_metric) > 1e-9:
+                raise ValueError(
+                    f"benchmark_metric {benchmark_metric} does not match the sealed holdout "
+                    f"registry value {held.benchmark_metric} for '{holdout_dataset_id}'. "
+                    "Preregistration must cite the sealed benchmark."
+                )
+            if abs(held.expected_effect_size_d - expected_effect_size_d) > 1e-9:
+                raise ValueError(
+                    f"expected_effect_size_d {expected_effect_size_d} does not match the sealed "
+                    f"registry value {held.expected_effect_size_d} for '{holdout_dataset_id}'. "
+                    "Preregistration must cite the sealed MDE."
+                )
 
             event_id = str(uuid.uuid4())
             eval_json = json.dumps({
@@ -172,6 +244,7 @@ class ShadowGate:
                 "holdout_dataset_id": holdout_dataset_id,
                 "holdout_dataset_hash": holdout_dataset_hash,
                 "feature_manifest": feature_manifest,
+                "bound_predictor": _predictor_binding(model_predict_fn),
                 "preregistered_at_utc": now_iso_utc()
             })
 
@@ -235,22 +308,63 @@ class ShadowGate:
                     f"for finding '{finding_id}'."
                 )
 
-            sealed_benchmark = float(prev_json["benchmark_metric"])
-            sealed_effect_d = float(prev_json["expected_effect_size_d"])
+            # Anti-oracle: the executed predictor must be the one bound at
+            # preregistration. A different callable (e.g. one returning the sealed
+            # labels) is refused outright. Resume contract (F15): an INCONCLUSIVE_WAITING
+            # event's payload re-derives its metrics from the holdout registry and does
+            # not carry the binding, so on resume fall back to the ORIGINAL
+            # preregistration (DISCOVERY) event's bound predictor.
+            bound = prev_json.get("bound_predictor")
+            if not bound:
+                disc = conn.execute(
+                    """
+                    SELECT evaluation_result_json FROM candidate_finding_events
+                    WHERE finding_id = ? AND pipeline_stage = 'DISCOVERY'
+                    ORDER BY event_timestamp_utc DESC, rowid ASC LIMIT 1;
+                    """,
+                    (finding_id,)
+                ).fetchone()
+                disc_json = json.loads(disc["evaluation_result_json"]) if disc and disc["evaluation_result_json"] else {}
+                bound = disc_json.get("bound_predictor")
+            if not bound:
+                raise ModelBindingMismatchError(
+                    f"Candidate finding '{finding_id}' has no bound predictor in any "
+                    "preregistration event; re-preregister a binding (anti-oracle custody) "
+                    "before evaluation."
+                )
+            if not _bindings_match(bound, _predictor_binding(model_predict_fn)):
+                raise ModelBindingMismatchError(
+                    f"Supplied model_predict_fn does not match the predictor bound at "
+                    f"preregistration for finding '{finding_id}' "
+                    f"(bound={bound.get('module')}.{''.join(bound.get('qualname', ''))}). "
+                    "The gate executes ONLY the registered model's bound predictor."
+                )
+
             metric_kind = prev_json.get("metric_kind", "DIRECTIONAL_ACCURACY")
             holdout_dataset_id = prev_json["holdout_dataset_id"]
             preregistered_hash = prev_json.get("holdout_dataset_hash")
+            prereg_benchmark = prev_json.get("benchmark_metric")
             if not holdout_dataset_id:
                 raise PreregistrationRequiredError(
                     f"Candidate finding '{finding_id}' was preregistered without a sealed holdout_dataset_id."
                 )
 
-        # Load sealed holdout outside the candidate row lock.  The registry enforces the hash.
+        # Load sealed holdout outside the candidate row lock.  The registry enforces the hash,
+        # and the SEALED REGISTRY values are the authority for benchmark and MDE (F14/F15):
+        # evaluation never re-reads them from the preceding event payload, which both stale
+        # resume payloads could lack and which a manipulated prereg payload could weaken.
         holdout = HoldoutRegistry.load_holdout(
             holdout_dataset_id=holdout_dataset_id,
             expected_hash=preregistered_hash,
             db_path=db_path,
         )
+        sealed_benchmark = holdout.benchmark_metric
+        sealed_effect_d = holdout.expected_effect_size_d
+        if prereg_benchmark is not None and abs(prereg_benchmark - sealed_benchmark) > 1e-9:
+            raise ValueError(
+                f"Preregistered benchmark {prereg_benchmark} disagrees with the sealed holdout "
+                f"registry value {sealed_benchmark} for '{holdout_dataset_id}'."
+            )
 
         labels = list(holdout.labels)
         n = sample_size if sample_size is not None else len(labels)
@@ -270,29 +384,34 @@ class ShadowGate:
         else:
             raise ValueError(f"Unsupported metric_kind: {metric_kind}")
 
-        # Metric-valid inference: the p-value z-test uses SE from the observed proportion
-        # under the null (valid for accuracy-like proportions), and power uses Cohen's h
-        # computed from the OBSERVED holdout effect - never from the preregistered
-        # expectation (which would manufacture its own confirmation).
-        power = cls.calculate_statistical_power(
-            n, cls._cohens_h_from_props(realized_metric, sealed_benchmark)
-        )
+        # Prospective (design) power is FROZEN from the PREREGISTERED effect before any
+        # holdout access could influence it (F12): power computed from the observed
+        # effect would let an extreme realized result manufacture its own power=1.0.
+        # The observed effect is reported as a diagnostic and enforced through the MDE
+        # gate below, never through design power.
+        design_power = cls.calculate_statistical_power(n, sealed_effect_d)
+        observed_h = cls._cohens_h_from_props(realized_metric, sealed_benchmark)
+        observed_power = cls.calculate_statistical_power(n, observed_h)
         p_value = cls._one_sided_p_value(realized_metric, sealed_benchmark, n)
         fdr_q_value = cls._compute_fdr_q_value(p_value)
         improvement = realized_metric - sealed_benchmark
         # Preregistered MDE on the raw metric scale: promotion requires the observed
         # improvement to at least meet the preregistered expected effect expressed via
-        # Cohen's h inverted back to the accuracy scale.
+        # Cohen's h inverted back to the accuracy scale (F13).
         min_practical_improvement = cls._min_improvement_for_effect(sealed_benchmark, sealed_effect_d)
         meets_mde = improvement >= min_practical_improvement
 
-        if power < 0.80:
+        if design_power < 0.80:
             stage = "INCONCLUSIVE_WAITING"
-            notes = f"Insufficient statistical power ({power:.2f} < 0.80) at N={n}. Frozen awaiting unobserved samples."
+            notes = (
+                f"Insufficient PREREGISTERED design power ({design_power:.2f} < 0.80) at N={n} "
+                f"frozen before holdout access; observed effect (h={observed_h:.2f}) does not "
+                "retroactively power the design. Awaiting unobserved samples."
+            )
         elif fdr_q_value <= 0.05 and improvement > 0 and meets_mde:
             stage = "PROMOTED"
             notes = (
-                f"Validated on sealed shadow data (Power={power:.2f}, FDR q={fdr_q_value:.4f}, "
+                f"Validated on sealed shadow data (DesignPower={design_power:.2f}, FDR q={fdr_q_value:.4f}, "
                 f"Metric={realized_metric:.4f} > {sealed_benchmark:.4f}, "
                 f"Improvement={improvement:.4f} >= MDE={min_practical_improvement:.4f})."
             )
@@ -309,10 +428,13 @@ class ShadowGate:
             "sample_size": n,
             "realized_metric": realized_metric,
             "benchmark_metric": sealed_benchmark,
-            "effect_size_d": sealed_effect_d,
+            "effect_size_d_preregistered": sealed_effect_d,
+            "effect_size_d_observed": observed_h,
+            "design_power": design_power,
+            "observed_power": observed_power,
             "min_practical_improvement": round(min_practical_improvement, 6),
             "meets_mde": meets_mde,
-            "statistical_power": power,
+            "statistical_power": design_power,
             "fdr_q_value": fdr_q_value,
             "holdout_dataset_id": holdout_dataset_id,
             "holdout_hash": holdout.content_hash,
@@ -329,7 +451,7 @@ class ShadowGate:
                     statistical_power, fdr_q_value, actor, event_timestamp_utc
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
-                (event_id, finding_id, model_version_id, stage, eval_json, power, fdr_q_value, actor, now_iso_utc())
+                (event_id, finding_id, model_version_id, stage, eval_json, design_power, fdr_q_value, actor, now_iso_utc())
             )
 
         return ShadowEvaluationResult(
@@ -337,7 +459,7 @@ class ShadowGate:
             finding_id=finding_id,
             model_version_id=model_version_id,
             pipeline_stage=stage,
-            statistical_power=round(power, 4),
+            statistical_power=round(design_power, 4),
             fdr_q_value=round(fdr_q_value, 4),
             realized_metric=realized_metric,
             benchmark_metric=sealed_benchmark,

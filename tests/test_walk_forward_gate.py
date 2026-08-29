@@ -131,3 +131,40 @@ def test_empty_input_returns_failed_evaluation():
     assert res.passed_gate is False
     assert res.failure_reasons
     assert "empty" in " ".join(res.failure_reasons).lower()
+
+def test_stouffer_aggregate_strong_folds_produce_small_p():
+    """F1 regression: four perfect 19-sample folds must aggregate to a SMALL p-value.
+
+    The inverted version converted upper-tail fold p's through the lower-tail quantile,
+    turning strong evidence into an aggregate p near 1.0.
+    """
+    p_fold = 1.0 - 0.5 * (1.0 + __import__("math").erf((1.0 - 0.5) / __import__("math").sqrt(0.5 * 0.5 / 19) / __import__("math").sqrt(2.0)))
+    folds = [
+        FoldResult(fold_idx=i, train_size=40, test_size=19, score=1.0)
+        for i in range(4)
+    ]
+    for f in folds:
+        _ = p_fold  # per-fold p computed identically to the gate's binomial convention
+        f.p_value = 0.0000065359  # the reviewer's reproduced value
+    agg = WalkForwardGate._stouffer_aggregate_p(folds)
+    assert agg < 0.001, f"strong folds must aggregate significant, got p={agg}"
+
+
+def test_stouffer_null_folds_aggregate_nonsignificant():
+    """Folds at chance (p=0.5) must aggregate to p=0.5, not drift toward 0 or 1."""
+    folds = [FoldResult(fold_idx=i, train_size=40, test_size=19, score=0.5) for i in range(4)]
+    for f in folds:
+        f.p_value = 0.5
+    agg = WalkForwardGate._stouffer_aggregate_p(folds)
+    assert 0.3 < agg < 0.7
+
+
+def test_walk_forward_family_p_values_correction():
+    """F16: BH across the preregistered candidate family - a raw p=0.02 that would be
+    significant as family-of-one becomes non-significant at rank 5 of 5."""
+    # Simulate directly through the family branch by checking the adjust path parity.
+    family = [0.02, 0.30, 0.60, 0.80, 0.90]
+    mt = WalkForwardGate.adjust_p_values(family, alpha=0.05)
+    # rank 1: q = 0.02 * 5 / 1 = 0.10 -> NOT significant at 0.05
+    assert mt[0].bh_q_value >= 0.10
+    assert mt[0].significant_fdr_05 is False

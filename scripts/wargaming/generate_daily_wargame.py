@@ -428,24 +428,29 @@ def main():
     parser.add_argument("--no-db", action="store_true", help="Do not save to system_wargames.sqlite")
     parser.add_argument("--register", action="store_true",
                         help="Register the wargame into the canonical Trading Brain ledger "
-                             "(ForecastRegistrar + PlanAdapter, WS-2.1). Enforces 08:45 ET cutoff.")
-    parser.add_argument("--register-cutoff", default="08:45", help="Cutoff time used with --register (default 08:45)")
+                             "(ForecastRegistrar + PlanAdapter, WS-2.1). Requires --time to "
+                             "equal the registration cutoff (fail-closed).")
+    parser.add_argument("--register-cutoff", default="08:45",
+                        help="DEPRECATED: kept for CLI compatibility but --register now uses "
+                             "--time as the cutoff and REFUSES to run when the two differ.")
     args = parser.parse_args()
+
+    if args.register and args.time != args.register_cutoff:
+        raise SystemExit(
+            f"[WS-2.1] FAIL-CLOSED: --register requires --time to EQUAL the registration cutoff. "
+            f"Generated with --time {args.time} but would register under --register-cutoff "
+            f"{args.register_cutoff}: the sealed input manifest would attest to data the "
+            f"wargame did not actually compute from. Re-run with matching cutoffs."
+        )
 
     t_date = datetime.strptime(args.date, "%Y-%m-%d").date() if args.date else datetime.now(ET).date()
     data = generate_wargame_data(ticker=args.ticker, target_date=t_date, cutoff_time_str=args.time)
     md_output = format_wargame_markdown(data)
 
-    if not args.no_db:
-        try:
-            from scripts.wargaming.wargame_db import save_system_wargame
-            pred_id = save_system_wargame(data, markdown_report=md_output)
-            log.info(f"Auto-saved prediction to system_wargames.sqlite: {pred_id}")
-        except Exception as e:
-            log.warning(f"Failed to auto-save to database: {e}")
-
+    # WS-2.1: canonical registration runs BEFORE the legacy auto-save. Legacy-first
+    # ordering could commit an unsealed partial result when canonical registration
+    # fails afterward; canonical-first fails closed without a legacy residue.
     if args.register:
-        # WS-2.1: canonical ledger registration via the pre-market pipeline mappers.
         try:
             from scripts.trading_brain.orchestration.pre_market_pipeline import (
                 wargame_data_to_forecast_payload,
@@ -462,8 +467,8 @@ def main():
             git_hash = compute_git_hash()
             config_hash = compute_config_hash()
 
-            manifest = build_input_manifest(args.ticker, session_date_str, args.register_cutoff)
-            cutoff_str = args.register_cutoff if len(args.register_cutoff) == 8 else f"{args.register_cutoff}:00"
+            manifest = build_input_manifest(args.ticker, session_date_str, args.time)
+            cutoff_str = args.time if len(args.time) == 8 else f"{args.time}:00"
             run = ForecastRegistrar.create_forecast_run(
                 session_date=session_date_str,
                 ticker=args.ticker,
@@ -481,12 +486,20 @@ def main():
             commit = ForecastRegistrar.commit_forecast_run(run.forecast_run_id, payload)
             log.info(f"[WS-2.1] Registered forecast {commit.forecast_id} mode={commit.forecast_mode}")
 
-            plan_ctx = wargame_data_to_plan_context(data, md_output, session_date_str, args.register_cutoff)
+            plan_ctx = wargame_data_to_plan_context(data, md_output, session_date_str, args.time)
             saved_plan_id = PlanAdapter.save_plan_snapshot(plan_ctx)
             log.info(f"[WS-2.1] Registered plan snapshot {saved_plan_id}")
         except Exception as e:
-            log.error(f"[WS-2.1] Canonical registration failed (fail-closed): {e}")
+            log.error(f"[WS-2.1] Canonical registration failed (fail-closed; legacy save suppressed): {e}")
             raise
+
+    if not args.no_db:
+        try:
+            from scripts.wargaming.wargame_db import save_system_wargame
+            pred_id = save_system_wargame(data, markdown_report=md_output)
+            log.info(f"Auto-saved prediction to system_wargames.sqlite: {pred_id}")
+        except Exception as e:
+            log.warning(f"Failed to auto-save to database: {e}")
 
     if args.html:
         try:

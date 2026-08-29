@@ -1,4 +1,4 @@
-"""Isolated 3-Bank SQLite Database Engine with Canonical Trading Second Brain Cutover (Milestone 0.3b).
+﻿"""Isolated 3-Bank SQLite Database Engine with Canonical Trading Second Brain Cutover (Milestone 0.3b).
 
 Authoritative master: data/wargaming/db/trading_brain.sqlite
 Legacy shadow projections:
@@ -33,6 +33,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.trading_brain.db.connection import get_db_connection
 from scripts.trading_brain.db.init_db import init_trading_brain_db
 from scripts.trading_brain.migrations.outbox_projector import OutboxProjector
+from scripts.utils.market_calendar import get_session_cutoff_utc, to_iso_utc
 
 DB_DIR = REPO_ROOT / "data" / "wargaming" / "db"
 DB_DIR.mkdir(parents=True, exist_ok=True)
@@ -185,7 +186,8 @@ def save_mickey_ground_truth(data: Dict[str, Any], db_path: Optional[Path] = Non
                 info_id,
                 f"Mickey Ground Truth: {data.get('title') or session_id}",
                 data.get("raw_transcript") or data.get("overnight_assessment") or "",
-                f"{data.get('session_date')}T08:45:00Z",
+                # ET wall-clock 08:45 -> honest UTC (DST-aware), not a fabricated Z string.
+                to_iso_utc(get_session_cutoff_utc(data.get("session_date"), "08:45:00")),
                 json.dumps(legacy_payload)
             )
         )
@@ -197,10 +199,9 @@ def save_mickey_ground_truth(data: Dict[str, Any], db_path: Optional[Path] = Non
             payload=legacy_payload
         )
 
-    # 2. Project outbox
-    projector = OutboxProjector(canonical_db_path=db_path, mickey_ground_truth_path=MICKEY_DB_PATH)
-    projector.project_pending()
-
+    # 2. Legacy projection DEFERRED: DUAL_OUTBOX queues only. Synchronously running the
+    # projector here made the mode operationally identical to direct legacy writes,
+    # defeating its purpose. The projector runs on the schedule (task runner).
     return session_id
 
 
@@ -256,7 +257,8 @@ def save_system_wargame(data: Dict[str, Any], markdown_report: str = "", gdrive_
                 fc_id,
                 s_date,
                 ticker,
-                f"{s_date}T{cutoff}:00Z",
+                # ET wall-clock cutoff -> honest UTC (DST-aware).
+                to_iso_utc(get_session_cutoff_utc(s_date, f"{cutoff}:00")) if cutoff else f"{s_date}T{cutoff}:00Z",
                 p12.get("bias", "NEUTRAL"),
                 p12.get("bias", "NEUTRAL"),
                 p12.get("mid"),
@@ -272,10 +274,7 @@ def save_system_wargame(data: Dict[str, Any], markdown_report: str = "", gdrive_
             payload=legacy_payload
         )
 
-    # 2. Project outbox
-    projector = OutboxProjector(canonical_db_path=db_path, system_wargames_path=SYSTEM_DB_PATH)
-    projector.project_pending()
-
+    # 2. Legacy projection DEFERRED (DUAL_OUTBOX queues only; projector runs on schedule).
     return pred_id
 
 
@@ -317,6 +316,11 @@ def save_market_actuals(data: Dict[str, Any], db_path: Optional[Path] = None) ->
 
     # 1. Authoritative insert into trading_brain.sqlite + outbox enqueue
     actual_id = f"act-{session_id}"
+    # HOD/LOD times arrive as ET wall-clocks ("13:45"). Concatenating them with the
+    # session date and a 'Z' suffix fabricated UTC stamps shifted by 4-5 hours. Convert
+    # each through America/New_York so the *_timestamp_utc columns are honestly UTC.
+    hod_utc_iso = to_iso_utc(get_session_cutoff_utc(data.get("session_date"), str(data.get("actual_hod_time") or "16:00")))
+    lod_utc_iso = to_iso_utc(get_session_cutoff_utc(data.get("session_date"), str(data.get("actual_lod_time") or "09:30")))
     with get_db_connection(db_path) as conn:
         conn.execute(
             """
@@ -337,8 +341,8 @@ def save_market_actuals(data: Dict[str, Any], db_path: Optional[Path] = None) ->
                 rth_low,
                 rth_close,
                 rth_close,
-                f"{data.get('session_date')}T{data.get('actual_hod_time') or '16:00'}:00Z",
-                f"{data.get('session_date')}T{data.get('actual_lod_time') or '09:30'}:00Z",
+                hod_utc_iso,
+                lod_utc_iso,
                 range_bps,
                 data.get("realized_day_type", "ROTATIONAL_CHOP")
             )
@@ -351,10 +355,7 @@ def save_market_actuals(data: Dict[str, Any], db_path: Optional[Path] = None) ->
             payload=legacy_payload
         )
 
-    # 2. Project outbox
-    projector = OutboxProjector(canonical_db_path=db_path, market_actuals_path=ACTUALS_DB_PATH)
-    projector.project_pending()
-
+    # 2. Legacy projection DEFERRED (DUAL_OUTBOX queues only; projector runs on schedule).
     return session_id
 
 
@@ -389,3 +390,4 @@ def query_session_triad(session_date: str, ticker: str = "NQ1", db_path: Optiona
 if __name__ == "__main__":
     init_all_databases()
     print(f"Successfully initialized canonical and legacy databases at: {DB_DIR}")
+

@@ -362,6 +362,16 @@ CREATE TABLE IF NOT EXISTS drill_split_registry (
     PRIMARY KEY (session_date, ticker, dataset_split)
 );
 
+-- 14c. curriculum_rule_approvals (durable user-approval ledger, keyed by weakness rule)
+CREATE TABLE IF NOT EXISTS curriculum_rule_approvals (
+    approval_id TEXT PRIMARY KEY,
+    weakness_rule_id TEXT NOT NULL,
+    decision TEXT NOT NULL,             -- 'APPROVED', 'DISMISSED'
+    actor TEXT,
+    decided_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(weakness_rule_id)
+);
+
 CREATE TABLE IF NOT EXISTS behavioral_declarations (
     declaration_id TEXT PRIMARY KEY,
     session_date DATE NOT NULL,

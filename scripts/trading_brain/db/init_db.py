@@ -33,6 +33,7 @@ EXPECTED_TABLES = [
     "drill_attempts",
     "drill_sealed_answers",
     "drill_split_registry",
+    "curriculum_rule_approvals",
     "behavioral_declarations",
     "unmatched_link_events",
     "candidate_finding_events",
@@ -57,7 +58,7 @@ EXPECTED_TRIGGER_COUNT = PROTECTED_TABLES_COUNT * 2  # 44 triggers
 # Bump this constant with EVERY backward-incompatible schema change, and add the matching
 # migration step to _apply_schema_migrations. A database stamped newer than the code is
 # refused (downgrade risk); a database stamped older runs pending migrations before use.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _apply_schema_migrations(conn, from_version: int, messages: List[str], verbose: bool) -> None:
@@ -143,6 +144,53 @@ def _apply_schema_migrations(conn, from_version: int, messages: List[str], verbo
             except sqlite3.OperationalError as e:
                 if "duplicate column name" not in str(e):
                     raise
+    if from_version < 5:
+        # v4 -> v5: (a) the v4 receipt backfill promoted caller-declared
+        # event_timestamp_utc values into the trusted received_at_utc column - a
+        # backdated review event could become historically accepted evidence. Re-bind
+        # trusted receipts to the SYSTEM-GENERATED created_at_utc only (an honest
+        # receipt FLOOR: created_at_utc defaults to strftime('now') at insert and is
+        # never caller-writable), and re-fill any NULLs the same way. The
+        # event_timestamp_utc column remains display/audit metadata.
+        # (b) curriculum approvals become durable: a new append-only table keyed by
+        # weakness rule persists approve/dismiss decisions across regenerations.
+        messages.append("MIGRATED: schema v4 -> v5 (receipt backfill corrected to system time; curriculum approvals table).")
+        if verbose:
+            print("  -> migration v4 -> v5 applied.")
+        try:
+            # Overwrite rows where the trusted receipt was backfilled from the
+            # caller-declared timestamp and differs from the system-generated one.
+            conn.execute(
+                """
+                UPDATE information_item_review_events
+                SET received_at_utc = created_at_utc
+                WHERE received_at_utc IS event_timestamp_utc
+                  AND received_at_utc IS NOT created_at_utc
+                  AND created_at_utc IS NOT NULL;
+                """
+            )
+            conn.execute(
+                """
+                UPDATE information_item_review_events
+                SET received_at_utc = created_at_utc
+                WHERE received_at_utc IS NULL AND created_at_utc IS NOT NULL;
+                """
+            )
+        except sqlite3.OperationalError as e:
+            if "no such column" not in str(e):
+                raise
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS curriculum_rule_approvals (
+                approval_id TEXT PRIMARY KEY,
+                weakness_rule_id TEXT NOT NULL,
+                decision TEXT NOT NULL,             -- 'APPROVED', 'DISMISSED'
+                actor TEXT,
+                decided_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                UNIQUE(weakness_rule_id)
+            );
+            """
+        )
 
 
 def _check_and_migrate_schema(conn, messages: List[str], verbose: bool) -> None:

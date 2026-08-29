@@ -60,20 +60,33 @@ def test_blinded_drill_split_custody_and_evaluation(temp_db):
 
 def test_split_custody_survives_process_restart(temp_db):
     """A session used for ASSESSMENT cannot later be reused for TRAINING, even in a fresh engine instance."""
-    # Use a fresh engine instance by reinstantiating nothing; class methods share the DB.
-    BlindedDrillEngine.generate_blinded_drill(
-        drill_type="RECOGNITION",
-        dataset_split="ASSESSMENT",
-        session_date="2026-08-29",
-        ticker="NQ1",
-        synthetic_mode=True,
-        db_path=temp_db
-    )
+    # Authenticated drill (synthetic barred from ASSESSMENT): use a real pool session that
+    # exists in live storage. HistoricalDataUnavailable would fail this suite offline, so
+    # seed via the custody registry directly - the contract under test is the SPLIT claim,
+    # and ASSESSMENT registration happens before any bars are loaded.
+    import sqlite3 as _sq
+    with _sq.connect(str(temp_db)) as _c:
+        _c.execute(
+            "INSERT INTO drill_split_registry (session_date, ticker, dataset_split) VALUES ('2026-08-29', 'NQ1', 'ASSESSMENT');"
+        )
     from scripts.trading_brain.practice.drill_engine import SplitCustodyViolationError
     with pytest.raises(SplitCustodyViolationError):
         BlindedDrillEngine.generate_blinded_drill(
             drill_type="RECOGNITION",
             dataset_split="TRAINING",
+            session_date="2026-08-29",
+            ticker="NQ1",
+            synthetic_mode=True,
+            db_path=temp_db
+        )
+
+
+def test_synthetic_assessment_rejected_at_generation(temp_db):
+    """F8: synthetic series can never enter the ASSESSMENT split (no authentic provenance)."""
+    with pytest.raises(ValueError, match="Synthetic drills are barred from ASSESSMENT"):
+        BlindedDrillEngine.generate_blinded_drill(
+            drill_type="RECOGNITION",
+            dataset_split="ASSESSMENT",
             session_date="2026-08-29",
             ticker="NQ1",
             synthetic_mode=True,

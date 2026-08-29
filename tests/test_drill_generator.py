@@ -62,9 +62,13 @@ def test_drill_split_custody_violation_rejected(temp_db):
         SplitCustodyViolationError,
     )
 
-    BlindedDrillEngine.generate_blinded_drill(
-        dataset_split="ASSESSMENT", session_date="2026-07-15", ticker="NQ1", synthetic_mode=True, db_path=temp_db
-    )
+    import sqlite3 as _sq
+    # Seed the ASSESSMENT claim directly in the custody registry (synthetic drills are
+    # barred from ASSESSMENT at generation, so the claim is registered without bars).
+    with _sq.connect(str(temp_db)) as _c:
+        _c.execute(
+            "INSERT INTO drill_split_registry (session_date, ticker, dataset_split) VALUES ('2026-07-15', 'NQ1', 'ASSESSMENT');"
+        )
     with pytest.raises(SplitCustodyViolationError):
         BlindedDrillEngine.generate_blinded_drill(
             dataset_split="TRAINING", session_date="2026-07-15", ticker="NQ1", synthetic_mode=True, db_path=temp_db

@@ -318,8 +318,9 @@ def _bind_and_validate_ticker(
     records: List[Dict[str, Any]],
     requested_ticker: str,
     record_kind: str,
+    requested_session_date: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-    """Binds the requested ticker to records that lack one and validates the rest.
+    """Binds the requested ticker/session to records that lack them and validates the rest.
 
     Adapter-layer ticker defaults (NQ1) would silently re-label ticker-less ES fills.
     Scope contract:
@@ -327,13 +328,34 @@ def _bind_and_validate_ticker(
       explicitly lacked one, e.g. single-symbol NT8 export).
     - records WITH a ticker that mismatches the requested scope: EXCLUDED and counted
       (fail-closed against cross-account/cross-market contamination).
+    - session discipline: records WITHOUT session_date are injected with the requested
+      session; records CARRYING a different session_date are EXCLUDED and counted - a
+      fill labeled August 26 can never be ingested by an August 27 post-market run.
     """
     bound: List[Dict[str, Any]] = []
     injected = 0
     mismatched = 0
+    injected_session = 0
+    mismatched_session = 0
     mismatch_details: List[str] = []
     for rec in records:
         rec = dict(rec)
+        # --- session scope (checked first: a wrong-session record is out of scope
+        # regardless of ticker) ---
+        sd = rec.get("session_date")
+        if requested_session_date:
+            if sd is None or str(sd).strip() == "":
+                rec["session_date"] = requested_session_date
+                injected_session += 1
+            elif str(sd).split("T")[0] != str(requested_session_date):
+                mismatched_session += 1
+                mismatch_details.append(
+                    f"{record_kind} {rec.get('broker_execution_id') or rec.get('intervention_id') or '?'} "
+                    f"has session_date={sd} != requested {requested_session_date} - EXCLUDED"
+                )
+                log.warning(f"[WS-1.2] {mismatch_details[-1]}")
+                continue
+        # --- ticker scope ---
         t = rec.get("ticker")
         if t is None or str(t).strip() == "":
             rec["ticker"] = requested_ticker
@@ -345,10 +367,15 @@ def _bind_and_validate_ticker(
             mismatched += 1
             mismatch_details.append(
                 f"{record_kind} {rec.get('broker_execution_id') or rec.get('intervention_id') or '?'} "
-                f"has ticker={t} != requested {requested_ticker}"
+                f"has ticker={t} != requested {requested_ticker} - EXCLUDED"
             )
             log.warning(f"[WS-1.2] {mismatch_details[-1]}")
-    meta = {"injected_ticker": injected, "mismatched_ticker": mismatched}
+    meta = {
+        "injected_ticker": injected,
+        "mismatched_ticker": mismatched,
+        "injected_session_date": injected_session,
+        "mismatched_session_date": mismatched_session,
+    }
     if mismatch_details:
         meta["mismatch_details"] = mismatch_details[:10]
     return bound, meta
@@ -416,12 +443,16 @@ def run_post_market_pipeline(
 
     # 2. Broker fills & interventions (optional files)
     if executions_file is not None:
-        fills, fill_scope_meta = _bind_and_validate_ticker(_load_json_records(Path(executions_file)), ticker, "fill")
+        fills, fill_scope_meta = _bind_and_validate_ticker(
+            _load_json_records(Path(executions_file)), ticker, "fill", requested_session_date=session_date
+        )
         ingest_result = NT8BrokerAdapter.ingest_fills(fills=fills, account_id=account_id, db_path=db_path)
         ingest_result["ticker_scope"] = fill_scope_meta
         result["steps"]["execution_ingest"] = ingest_result
     if interventions_file is not None:
-        interventions, inv_scope_meta = _bind_and_validate_ticker(_load_json_records(Path(interventions_file)), ticker, "intervention")
+        interventions, inv_scope_meta = _bind_and_validate_ticker(
+            _load_json_records(Path(interventions_file)), ticker, "intervention", requested_session_date=session_date
+        )
         inv_result = NT8BrokerAdapter.ingest_interventions(interventions=interventions, db_path=db_path)
         inv_result["ticker_scope"] = inv_scope_meta
         result["steps"]["intervention_ingest"] = inv_result

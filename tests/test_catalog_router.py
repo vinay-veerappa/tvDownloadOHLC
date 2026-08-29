@@ -1,4 +1,4 @@
-"""Pytest suite for CatalogRouter (Milestone 4.1)."""
+﻿"""Pytest suite for CatalogRouter (Milestone 4.1)."""
 
 import sqlite3
 import tempfile
@@ -55,7 +55,7 @@ def test_catalog_router_creation_and_as_of_retrieval(temp_db):
         available_at_utc="2026-08-28T08:00:00Z",
         structured_payload={"principle": "risk_management", "bracket_bps": 10.0}
     )
-    id_1 = CatalogRouter.create_item(item_1, db_path=temp_db, received_at_utc="2026-08-28T07:55:00Z")
+    id_1 = CatalogRouter.create_item(item_1, db_path=temp_db, received_at_utc="2026-08-28T07:55:00Z", override_reason="historical migration fixture", override_actor="MIGRATION_TOOL")
     # Review the item in RECENT time (trusted receipt = now). The as-of query at
     # 09:30 on 08-28 uses trusted receipt, so this review only becomes visible after it
     # actually happened - exactly the anti-backdating contract.
@@ -70,7 +70,7 @@ def test_catalog_router_creation_and_as_of_retrieval(temp_db):
         verbatim_text="Market formed clean R1 trend day.",
         available_at_utc="2026-08-28T16:00:00Z"
     )
-    id_2 = CatalogRouter.create_item(item_2, db_path=temp_db, received_at_utc="2026-08-28T16:00:00Z")
+    id_2 = CatalogRouter.create_item(item_2, db_path=temp_db, received_at_utc="2026-08-28T16:00:00Z", override_reason="historical migration fixture", override_actor="MIGRATION_TOOL")
     CatalogRouter.transition_review_state(id_2, "ACCEPTED", reviewer="TRADER", db_path=temp_db)
 
     # 3. Query as of 09:30 UTC on 2026-08-28: item 1 EXISTS (available+received pre-cutoff)
@@ -147,7 +147,7 @@ def test_catalog_router_backdated_review_cannot_create_hindsight_history(temp_db
         verbatim_text="...",
         available_at_utc="2026-08-28T08:00:00Z"
     )
-    info_id = CatalogRouter.create_item(item, db_path=temp_db, received_at_utc="2026-08-28T07:50:00Z")
+    info_id = CatalogRouter.create_item(item, db_path=temp_db, received_at_utc="2026-08-28T07:50:00Z", override_reason="historical migration fixture", override_actor="MIGRATION_TOOL")
     # Declared acceptance claims 08:05 on 08-28, but the review actually happens now.
     CatalogRouter.transition_review_state(
         information_id=info_id, review_state="ACCEPTED", reviewer="OPERATOR",
@@ -170,7 +170,7 @@ def test_catalog_router_min_review_state_filter(temp_db):
         verbatim_text="...",
         available_at_utc="2026-08-28T10:00:00Z"
     )
-    info_id = CatalogRouter.create_item(item, db_path=temp_db, received_at_utc="2026-08-28T10:00:00Z")
+    info_id = CatalogRouter.create_item(item, db_path=temp_db, received_at_utc="2026-08-28T10:00:00Z", override_reason="historical migration fixture", override_actor="MIGRATION_TOOL")
 
     # Default only_accepted excludes CAPTURED items.
     accepted_items = CatalogRouter.query_as_of("2026-08-28T11:00:00Z", db_path=temp_db)
@@ -200,3 +200,41 @@ def test_catalog_router_invalid_evidence_class_rejected(temp_db):
             ),
             db_path=temp_db
         )
+
+
+
+def test_catalog_router_receipt_override_requires_audit_metadata(temp_db):
+    """F5: normal writes cannot backdate receipt times - the override is a privileged,
+    audited migration action requiring reason + actor."""
+    item = InformationItemPayload(
+        evidence_class="DOCTRINE",
+        time_orientation="EX_ANTE",
+        source_type="TRANSCRIPT",
+        title="Override attempt",
+        verbatim_text="...",
+        available_at_utc="2026-08-28T08:00:00Z"
+    )
+    with pytest.raises(ValueError, match="override_reason and override_actor"):
+        CatalogRouter.create_item(item, db_path=temp_db, received_at_utc="2026-08-28T07:00:00Z")
+
+
+def test_catalog_router_as_of_pagination_offset(temp_db):
+    """F21: offset pagination over the SAME filtered, ordered result set."""
+    for i in range(5):
+        item = InformationItemPayload(
+            evidence_class="DOCTRINE",
+            time_orientation="EX_ANTE",
+            source_type="TRANSCRIPT",
+            title=f"Item {i}",
+            verbatim_text="...",
+            available_at_utc=f"2026-08-28T0{i}:00:00Z",
+            information_id=f"page-{i}",
+        )
+        CatalogRouter.create_item(item, db_path=temp_db, override_reason="migration", override_actor="MIGRATION_TOOL", received_at_utc=f"2026-08-28T0{i}:05:00Z")
+
+    page_one = CatalogRouter.query_as_of("2026-08-28T23:00:00Z", db_path=temp_db, min_review_state="CAPTURED", limit=2)
+    page_two = CatalogRouter.query_as_of("2026-08-28T23:00:00Z", db_path=temp_db, min_review_state="CAPTURED", limit=2, offset=2)
+    ids_one = {r["information_id"] for r in page_one}
+    ids_two = {r["information_id"] for r in page_two}
+    assert len(ids_one) == 2 and len(ids_two) == 2
+    assert ids_one.isdisjoint(ids_two)

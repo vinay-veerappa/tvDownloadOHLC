@@ -9,7 +9,7 @@ Handles:
 """
 
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Union
+from typing import Tuple, Union
 from zoneinfo import ZoneInfo
 
 EASTERN_TZ = ZoneInfo("America/New_York")
@@ -91,3 +91,28 @@ def derive_futures_session_date(dt_val: Union[str, datetime]) -> str:
         while cur_day.weekday() >= 5:
             cur_day += timedelta(days=1)
         return cur_day.strftime("%Y-%m-%d")
+
+
+def _prev_business_day(d: date) -> date:
+    prev = d - timedelta(days=1)
+    while prev.weekday() >= 5:
+        prev -= timedelta(days=1)
+    return prev
+
+
+def get_futures_session_bounds(session_date: Union[str, date, datetime]) -> Tuple[datetime, datetime]:
+    """Returns (start_utc, end_utc) for a LOGICAL CME futures trading session.
+
+    CME Globex sessions roll at 18:00 ET: the logical session for business day D opens
+    18:00 ET on the previous business day and closes 17:00 ET on D. Filtering bars by
+    ET calendar date (as load_session_bars does) drops the prior-evening leg, which is
+    exactly where the overnight profile (P12/Globex) is computed - a sealed manifest
+    built from a calendar-date filter silently omits inputs the wargame actually uses.
+
+    DST note: the bounds are computed from ET wall-clocks per day, so a session
+    spanning a DST transition yields boundaries converted independently and correctly.
+    """
+    d = parse_date(session_date)
+    open_et = datetime.combine(_prev_business_day(d), time(hour=18, minute=0), tzinfo=EASTERN_TZ)
+    close_et = datetime.combine(d, time(hour=17, minute=0), tzinfo=EASTERN_TZ)
+    return open_et.astimezone(timezone.utc), close_et.astimezone(timezone.utc)

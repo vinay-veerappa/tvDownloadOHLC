@@ -138,22 +138,82 @@ def load_session_bars_as_of_cutoff(
     return df[df["dt"] <= cutoff_utc].copy()
 
 
+def load_futures_session_bars(
+    ticker: str,
+    session_date: str,
+    custom_dir: Optional[Union[str, Path]] = None
+) -> pd.DataFrame:
+    """Loads bars for the LOGICAL futures session (prior-evening 18:00 ET open .. 17:00 ET close).
+
+    load_session_bars filters by ET calendar date, which drops the prior-evening Globex
+    leg of the session - exactly the window where the overnight profile (P12) lives.
+    Consumers that compute on the full logical session must use this, so a sealed
+    manifest includes every input the analysis actually consumed.
+
+    The prior-evening leg belongs to the PREVIOUS ET calendar date, so the underlying
+    parquet rows are filtered by UTC timestamp window, not by session_date_str.
+    """
+    from scripts.utils.market_calendar import get_futures_session_bounds
+    start_utc, end_utc = get_futures_session_bounds(session_date)
+    parquet_path = get_live_storage_path(ticker, custom_dir=custom_dir)
+    if not parquet_path.exists():
+        raise FileNotFoundError(f"Live storage parquet file not found for ticker '{ticker}' at: {parquet_path}")
+
+    path_key = str(parquet_path.resolve())
+    current_mtime = parquet_path.stat().st_mtime
+    if path_key in _DF_CACHE and _DF_CACHE[path_key][0] == current_mtime:
+        df = _DF_CACHE[path_key][1]
+    else:
+        # Reuse the standardization path: load via load_session_bars on a nearby date
+        # only to prime the cache would double-read; instead read directly and normalize
+        # with the same contract as load_session_bars.
+        df = pd.read_parquet(parquet_path)
+        if "dt" in df.columns and pd.api.types.is_datetime64_any_dtype(df["dt"]):
+            df["dt"] = pd.to_datetime(df["dt"], utc=True)
+        else:
+            ts_col = ("timestamp" if "timestamp" in df.columns
+                      else "time" if "time" in df.columns
+                      else "datetime" if "datetime" in df.columns
+                      else None)
+            if ts_col is not None:
+                df["dt"] = pd.to_datetime(df[ts_col], utc=True)
+            else:
+                df["dt"] = pd.to_datetime(df.index, utc=True)
+        df = df.sort_values("dt").reset_index(drop=True)
+        df["dt_et"] = df["dt"].dt.tz_convert("America/New_York")
+        df["session_date_str"] = df["dt_et"].dt.strftime("%Y-%m-%d")
+        _DF_CACHE[path_key] = (current_mtime, df)
+
+    start_ts = pd.Timestamp(start_utc)
+    end_ts = pd.Timestamp(end_utc)
+    if start_ts.tz is None:
+        start_ts = start_ts.tz_localize("UTC")
+    if end_ts.tz is None:
+        end_ts = end_ts.tz_localize("UTC")
+    return df[(df["dt"] >= start_ts) & (df["dt"] <= end_ts)].copy()
+
+
+def load_session_bars_as_of_cutoff_for_logical_session(
+    ticker: str,
+    session_date: str,
+    cutoff_utc: pd.Timestamp,
+    custom_dir: Optional[Union[str, Path]] = None
+) -> pd.DataFrame:
+    """Logical-session bars up to and including a UTC cutoff (full prior-evening leg included)."""
+    df = load_futures_session_bars(ticker, session_date, custom_dir=custom_dir)
+    if df.empty:
+        return df
+    return df[df["dt"] <= cutoff_utc].copy()
+
+
 def get_session_slice_manifest(
     ticker: str,
     session_date: str,
     cutoff_utc: pd.Timestamp,
     custom_dir: Optional[Union[str, Path]] = None
 ) -> Dict[str, Any]:
-    """Returns a manifest entry for the live-storage slice as-of cutoff.
-
-    The returned dict contains:
-      - provider_name: 'LIVE_STORAGE_1M'
-      - data_type: 'BARS_1M'
-      - max_timestamp_utc: actual maximum UTC timestamp in the slice
-      - content_hash: deterministic hash of the slice rows
-      - row_count: number of bars in the slice
-    """
-    slice_df = load_session_bars_as_of_cutoff(ticker, session_date, cutoff_utc, custom_dir=custom_dir)
+    """Sealed manifest for the LOGICAL futures session slice as-of cutoff (prior-evening leg included)."""
+    slice_df = load_session_bars_as_of_cutoff_for_logical_session(ticker, session_date, cutoff_utc, custom_dir=custom_dir)
     if slice_df.empty:
         raise ValueError(
             f"No live storage bars for {ticker} on {session_date} as of {cutoff_utc}. "
