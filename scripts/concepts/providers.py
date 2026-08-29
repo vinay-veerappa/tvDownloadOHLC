@@ -262,20 +262,30 @@ class ALNSessionsProvider(BaseConceptProvider):
 
         spot = float(df_cutoff["close"].iloc[-1])
 
-        # Compute live session bounds
+        # 1. Exact Time Slices (ADR-004 Institutional Windows)
+        asia_start = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(18, 0)), tz="America/New_York")
+        asia_end = pd.Timestamp(datetime.combine(t_dt - timedelta(days=1), time(19, 30)), tz="America/New_York")
+        lon_start = pd.Timestamp(datetime.combine(t_dt, time(2, 30)), tz="America/New_York")
+        lon_end = pd.Timestamp(datetime.combine(t_dt, time(3, 30)), tz="America/New_York")
+
+        asia_df = df_1m[(df_1m.index >= asia_start) & (df_1m.index < asia_end)]
+        lon_df = df_1m[(df_1m.index >= lon_start) & (df_1m.index < lon_end)]
+
+        if asia_df.empty:
+            raise ValueError(f"Incomplete Asia session data ({asia_start} to {asia_end}) for {ticker}. Fail-closed: Zero synthetic fallback.")
+        if lon_df.empty:
+            raise ValueError(f"Incomplete London session data ({lon_start} to {lon_end}) for {ticker}. Fail-closed: Zero synthetic fallback.")
+
+        asia_h = float(asia_df["high"].max())
+        asia_l = float(asia_df["low"].min())
+        lon_h = float(lon_df["high"].max())
+        lon_l = float(lon_df["low"].min())
+
+        # 2. Check broken status via SessionBoxEngine
         engine = SessionBoxEngine(df_cutoff, ticker=ticker).process()
         live_sessions = engine.get_live_sessions()
-        
-        asia = live_sessions.get("Asia", {})
-        london = live_sessions.get("London", {})
-
-        asia_h = asia.get("high", spot + 20.0)
-        asia_l = asia.get("low", spot - 20.0)
-        asia_broken = asia.get("broken", False)
-
-        lon_h = london.get("high", spot + 10.0)
-        lon_l = london.get("low", spot - 10.0)
-        lon_broken = london.get("broken", False)
+        asia_broken = bool(live_sessions.get("Asia", {}).get("broken", False))
+        lon_broken = bool(live_sessions.get("London", {}).get("broken", False))
 
         # Classify ALN Pattern Code from Session Structure
         if lon_h > asia_h and lon_l >= asia_l:
