@@ -292,6 +292,8 @@ class WalkForwardGate:
         max_std_err: float = 2.0,
         require_significant_fdr: bool = False,
         family_p_values: Optional[Sequence[float]] = None,
+        current_candidate_family_index: Optional[int] = None,
+        require_family_declaration: bool = False,
         bootstrap_b: int = 2000,
         bootstrap_seed: int = 42,
     ) -> WalkForwardEvaluation:
@@ -309,10 +311,17 @@ class WalkForwardGate:
                 candidate-level p-value to survive BH FDR at 0.05.
             family_p_values: optional list of the PREREGISTERED candidate family's
                 aggregate p-values (this candidate's INCLUDED). BH correction is then
-                applied across the whole family, so a lone-significant candidate among
-                many tested ones cannot pass on raw p=0.02 alone. Omitting it treats
-                this as the only candidate (explicit family-of-one). The canonical
-                multi-candidate correction stage is evaluate_candidate_family().
+                applied across the whole family and the gate checks THIS candidate's
+                OWN corrected q (identify the current candidate with
+                current_candidate_family_index; without it, the candidate is located
+                by exact value match and ambiguity is refused). Omitting it treats
+                this as the only candidate (explicit family-of-one: isolated dev
+                tests only, not a promotion path).
+            current_candidate_family_index: this candidate's zero-based position in
+                family_p_values; avoids value-match ambiguity.
+            require_family_declaration: promotion-capable mode (F9): when True and
+                family_p_values is omitted, the gate FAILS CLOSED with a
+                FAMILY_UNDECLARED reason instead of the family-of-one fallback.
             bootstrap_b: resamples for the dependence-aware block-bootstrap aggregate
                 over the chronological out-of-sample stream (0 disables bootstrap and
                 falls back to the Stouffer fold aggregate).
@@ -411,31 +420,78 @@ class WalkForwardGate:
             aggregated_p = aggregated_p_stouffer
 
         # Family-level multiplicity: BH correction runs across the PREREGISTERED
-        # candidate family when the caller declares it. A family of one is the
-        # explicit fallback (documented, not silent). The family helper
-        # evaluate_candidate_family() is the canonical single correction stage for
-        # multi-candidate research rounds.
+        # candidate family when the caller declares it. The gate checks THIS
+        # candidate's OWN corrected q-value (family_p_values carries ONLY raw p-values,
+        # so the candidate's position must be identified by value-index); any(row) would
+        # let a sibling's significant q approve THIS null candidate (fifth-audit F2).
+        # Omitted family -> explicit family-of-one (suitable for isolated dev tests
+        # only; promotion-capable rounds should pass the complete family or use
+        # evaluate_candidate_family() as the separate correction stage).
+        this_candidate_rank: Optional[int] = None
         if family_p_values is not None and len(family_p_values) > 0:
-            mt_summary = cls.adjust_p_values(list(family_p_values), alpha=0.05)
+            family_list = list(family_p_values)
+            if current_candidate_family_index is not None:
+                if not (0 <= current_candidate_family_index < len(family_p_values)):
+                    raise ValueError(
+                        f"current_candidate_family_index {current_candidate_family_index} out of "
+                        f"range for family of {len(family_p_values)} candidates."
+                    )
+                this_candidate_rank = current_candidate_family_index
+            else:
+                # Fallback: identify by exact value match; a duplicate value keeps rank
+                # of ITS OWN first occurrence, which is BH-order-stable (equal p-values
+                # share rank semantics).
+                try:
+                    this_candidate_rank = family_p_values.index(aggregated_p)
+                except ValueError:
+                    raise ValueError(
+                        "family_p_values declared but do not contain this candidate's "
+                        "aggregate p; pass current_candidate_family_index explicitly."
+                    )
+            mt_summary = cls.adjust_p_values(family_p_values, alpha=0.05)
         else:
             mt_summary = cls.adjust_p_values([aggregated_p] * 1, alpha=0.05)
 
         failure_reasons: List[str] = []
         passed = True
-        if mean_score < min_score_threshold:
-            failure_reasons.append(f"mean_score {mean_score:.4f} < threshold {min_score_threshold}")
+        # F9 promotion-capable strictness: a family of one is a dev convenience, never
+        # a certification basis. Strict mode requires the declared family up front.
+        if require_family_declaration and (family_p_values is None or len(family_p_values) == 0):
+            failure_reasons.append(
+                "FAMILY_UNDECLARED: promotion-capable evaluation requires the complete "
+                "preregistered candidate family (family_p_values + member index); a "
+                "family-of-one fallback is not a certification basis."
+            )
             passed = False
-        if se > max_std_err:
-            failure_reasons.append(f"std_err {se:.4f} > max {max_std_err}")
-            passed = False
-        # Gate requires the AGGREGATED candidate-level result to be significant, never
-        # an individual fold.
-        if require_significant_fdr and mt_summary:
-            if not any(r.significant_fdr_05 for r in mt_summary):
-                failure_reasons.append(
-                    f"aggregated candidate p={aggregated_p:.4f} not significant under BH FDR 0.05"
-                )
+            mt_summary = None
+        else:
+            if mean_score < min_score_threshold:
+                failure_reasons.append(f"mean_score {mean_score:.4f} < threshold {min_score_threshold}")
                 passed = False
+            if se > max_std_err:
+                failure_reasons.append(f"std_err {se:.4f} > max {max_std_err}")
+                passed = False
+            # Gate requires THIS candidate's aggregated p to be significant under the
+            # family-level BH correction - never 'any member of the family passed', which
+            # would approve a null candidate on the strength of a sibling.
+            if require_significant_fdr:
+                if mt_summary is None:
+                    failure_reasons.append("multiple-testing summary unavailable")
+                    passed = False
+                else:
+                    if this_candidate_rank is not None:
+                        this_q = mt_summary[this_candidate_rank]
+                        candidate_significant = this_q.significant_fdr_05
+                        q_desc = f"this candidate's family BH q={this_q.bh_q_value:.4f}"
+                    else:
+                        candidate_significant = mt_summary[0].significant_fdr_05
+                        q_desc = f"family-of-one BH q={mt_summary[0].bh_q_value:.4f}"
+                    if not candidate_significant:
+                        failure_reasons.append(
+                            f"aggregated candidate p={aggregated_p:.4f} not significant "
+                            f"({q_desc}; BH FDR 0.05)"
+                        )
+                        passed = False
 
         return WalkForwardEvaluation(
             n_folds=n_eval,

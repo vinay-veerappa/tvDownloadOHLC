@@ -64,7 +64,7 @@ def test_save_and_resolve_single_plan(temp_db):
     )
     plan_id = PlanAdapter.save_plan_snapshot(plan, db_path=temp_db, received_at_utc="2026-08-28T12:30:00Z", override_reason="historical migration fixture", override_actor="TEST_FIXTURE")
     assert plan_id is not None
-    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified against exported chart", db_path=temp_db)
+    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified against exported chart", db_path=temp_db, verified_effective_from_utc="2026-08-28T12:00:00Z")
 
     resolved = PlanAdapter.get_plan_as_of("2026-08-28", "NQ1", "2026-08-28T13:00:00Z", db_path=temp_db)
     assert resolved is not None
@@ -80,7 +80,7 @@ def test_post_hoc_plan_does_not_supersede_ex_ante_plan(temp_db):
         provenance_class="EX_ANTE"
     )
     ante_id = PlanAdapter.save_plan_snapshot(plan_ante, db_path=temp_db, received_at_utc="2026-08-28T12:30:00Z", override_reason="historical migration fixture", override_actor="TEST_FIXTURE")
-    PlanAdapter.verify_historical_snapshot(ante_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db)
+    PlanAdapter.verify_historical_snapshot(ante_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db, verified_effective_from_utc="2026-08-28T12:00:00Z")
 
     # Post-hoc reconstruction with a preparation cutoff AFTER the query time must not shadow the ex-ante plan
     plan_post = PlanContext(
@@ -109,7 +109,7 @@ def test_plan_revision_supersession(temp_db):
         invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["STRAT_1"]
     )
     v1_id = PlanAdapter.save_plan_snapshot(plan_v1, db_path=temp_db, received_at_utc="2026-08-28T12:30:00Z", override_reason="historical migration fixture", override_actor="TEST_FIXTURE")
-    PlanAdapter.verify_historical_snapshot(v1_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db)
+    PlanAdapter.verify_historical_snapshot(v1_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db, verified_effective_from_utc="2026-08-28T12:00:00Z")
 
     plan_v2 = PlanContext(
         session_date="2026-08-28", ticker="NQ1", preparation_cutoff_utc="2026-08-28T12:45:00Z",
@@ -118,7 +118,7 @@ def test_plan_revision_supersession(temp_db):
         supersedes_plan_snapshot_id=v1_id
     )
     v2_id = PlanAdapter.save_plan_snapshot(plan_v2, db_path=temp_db, received_at_utc="2026-08-28T12:35:00Z", override_reason="historical migration fixture", override_actor="TEST_FIXTURE")
-    PlanAdapter.verify_historical_snapshot(v2_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db)
+    PlanAdapter.verify_historical_snapshot(v2_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db, verified_effective_from_utc="2026-08-28T12:00:00Z")
 
     resolved = PlanAdapter.get_plan_as_of("2026-08-28", "NQ1", "2026-08-28T13:00:00Z", db_path=temp_db)
     assert resolved is not None
@@ -133,7 +133,7 @@ def test_intraday_plan_amendments(temp_db):
         invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["STRAT_1"]
     )
     plan_id = PlanAdapter.save_plan_snapshot(plan, db_path=temp_db, received_at_utc="2026-08-28T12:30:00Z", override_reason="historical migration fixture", override_actor="TEST_FIXTURE")
-    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db)
+    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db, verified_effective_from_utc="2026-08-28T12:00:00Z")
 
     with sqlite3.connect(str(temp_db)) as conn:
         conn.execute(
@@ -159,3 +159,84 @@ def test_intraday_plan_amendments(temp_db):
     assert len(post_amd.effective_permitted_strategies) == 1
 
 
+
+
+def test_unverified_assertion_does_not_mask_verified_ex_ante(temp_db):
+    """Round-5 F1 regression: an unverified HISTORICAL_SOURCE_ASSERTED revision must be
+    excluded IN SQL so an older eligible EX_ANTE plan still resolves (never None)."""
+    p1 = PlanContext(
+        session_date="2020-01-02", ticker="NQ1", preparation_cutoff_utc="2020-01-02T13:45:00Z",
+        verbatim_plan_text="Ex-ante", primary_bias="BULLISH", wargamed_scenarios={},
+        invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["S1"]
+    )
+    id1 = PlanAdapter.save_plan_snapshot(p1, db_path=temp_db, received_at_utc="2020-01-02T12:30:00Z",
+        override_reason="migration", override_actor="MIG")
+    PlanAdapter.verify_historical_snapshot(id1, verifier="V", reason="chart evidence E-9", db_path=temp_db,
+        verified_effective_from_utc="2020-01-02T13:00:00Z")
+    # Newer revision, UNVERIFIED -> excluded from eligibility entirely.
+    id2 = PlanAdapter.save_plan_snapshot(
+        PlanContext(session_date="2020-01-02", ticker="NQ1", preparation_cutoff_utc="2020-01-02T13:45:00Z",
+            verbatim_plan_text="Asserted-unverified", primary_bias="BEARISH", wargamed_scenarios={},
+            invalidation_levels={}, max_intended_risk_bps=5.0, permitted_strategies=["S1"]),
+        db_path=temp_db, received_at_utc="2020-01-02T12:35:00Z", override_reason="migration", override_actor="MIG")
+
+    resolved = PlanAdapter.get_plan_as_of("2020-01-02", "NQ1", "2020-01-02T14:00:00Z", db_path=temp_db)
+    assert resolved is not None, "unverified assertion masked the eligible ex-ante plan"
+    assert resolved.plan_snapshot_id == id1
+
+
+def test_verification_is_not_retroactive_without_evidence(temp_db):
+    """Round-5 F3: a verification performed in 2026 does not change a 2020 as-of query.
+    Evidenced effective-from grants authority from that verified instant onward."""
+    plan = PlanContext(
+        session_date="2020-01-02", ticker="NQ1", preparation_cutoff_utc="2020-01-02T13:45:00Z",
+        verbatim_plan_text="Asserted", primary_bias="BULLISH", wargamed_scenarios={},
+        invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["S1"]
+    )
+    pid = PlanAdapter.save_plan_snapshot(plan, db_path=temp_db, received_at_utc="2020-01-02T12:30:00Z",
+        override_reason="migration", override_actor="MIG")
+
+    # As recorded: bare 2026 verification (verifier is a migration action performed
+    # now) must NOT grant authority for a 2020-01-02 14:00 query.
+    PlanAdapter.verify_historical_snapshot(pid, verifier="V", reason="late bare verification", db_path=temp_db)
+    resolved_asrecorded = PlanAdapter.get_plan_as_of("2020-01-02", "NQ1", "2020-01-02T14:00:00Z", db_path=temp_db)
+    assert resolved_asrecorded is None, "bare verification retroactively rewrote history"
+
+    # Evidenced contemporaneous validity: authority from the verified instant.
+    pid2 = PlanAdapter.save_plan_snapshot(
+        PlanContext(session_date="2020-01-02", ticker="NQ1", preparation_cutoff_utc="2020-01-02T13:45:00Z",
+            verbatim_plan_text="Asserted-evidenced", primary_bias="BEARISH", wargamed_scenarios={},
+            invalidation_levels={}, max_intended_risk_bps=5.0, permitted_strategies=["S1"]),
+        db_path=temp_db, received_at_utc="2020-01-02T12:35:00Z", override_reason="migration", override_actor="MIG")
+    PlanAdapter.verify_historical_snapshot(pid2, verifier="V", reason="broker export B-2", db_path=temp_db,
+        verified_effective_from_utc="2020-01-02T13:00:00Z")
+    before = PlanAdapter.get_plan_as_of("2020-01-02", "NQ1", "2020-01-02T12:45:00Z", db_path=temp_db)
+    after = PlanAdapter.get_plan_as_of("2020-01-02", "NQ1", "2020-01-02T14:00:00Z", db_path=temp_db)
+    assert before is None                      # prep cutoff + effective-from not yet reached
+    assert after is not None and after.plan_snapshot_id == pid2
+
+    # Administrative view explicitly names itself and bypasses the receipt bound
+    # (still respects the preparation cutoff).
+    admin = PlanAdapter.get_plan_as_of("2020-01-02", "NQ1", "2020-01-02T14:00:00Z",
+        db_path=temp_db, knowledge_mode="CURRENTLY_VERIFIED_HISTORY")
+    assert admin is not None and admin.plan_snapshot_id == pid2
+
+
+def test_service_startup_refuses_migration_capability_flag():
+    """Round-5 F4: the receipt-override capability is a migration-process license.
+    A long-running service refuses to start with the flag enabled."""
+    env_flag = os.environ.pop("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE", None)
+    os.environ["TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE"] = "1"
+    try:
+        with _pytest.raises(RuntimeError, match="SAFETY REFUSAL"):
+            PlanAdapter.assert_next_process_is_migration()
+    finally:
+        if env_flag is None:
+            os.environ.pop("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE", None)
+        else:
+            os.environ["TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE"] = env_flag
+    # Normal services (flag unset) boot fine.
+    os.environ.pop("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE", None)
+    PlanAdapter.assert_next_process_is_migration()  # no raise
+    if env_flag is not None:
+        os.environ["TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE"] = env_flag

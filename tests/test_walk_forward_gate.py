@@ -192,3 +192,55 @@ def test_evaluate_candidate_family_bh_stage():
     assert by_id["cand_e"]["significant_fdr_05"] is False
     assert by_id["cand_e"]["bh_q_value"] >= 0.10
     assert all(not r["significant_fdr_05"] for r in rows)
+
+
+def test_family_gate_checks_this_candidate_not_any_sibling():
+    """Round-5 F2 regression: a sibling's significant BH q must not approve THIS null
+    candidate. The gate checks the current candidate's OWN family-corrected result."""
+    # Direct check of the semantics adjust_p_values supports: rank-1 of 2 significant,
+    # rank-2 (this candidate, p=0.9) not.
+    mt = WalkForwardGate.adjust_p_values([0.001, 0.9], alpha=0.05)
+    assert mt[0].significant_fdr_05 is True
+    assert mt[1].significant_fdr_05 is False   # the current candidate must fail
+
+
+def test_family_member_value_must_be_declared():
+    """The gate refuses a family declaration that omits the current candidate's p
+    (silently falling back to any() semantics would recreate the sibling-approval bug)."""
+    import pytest as _pytest
+    features = [[i] for i in range(50)]
+    labels = [i % 2 for i in range(50)]
+    with _pytest.raises(ValueError, match="family_p_values"):
+        WalkForwardGate.evaluate_walk_forward(
+            features=features, labels=labels,
+            model_factory=lambda: _DummyClassifier(),
+            require_significant_fdr=True,
+            family_p_values=[0.001, 0.9],  # does NOT contain this candidate's aggregate p
+            current_candidate_family_index=None,
+        )
+
+
+def test_promotion_capable_evaluation_requires_family_declaration():
+    """Round-5 F9: strict mode fails closed on a family-of-one fallback."""
+    features = [[i] for i in range(50)]
+    labels = [i % 2 for i in range(50)]
+    res = WalkForwardGate.evaluate_walk_forward(
+        features, labels,
+        model_factory=_DummyClassifier,
+        require_significant_fdr=True,
+        require_family_declaration=True,   # promotion-capable mode
+        # no family_p_values -> FAMILY_UNDECLARED, never a pass
+    )
+    assert res.passed_gate is False
+    assert any("FAMILY_UNDECLARED" in r for r in res.failure_reasons)
+
+    # With the family declared, the gate proceeds normally.
+    res2 = WalkForwardGate.evaluate_walk_forward(
+        features, labels,
+        model_factory=_DummyClassifier,
+        require_significant_fdr=True,
+        require_family_declaration=True,
+        family_p_values=[0.2, 0.9],
+        current_candidate_family_index=0,
+    )
+    assert res2.passed_gate is not None

@@ -65,6 +65,42 @@ class PlanContext:
 
 
 class PlanAdapter:
+    @staticmethod
+    def _require_migration_capability() -> None:
+        """Capability gate for receipt overrides and historical re-certification.
+
+        The flag TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1 licenses receipt-time
+        overrides. It is a MIGRATION-PROCESS capability: with the flag set, any code
+        in the process can backdate receipts (override_actor/reason are self-asserted
+        strings). Long-running services must therefore REFUSE to start with the flag
+        enabled via assert_next_process_is_migration() - the audited strings record
+        intent, only the process boundary authorizes it.
+        """
+        import os
+        if os.environ.get("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE") != "1":
+            raise ValueError(
+                "received_at_utc override requires the migration capability "
+                "(TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1). Normal application APIs must "
+                "not backdate evidence; run migrations through the migration tooling."
+            )
+
+    @staticmethod
+    def assert_next_process_is_migration() -> None:
+        """Startup guard for NORMAL LONG-RUNNING SERVICES (F4): refuses to boot a
+        service process when the receipt-override capability flag is enabled - the
+        capability must exist only inside short-lived offline migration commands.
+
+        Call this from API/server startup paths; migration entry points do not call it.
+        """
+        import os
+        if os.environ.get("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE") == "1":
+            raise RuntimeError(
+                "SAFETY REFUSAL: TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1 makes receipt "
+                "backdating possible for ANY code in this process. Long-running services "
+                "must not start with the migration capability enabled - run migrations "
+                "in a separate short-lived command/process."
+            )
+
     @classmethod
     def save_plan_snapshot(
         cls,
@@ -93,13 +129,7 @@ class PlanAdapter:
                     "(privileged migration path). Unaudited caller-supplied receipt times can "
                     "forge ex-ante provenance."
                 )
-            import os
-            if os.environ.get("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE") != "1":
-                raise ValueError(
-                    "received_at_utc override requires the migration capability "
-                    "(TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1). Normal application APIs must "
-                    "not backdate evidence; run migrations through the migration tooling."
-                )
+            cls._require_migration_capability()
         snapshot_id = plan.plan_snapshot_id or str(uuid.uuid4())
         plan_family_id = plan.plan_family_id or str(uuid.uuid4())
         is_receipt_override = received_at_utc is not None
@@ -217,15 +247,29 @@ class PlanAdapter:
         verifier: str,
         reason: str,
         db_path: Optional[Union[str, Path]] = None,
+        verified_effective_from_utc: Optional[Union[str, datetime]] = None,
     ) -> None:
-        """Re-certifies a HISTORICAL_SOURCE_ASSERTED snapshot as EX_ANTE_DECLARED.
+        """Re-certifies a HISTORICAL_SOURCE_ASSERTED snapshot for plan authority.
 
         Capability-gated like the receipt override: a migration tooling step verifies
         the asserted plan against INDEPENDENT evidence (e.g. exported chart screenshots,
         broker statements, VPS/audit logs). The ledger records the explicit
-        HISTORICAL_VERIFIED lifecycle event; without this re-certification, asserted
-        snapshots have no live-plan authority (F10).
+        HISTORICAL_VERIFIED lifecycle event; without it, asserted snapshots have no
+        live-plan authority.
+
+        Temporal semantics (F3): the recorded_at_utc of this event is the moment the
+        verification BECAME available, so AS_RECORDED as-of queries only honor the
+        verification from that instant forward (no retrospective rewriting). When the
+        verification itself establishes that the plan was contemporaneously valid since
+        an earlier verified instant (evidenced, not claimed), the migration tool sets
+        verified_effective_from_utc - the event's reason must then cite that evidence.
         """
+        import os
+        if os.environ.get("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE") != "1":
+            raise ValueError(
+                "verify_historical_snapshot requires the migration capability "
+                "(TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1)."
+            )
         import os
         if os.environ.get("TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE") != "1":
             raise ValueError(
@@ -234,6 +278,9 @@ class PlanAdapter:
             )
         if not verifier or not reason:
             raise ValueError("verify_historical_snapshot requires verifier and reason.")
+        effective_iso = (
+            to_iso_utc(verified_effective_from_utc) if verified_effective_from_utc else None
+        )
         with get_db_connection(db_path) as conn:
             row = conn.execute(
                 "SELECT provenance_class FROM plan_snapshots WHERE plan_snapshot_id = ?;",
@@ -256,8 +303,23 @@ class PlanAdapter:
                 ) VALUES (?, ?, 'HISTORICAL_VERIFIED', ?, ?);
                 """,
                 (str(uuid.uuid4()), plan_snapshot_id, now_iso_utc(),
-                 f"Re-certified by {verifier}: {reason}")
+                 f"Re-certified by {verifier}: {reason}"
+                 + (f" (verified effective from {effective_iso})" if effective_iso else ""))
             )
+            if effective_iso:
+                # The verifier asserts - backed by the evidence named in `reason` -
+                # that the verification's substantive validity starts at
+                # verified_effective_from_utc. get_plan_as_of accepts either this
+                # explicit effective-from OR the event receipt (AS_RECORDED mode).
+                conn.execute(
+                    """
+                    INSERT INTO plan_lifecycle_events (
+                        event_id, plan_snapshot_id, event_type, recorded_at_utc, reason
+                    ) VALUES (?, ?, 'HISTORICAL_VERIFIED_EFFECTIVE_FROM', ?, ?);
+                    """,
+                    (str(uuid.uuid4()), plan_snapshot_id, now_iso_utc(),
+                     f"VERIFIED_EFFECTIVE_FROM={effective_iso} | by {verifier}: {reason}")
+                )
 
     @classmethod
     def get_plan_as_of(
@@ -265,47 +327,94 @@ class PlanAdapter:
         session_date: str,
         ticker: str,
         as_of_time_utc: Union[str, datetime],
-        db_path: Optional[Union[str, Path]] = None
+        db_path: Optional[Union[str, Path]] = None,
+        knowledge_mode: str = "AS_RECORDED",
     ) -> Optional[PlanContext]:
+        """Resolves the effective plan as of a historical instant.
+
+        Authority semantics (F1/F3 of the fifth audit):
+        - Provenance eligibility is resolved IN SQL BEFORE ordering/limiting: an
+          unverified HISTORICAL_SOURCE_ASSERTED row can never mask an eligible
+          EX_ANTE_DECLARED plan, because it is filtered out of the candidate set.
+        - HISTORICAL_VERIFIED re-certification has NO retrospective authority: the
+          verification event must itself be RECEIVED by the as-of time. Otherwise a
+          2026 verification would silently rewrite 2020 query results. The explicit
+          escape hatch is knowledge_mode='CURRENTLY_VERIFIED_HISTORY', which is an
+          administrative view (clearly named, never the compliance default).
+        """
         as_of_iso = to_iso_utc(as_of_time_utc)
-        
+        mode = str(knowledge_mode).upper()
+        if mode not in ("AS_RECORDED", "CURRENTLY_VERIFIED_HISTORY"):
+            raise ValueError("knowledge_mode must be 'AS_RECORDED' or 'CURRENTLY_VERIFIED_HISTORY'.")
+
         with get_db_connection(db_path) as conn:
-            cur = conn.execute(
+            if mode == "AS_RECORDED":
+                # Verification must itself be RECEIVED by the as-of time: a 2026
+                # re-certification never rewrites a 2020 query result. EXCEPTION: a
+                # HISTORICAL_VERIFIED_EFFECTIVE_FROM event records an EVIDENCED
+                # earlier validity start; the effective-from instant (parsed from the
+                # event reason) grants authority from that verified instant.
+                verified_condition = """
+                        OR (
+                            p.provenance_class = 'HISTORICAL_SOURCE_ASSERTED'
+                            AND EXISTS (
+                                SELECT 1 FROM plan_lifecycle_events v
+                                WHERE v.plan_snapshot_id = p.plan_snapshot_id
+                                  AND v.event_type = 'HISTORICAL_VERIFIED'
+                                  AND v.recorded_at_utc <= :as_of
+                            )
+                        )
+                        OR (
+                            p.provenance_class = 'HISTORICAL_SOURCE_ASSERTED'
+                            AND EXISTS (
+                                SELECT 1 FROM plan_lifecycle_events v
+                                WHERE v.plan_snapshot_id = p.plan_snapshot_id
+                                  AND v.event_type = 'HISTORICAL_VERIFIED_EFFECTIVE_FROM'
+                                  AND substr(v.reason, instr(v.reason, 'VERIFIED_EFFECTIVE_FROM=') + 25, 20) <= :as_of
+                                  AND EXISTS (
+                                      SELECT 1 FROM plan_lifecycle_events v2
+                                      WHERE v2.plan_snapshot_id = p.plan_snapshot_id
+                                        AND v2.event_type = 'HISTORICAL_VERIFIED'
+                                  )
+                            )
+                        )
                 """
+            else:
+                # Administrative view: verification grants authority whenever recorded,
+                # explicitly named and never the compliance default (F3 option 2).
+                verified_condition = """
+                        OR (
+                            p.provenance_class = 'HISTORICAL_SOURCE_ASSERTED'
+                            AND EXISTS (
+                                SELECT 1 FROM plan_lifecycle_events v
+                                WHERE v.plan_snapshot_id = p.plan_snapshot_id
+                                  AND v.event_type = 'HISTORICAL_VERIFIED'
+                            )
+                        )
+                """
+            cur = conn.execute(
+                f"""
                 SELECT p.* FROM plan_snapshots p
-                WHERE p.session_date = ? AND p.ticker = ?
-                  AND p.received_at_utc <= ?
-                  AND p.preparation_cutoff_utc <= ?
+                WHERE p.session_date = :session_date AND p.ticker = :ticker
+                  AND p.received_at_utc <= :as_of
+                  AND p.preparation_cutoff_utc <= :as_of
+                  AND (
+                        p.provenance_class IN ('EX_ANTE', 'EX_ANTE_DECLARED')
+                        {verified_condition}
+                      )
                   AND NOT EXISTS (
                       SELECT 1 FROM plan_lifecycle_events e
                       WHERE e.plan_snapshot_id = p.plan_snapshot_id
                         AND e.event_type IN ('SUPERSEDED', 'CANCELLED')
-                        AND e.recorded_at_utc <= ?
+                        AND e.recorded_at_utc <= :as_of
                   )
                 ORDER BY p.revision_seq DESC, p.received_at_utc DESC, p.preparation_cutoff_utc DESC
                 LIMIT 1;
                 """,
-                (session_date, ticker, as_of_iso, as_of_iso, as_of_iso)
+                {"session_date": session_date, "ticker": ticker, "as_of": as_of_iso}
             )
             row = cur.fetchone()
             if not row:
-                return None
-            # Provenance authority gate (F10): HISTORICAL_SOURCE_ASSERTED rows have no
-            # live-plan authority UNLESS a capability-gated migration verification step
-            # recorded an append-only HISTORICAL_VERIFIED event for them.
-            effective_provenance = row["provenance_class"]
-            if effective_provenance == "HISTORICAL_SOURCE_ASSERTED":
-                verified = conn.execute(
-                    """
-                    SELECT 1 FROM plan_lifecycle_events
-                    WHERE plan_snapshot_id = ? AND event_type = 'HISTORICAL_VERIFIED'
-                    ORDER BY recorded_at_utc DESC LIMIT 1;
-                    """,
-                    (row["plan_snapshot_id"],)
-                ).fetchone()
-                if not verified:
-                    row = None
-            if row is None:
                 return None
 
             snapshot_id = row["plan_snapshot_id"]

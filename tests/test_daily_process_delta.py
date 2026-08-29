@@ -1,4 +1,4 @@
-﻿"""Pytest suite for Daily Process Delta & 4-Way Institutional Reconciliation (Milestone 1.1)."""
+"""Pytest suite for Daily Process Delta & 4-Way Institutional Reconciliation (Milestone 1.1)."""
 
 import sqlite3
 import os
@@ -34,7 +34,7 @@ def test_4way_reconciler_live_production_and_replay_scoring(temp_db):
         override_reason="test-fixture historical migration",
         override_actor="TEST_FIXTURE",
     )
-    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db)
+    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db, verified_effective_from_utc="2026-08-28T12:00:00Z")
     
     with sqlite3.connect(str(temp_db)) as conn:
         conn.execute(
@@ -135,7 +135,7 @@ def test_discretionary_fills_marked_risk_unassessable(temp_db):
         override_reason="test-fixture historical migration",
         override_actor="TEST_FIXTURE",
     )
-    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db)
+    PlanAdapter.verify_historical_snapshot(plan_id, verifier="TEST_FIXTURE", reason="verified", db_path=temp_db, verified_effective_from_utc="2026-08-28T12:00:00Z")
 
     with sqlite3.connect(str(temp_db)) as conn:
         conn.execute(

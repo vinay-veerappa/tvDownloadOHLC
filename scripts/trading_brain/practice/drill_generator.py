@@ -32,7 +32,8 @@ class CurriculumSummary:
     source_rule_event_samples: List[Dict[str, Any]] = None   # links to the intervention events that motivated it
     synthetic_labeling: str = (
         "SYNTHETIC_PRICE_SERIES_NOT_HISTORICAL: drills are synthetic bullish ramps "
-        "with no relation to the motivating incidents. Do NOT count toward transfer claims."
+        "with no relation to the motivating incidents. Do NOT count toward transfer claims "
+        "or remediation evidence - mechanics/UI practice only."
     )
     approved_by: Optional[str] = None
     approved_at_utc: Optional[str] = None
