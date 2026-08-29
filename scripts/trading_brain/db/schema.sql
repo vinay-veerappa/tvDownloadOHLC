@@ -434,7 +434,7 @@ SELECT i.*,
        COALESCE((
            SELECT r.review_state FROM information_item_review_events r
            WHERE r.information_id = i.information_id
-           ORDER BY r.event_timestamp_utc DESC, r.created_at_utc DESC LIMIT 1
+           ORDER BY r.event_timestamp_utc DESC, r.created_at_utc DESC, r.rowid DESC LIMIT 1
        ), 'CAPTURED') AS active_review_state
 FROM information_items i;
 
@@ -448,18 +448,18 @@ WHERE a.revision_seq = (
 CREATE VIEW IF NOT EXISTS v_unmatched_links_open AS
 SELECT u.* FROM unmatched_link_events u
 WHERE u.resolution_status = 'OPEN'
-  AND u.link_event_id = (
-      SELECT u2.link_event_id FROM unmatched_link_events u2
+  AND u.rowid = (
+      SELECT u2.rowid FROM unmatched_link_events u2
       WHERE u2.execution_id = u.execution_id
-      ORDER BY u2.event_timestamp_utc DESC, u2.created_at_utc DESC LIMIT 1
+      ORDER BY u2.event_timestamp_utc DESC, u2.created_at_utc DESC, u2.rowid DESC LIMIT 1
   );
 
 CREATE VIEW IF NOT EXISTS v_candidate_findings_staged AS
 SELECT c.* FROM candidate_finding_events c
-WHERE c.finding_event_id = (
-    SELECT c2.finding_event_id FROM candidate_finding_events c2
+WHERE c.rowid = (
+    SELECT c2.rowid FROM candidate_finding_events c2
     WHERE c2.finding_id = c.finding_id
-    ORDER BY c2.event_timestamp_utc DESC, c2.created_at_utc DESC LIMIT 1
+    ORDER BY c2.event_timestamp_utc DESC, c2.created_at_utc DESC, c2.rowid DESC LIMIT 1
 );
 
 -- ============================================================================
