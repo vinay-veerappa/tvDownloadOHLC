@@ -1,0 +1,22 @@
+{
+  "strategy_version_id": "STRAT_FIRECRACKER_V0_1",
+  "strategy_family": "FIRECRACKER",
+  "version_tag": "0.1.0",
+  "ticker_scope": ["NQ1", "-NQ"],
+  "required_providers": ["SessionBoxEngine_v1"],
+  "session_window_et": { "start": "09:30:00", "end": "10:15:00" },
+  "trigger_expression": "overnight_dro_spent < 0.35 && opening_5m_expansion",
+  "decision_timing": "BAR_CLOSE",
+  "entry_convention": "MARKET_AT_BAR_CLOSE",
+  "signal_expiry_seconds": 600,
+  "invalidation_expression": "close < opening_range_low",
+  "max_signals_per_session": 1,
+  "stop_loss_bps": 10.0,
+  "target_1_bps": 10.0,
+  "target_2_bps": 30.0,
+  "outcome_horizon_et": "16:00:00",
+  "intrabar_ambiguity_policy": "RECORD_AMBIGUOUS_EVALUATE_DUAL_BOUNDS",
+  "cost_model_bps": 2.0,
+  "missing_data_policy": "FAIL_CLOSED",
+  "status": "EXPERIMENTAL_CAPTURE_ONLY"
+}

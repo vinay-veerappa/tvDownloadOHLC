@@ -1,0 +1,22 @@
+{
+  "strategy_version_id": "STRAT_GOALPOST_BB_V0_1",
+  "strategy_family": "GOALPOST_BB",
+  "version_tag": "0.1.0",
+  "ticker_scope": ["NQ1", "-NQ"],
+  "required_providers": ["ALNSessionsProvider_v1"],
+  "session_window_et": { "start": "09:30:00", "end": "14:00:00" },
+  "trigger_expression": "broken_broken_sweep && reclaim_equilibrium",
+  "decision_timing": "BAR_CLOSE",
+  "entry_convention": "MARKET_AT_BAR_CLOSE",
+  "signal_expiry_seconds": 900,
+  "invalidation_expression": "close > sweep_extreme",
+  "max_signals_per_session": 1,
+  "stop_loss_bps": 15.0,
+  "target_1_bps": 10.0,
+  "target_2_bps": 30.0,
+  "outcome_horizon_et": "16:00:00",
+  "intrabar_ambiguity_policy": "RECORD_AMBIGUOUS_EVALUATE_DUAL_BOUNDS",
+  "cost_model_bps": 2.0,
+  "missing_data_policy": "FAIL_CLOSED",
+  "status": "EXPERIMENTAL_CAPTURE_ONLY"
+}
