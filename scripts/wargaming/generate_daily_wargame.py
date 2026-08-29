@@ -426,6 +426,10 @@ def main():
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of Markdown")
     parser.add_argument("--html", action="store_true", help="Generate interactive Lightweight Charts HTML report")
     parser.add_argument("--no-db", action="store_true", help="Do not save to system_wargames.sqlite")
+    parser.add_argument("--register", action="store_true",
+                        help="Register the wargame into the canonical Trading Brain ledger "
+                             "(ForecastRegistrar + PlanAdapter, WS-2.1). Enforces 08:45 ET cutoff.")
+    parser.add_argument("--register-cutoff", default="08:45", help="Cutoff time used with --register (default 08:45)")
     args = parser.parse_args()
 
     t_date = datetime.strptime(args.date, "%Y-%m-%d").date() if args.date else datetime.now(ET).date()
@@ -439,6 +443,50 @@ def main():
             log.info(f"Auto-saved prediction to system_wargames.sqlite: {pred_id}")
         except Exception as e:
             log.warning(f"Failed to auto-save to database: {e}")
+
+    if args.register:
+        # WS-2.1: canonical ledger registration via the pre-market pipeline mappers.
+        try:
+            from scripts.trading_brain.orchestration.pre_market_pipeline import (
+                wargame_data_to_forecast_payload,
+                wargame_data_to_plan_context,
+                build_input_manifest,
+                compute_config_hash,
+                compute_git_hash,
+                DEFAULT_MODEL_VERSION_ID,
+            )
+            from scripts.trading_brain.forecast.forecast_registrar import ForecastRegistrar
+            from scripts.trading_brain.plans.plan_adapter import PlanAdapter
+
+            session_date_str = t_date.isoformat()
+            git_hash = compute_git_hash()
+            config_hash = compute_config_hash()
+
+            manifest = build_input_manifest(args.ticker, session_date_str, args.register_cutoff)
+            run = ForecastRegistrar.create_forecast_run(
+                session_date=session_date_str,
+                ticker=args.ticker,
+                model_version_id=DEFAULT_MODEL_VERSION_ID,
+                input_manifest=manifest,
+                cutoff_time_et=args.register_cutoff,
+            )
+            payload = wargame_data_to_forecast_payload(
+                data,
+                model_version_id=DEFAULT_MODEL_VERSION_ID,
+                git_hash=git_hash,
+                config_hash=config_hash,
+                forecast_run_id=run.forecast_run_id,
+            )
+            commit = ForecastRegistrar.commit_forecast_run(run.forecast_run_id, payload)
+            log.info(f"[WS-2.1] Registered forecast {commit.forecast_id} mode={commit.forecast_mode}")
+
+            plan_ctx = wargame_data_to_plan_context(data, md_output, session_date_str, args.register_cutoff)
+            saved_plan = PlanAdapter.save_plan_snapshot(plan_ctx)
+            log.info(f"[WS-2.1] Registered plan snapshot {saved_plan.plan_snapshot_id} "
+                     f"(rev {saved_plan.revision_seq}, {saved_plan.provenance_class})")
+        except Exception as e:
+            log.error(f"[WS-2.1] Canonical registration failed (fail-closed): {e}")
+            raise
 
     if args.html:
         try:

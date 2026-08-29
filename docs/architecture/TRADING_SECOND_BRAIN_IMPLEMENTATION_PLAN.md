@@ -230,20 +230,28 @@ The remaining engineering backlog consists of **4 distinct workstreams**:
 
 ## 4. Prioritized Execution Sequence
 
-| Priority | Task ID | Description | Target Path | Prerequisite |
+| Priority | Task ID | Description | Target Path | Status |
 |:---:|:---:|---|---|:---:|
-| **P1** | **WS-1.1** | Pre-Market Pipeline Runner (08:40 ET automated forecast & plan sealing) | `scripts/trading_brain/orchestration/pre_market_pipeline.py` | Phase 0 & 1 Complete (Done) |
-| **P1** | **WS-1.2** | Post-Market Pipeline Runner (16:15 ET automated tape, fills, reconciliation, triage report) | `scripts/trading_brain/orchestration/post_market_pipeline.py` | Phase 0 & 1 Complete (Done) |
-| **P2** | **WS-2.1** | Wire `generate_daily_wargame.py` to auto-register forecasts & plans | `scripts/wargaming/generate_daily_wargame.py` | WS-1.1 |
-| **P2** | **WS-2.2** | Wire Prisma TradePlan web submissions to `PlanAdapter` | `web/src/` & `scripts/trading_brain/plans/plan_adapter.py` | WS-1.1 |
-| **P3** | **WS-4** | Interactive Next.js / Tailwind Web Workspace & Review Queues | `web/` | WS-1.2 |
-| **HOLD**| **WS-3** | [ON HOLD] C# RiskGuard Pre-Trade Interceptor | `nt8-riskguard`, `nt8-mcp-bridge` | Deferred |
+| **P1** | **WS-1.1** | Pre-Market Pipeline Runner (08:40 ET automated forecast & plan sealing) | `scripts/trading_brain/orchestration/pre_market_pipeline.py` (`run_pre_market_pipeline`, CLI `--mode premarket`) | ✅ COMPLETE |
+| **P1** | **WS-1.2** | Post-Market Pipeline Runner (16:15 ET automated tape, fills, reconciliation, triage report) | `scripts/trading_brain/orchestration/pre_market_pipeline.py` (`run_post_market_pipeline`, CLI `--mode postmarket`) | ✅ COMPLETE |
+| **P2** | **WS-2.1** | Wire `generate_daily_wargame.py` to auto-register forecasts & plans | `generate_daily_wargame.py --register` (uses the pipeline mappers; fail-closed cutoff) | ✅ COMPLETE |
+| **P2** | **WS-2.2** | Wire Prisma TradePlan web submissions to `PlanAdapter` | `scripts/trading_brain/bridges/prisma_plan_bridge.py` (idempotent sync CLI `--dry-run`) | ✅ COMPLETE |
+| **P3** | **WS-4** | Interactive Next.js / Tailwind Web Workspace & Review Queues | `web/` | ⬜ PENDING |
+| **HOLD**| **WS-3** | [ON HOLD] C# RiskGuard Pre-Trade Interceptor | `nt8-riskguard`, `nt8-mcp-bridge` | ⏸ DEFERRED (user verifying plan) |
+
+### WS-1 / WS-2 Implementation Notes (2026-08-29)
+
+* **Forecast honesty**: the pre-market pipeline registers an `ABSTAIN` forecast (`NO_CALIBRATED_5CLASS_MODEL_V0_DIRECTIONAL_LEVELS_ONLY`) because the trajectory engine produces directional SF/LF/LT/ST elimination-tree probabilities, not calibrated 5-class day-type probabilities. Zero-fabrication doctrine applies; a calibrated model can replace this later by passing real probabilities.
+* **Plan provenance**: the generated playbook snapshot receives `EX_ANTE_DECLARED` only if the adapter receives it before the 08:45 ET calendar cutoff; after that it degrades honestly to `POST_HOC_RECONSTRUCTION`.
+* **WS-1.2 ingest sources**: fills/interventions are ingested from JSON files (NT8 bridge export or MCP dumps) via `--executions-file` / `--interventions-file`; days without files proceed capture-only.
+* **WS-2.2 bias honesty**: `TradePlan` has no bias column; the bridge infers `BULLISH`/`BEARISH` conservatively from unambiguous directional keywords, else `NEUTRAL`. The verbatim text is never altered.
+* **Resolver fix**: `load_session_bars` no longer silently coerces a RangeIndex to 1970 timestamps when a pre-normalized `dt` column exists.
 
 ---
 
 ## 5. Verification & Acceptance Battery Reference
 
-To verify the entire Trading Second Brain engine in a single command:
+To verify the entire Trading Second Brain engine in a single command (59 tests):
 
 ```bash
 python -m pytest \
@@ -268,7 +276,9 @@ python -m pytest \
   tests/test_walk_forward_gate.py \
   tests/test_shadow_gate.py \
   tests/test_promotion_orchestrator.py \
-  tests/test_catalog_router.py -v
+  tests/test_catalog_router.py \
+  tests/test_orchestration_pipelines.py \
+  tests/test_prisma_plan_bridge.py -v
 ```
 
 *Expected Result*: **45 passed in ~7s** (100% passing).

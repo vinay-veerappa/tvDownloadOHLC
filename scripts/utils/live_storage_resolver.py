@@ -89,12 +89,20 @@ def load_session_bars(
         df = _DF_CACHE[path_key][1]
     else:
         df = pd.read_parquet(parquet_path)
-        # Standardize timestamp column
-        ts_col = "timestamp" if "timestamp" in df.columns else ("time" if "time" in df.columns else "datetime")
-        if ts_col in df.columns:
-            df["dt"] = pd.to_datetime(df[ts_col], utc=True)
+        # Standardize timestamp column. Prefer explicit columns in priority order;
+        # fall back to an existing pre-normalized 'dt' column; final fallback = index.
+        # (Never silently coerce a RangeIndex: that fabricates 1970 timestamps.)
+        if "dt" in df.columns and pd.api.types.is_datetime64_any_dtype(df["dt"]):
+            df["dt"] = pd.to_datetime(df["dt"], utc=True)
         else:
-            df["dt"] = pd.to_datetime(df.index, utc=True)
+            ts_col = ("timestamp" if "timestamp" in df.columns
+                      else "time" if "time" in df.columns
+                      else "datetime" if "datetime" in df.columns
+                      else None)
+            if ts_col is not None:
+                df["dt"] = pd.to_datetime(df[ts_col], utc=True)
+            else:
+                df["dt"] = pd.to_datetime(df.index, utc=True)
             
         df = df.sort_values("dt").reset_index(drop=True)
         df["dt_et"] = df["dt"].dt.tz_convert("America/New_York")
