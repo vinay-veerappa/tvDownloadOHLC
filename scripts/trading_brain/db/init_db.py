@@ -1,9 +1,9 @@
 """Database initialization and schema migration tool for Trading Second Brain.
 
 Executes schema.sql and verifies:
-1. All 21 canonical tables exist.
-2. All 36 immutability triggers exist.
-3. Partial unique indices and views resolve.
+1. All 22 canonical tables exist.
+2. All 38 immutability triggers exist.
+3. All 4 views resolve.
 """
 
 import argparse
@@ -11,12 +11,13 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
-from scripts.trading_brain.db.connection import get_db_connection, resolve_db_path
+from scripts.trading_brain.db.connection import REPO_ROOT, get_db_connection, resolve_db_path
 
-DEFAULT_SCHEMA_PATH = Path("scripts/trading_brain/db/schema.sql")
+DEFAULT_SCHEMA_PATH = REPO_ROOT / "scripts" / "trading_brain" / "db" / "schema.sql"
 
 EXPECTED_TABLES = [
     "information_items",
+    "information_item_review_events",
     "plan_snapshots",
     "plan_lifecycle_events",
     "plan_amendments",
@@ -40,12 +41,14 @@ EXPECTED_TABLES = [
 ]
 
 EXPECTED_VIEWS = [
+    "v_information_items_active",
+    "v_session_tape_actuals_current",
     "v_unmatched_links_open",
     "v_candidate_findings_staged"
 ]
 
-PROTECTED_TABLES_COUNT = 18
-EXPECTED_TRIGGER_COUNT = PROTECTED_TABLES_COUNT * 2  # 36 triggers
+PROTECTED_TABLES_COUNT = 19
+EXPECTED_TRIGGER_COUNT = PROTECTED_TABLES_COUNT * 2  # 38 triggers
 
 
 def init_trading_brain_db(
@@ -53,14 +56,12 @@ def init_trading_brain_db(
     schema_path: Optional[Union[str, Path]] = None,
     verbose: bool = True
 ) -> Tuple[bool, List[str]]:
-    """Initializes the database schema and verifies integrity.
-    
-    Returns:
-        Tuple[bool, List[str]]: (success_flag, list_of_verification_messages)
-    """
+    """Initializes the database schema and verifies integrity."""
     target_db = resolve_db_path(db_path)
     target_schema = Path(schema_path) if schema_path else DEFAULT_SCHEMA_PATH
-    
+    if not target_schema.is_absolute():
+        target_schema = REPO_ROOT / target_schema
+        
     if not target_schema.exists():
         raise FileNotFoundError(f"Schema file not found at: {target_schema}")
         
@@ -72,7 +73,6 @@ def init_trading_brain_db(
         print(f"[*] Applying schema from: {target_schema}")
         
     with get_db_connection(target_db) as conn:
-        # Execute entire schema DDL
         conn.executescript(schema_sql)
         
         # 1. Verify tables

@@ -1,13 +1,13 @@
 -- ============================================================================
--- TRADING SECOND BRAIN: CANONICAL RELATIONAL SCHEMA (v5.2.0)
+-- TRADING SECOND BRAIN: CANONICAL RELATIONAL SCHEMA (v5.3.0)
 -- Database: data/wargaming/db/trading_brain.sqlite
--- 21 Tables | 18 Protected Append-Only Tables | 36 Immutability Triggers
+-- 22 Tables | 19 Protected Append-Only Tables | 38 Immutability Triggers | 4 Views
 -- ============================================================================
 
 PRAGMA foreign_keys = ON;
 
 -- ----------------------------------------------------------------------------
--- 1. UNIVERSAL TYPED INTAKE CATALOG
+-- 1. UNIVERSAL TYPED INTAKE CATALOG & REVIEW LEDGER
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS information_items (
     information_id TEXT PRIMARY KEY,           -- UUID v4
@@ -19,8 +19,18 @@ CREATE TABLE IF NOT EXISTS information_items (
     structured_payload_json TEXT,              -- Parsed metadata, levels, tags
     available_at_utc TIMESTAMP NOT NULL,       -- Temporal availability boundary
     received_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    review_state TEXT NOT NULL DEFAULT 'CAPTURED', -- 'CAPTURED', 'ACCEPTED', 'REJECTED'
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS information_item_review_events (
+    review_event_id TEXT PRIMARY KEY,
+    information_id TEXT NOT NULL,
+    review_state TEXT NOT NULL,                -- 'CAPTURED', 'ACCEPTED', 'REJECTED', 'QUARANTINED'
+    reviewer TEXT NOT NULL,
+    review_notes TEXT,
+    event_timestamp_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (information_id) REFERENCES information_items(information_id)
 );
 
 -- ----------------------------------------------------------------------------
@@ -116,7 +126,7 @@ CREATE TABLE IF NOT EXISTS forecast_snapshots (
     forecast_mode TEXT NOT NULL,               -- 'LIVE_PRODUCTION', 'FORECAST_LATE_RECEIVED', 'REPLAY_AUDIT', 'SHADOW'
     effective_cutoff_utc TIMESTAMP NOT NULL,
     
-    -- Quant Probabilities across 5 MECE Day Types (0.0 to 1.0, sum to 1.0)
+    -- Quant Probabilities across 5 MECE Day Types (0.0 to 1.0, sum to 1.0 unless abstained)
     prob_r1 REAL,
     prob_r2 REAL,
     prob_dnp REAL,
@@ -158,6 +168,7 @@ CREATE TABLE IF NOT EXISTS signal_opportunities (
     strategy_version_id TEXT NOT NULL,
     bar_timestamp_utc TIMESTAMP NOT NULL,
     decision_time_utc TIMESTAMP NOT NULL,
+    signal_direction TEXT NOT NULL DEFAULT 'LONG', -- 'LONG' or 'SHORT'
     trigger_price REAL NOT NULL,
     declared_stop_price REAL NOT NULL,
     declared_target_1_price REAL NOT NULL,
@@ -180,7 +191,7 @@ CREATE TABLE IF NOT EXISTS signal_disposition_events (
     matched_execution_id TEXT,
     latency_seconds REAL,
     disposition_reason TEXT,
-    event_timestamp_utc TIMESTAMP NOT NULL,
+    event_timestamp_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (opportunity_id) REFERENCES signal_opportunities(opportunity_id),
     FOREIGN KEY (corrects_disposition_id) REFERENCES signal_disposition_events(disposition_id)
@@ -201,14 +212,15 @@ CREATE TABLE IF NOT EXISTS signal_outcomes (
 );
 
 -- ----------------------------------------------------------------------------
--- 5. MEASURED TAPE ACTUALS
+-- 5. MEASURED TAPE ACTUALS (VERSIONED & REVISABLE)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS session_tape_actuals (
     actual_id TEXT PRIMARY KEY,
     session_date DATE NOT NULL,
     ticker TEXT NOT NULL,
-    contract_id TEXT NOT NULL,
-    source_system TEXT NOT NULL,               -- 'LIVE_STORAGE_PARQUET', 'FUSED_HISTORICAL'
+    revision_seq INTEGER NOT NULL DEFAULT 1,   -- Monotonic revision for respun/corrected tape facts
+    contract_id TEXT,
+    source_system TEXT NOT NULL,               -- 'LIVE_STORAGE_PARQUET', 'FUSED_HISTORICAL', 'LEGACY_MIGRATION'
     
     -- Ground Truth OHLC & Excursions
     session_open REAL NOT NULL,
@@ -216,8 +228,8 @@ CREATE TABLE IF NOT EXISTS session_tape_actuals (
     session_low REAL NOT NULL,
     session_close REAL NOT NULL,
     rth_close REAL NOT NULL,
-    hod_timestamp_utc TIMESTAMP NOT NULL,
-    lod_timestamp_utc TIMESTAMP NOT NULL,
+    hod_timestamp_utc TIMESTAMP,
+    lod_timestamp_utc TIMESTAMP,
     session_range_bps REAL NOT NULL,
     
     -- Canonical EOD Classifications
@@ -225,14 +237,16 @@ CREATE TABLE IF NOT EXISTS session_tape_actuals (
     eod_pattern_classification TEXT,
     
     -- Data Quality & Provenance
-    expected_bar_count INTEGER NOT NULL,
-    actual_bar_count INTEGER NOT NULL,
+    expected_bar_count INTEGER,
+    actual_bar_count INTEGER,
     content_hash TEXT NOT NULL,
-    quality_state TEXT NOT NULL,               -- 'CLEAN', 'SUSPECT_TICKS', 'INCOMPLETE_BARS'
+    quality_state TEXT NOT NULL,               -- 'CLEAN', 'SUSPECT_TICKS', 'INCOMPLETE_BARS', 'LEGACY_UNVERIFIED'
     supersedes_actual_id TEXT,
     received_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    UNIQUE(session_date, ticker)
+    FOREIGN KEY (supersedes_actual_id) REFERENCES session_tape_actuals(actual_id),
+    CONSTRAINT ck_no_self_supersession_tape CHECK (supersedes_actual_id <> actual_id),
+    UNIQUE(session_date, ticker, revision_seq)
 );
 
 -- ----------------------------------------------------------------------------
@@ -327,7 +341,6 @@ CREATE TABLE IF NOT EXISTS behavioral_declarations (
     energy_rating INTEGER,                     -- 1 to 5
     emotional_state TEXT,
     reflection_notes TEXT NOT NULL,
-    review_state TEXT NOT NULL DEFAULT 'USER_ENTERED',
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
@@ -342,7 +355,7 @@ CREATE TABLE IF NOT EXISTS unmatched_link_events (
     resolved_opportunity_id TEXT,
     resolution_notes TEXT,
     resolved_by TEXT,
-    event_timestamp_utc TIMESTAMP NOT NULL,
+    event_timestamp_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (execution_id) REFERENCES execution_events(execution_id)
 );
@@ -356,7 +369,7 @@ CREATE TABLE IF NOT EXISTS candidate_finding_events (
     statistical_power REAL,
     fdr_q_value REAL,
     actor TEXT NOT NULL,
-    event_timestamp_utc TIMESTAMP NOT NULL,
+    event_timestamp_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
@@ -416,13 +429,29 @@ CREATE TABLE IF NOT EXISTS broker_ingest_state (
 -- ----------------------------------------------------------------------------
 -- 11. DETERMINISTIC PROJECTION VIEWS
 -- ----------------------------------------------------------------------------
+CREATE VIEW IF NOT EXISTS v_information_items_active AS
+SELECT i.*, 
+       COALESCE((
+           SELECT r.review_state FROM information_item_review_events r
+           WHERE r.information_id = i.information_id
+           ORDER BY r.event_timestamp_utc DESC, r.created_at_utc DESC LIMIT 1
+       ), 'CAPTURED') AS active_review_state
+FROM information_items i;
+
+CREATE VIEW IF NOT EXISTS v_session_tape_actuals_current AS
+SELECT a.* FROM session_tape_actuals a
+WHERE a.revision_seq = (
+    SELECT MAX(a2.revision_seq) FROM session_tape_actuals a2
+    WHERE a2.session_date = a.session_date AND a2.ticker = a.ticker
+);
+
 CREATE VIEW IF NOT EXISTS v_unmatched_links_open AS
 SELECT u.* FROM unmatched_link_events u
 WHERE u.resolution_status = 'OPEN'
   AND u.link_event_id = (
       SELECT u2.link_event_id FROM unmatched_link_events u2
       WHERE u2.execution_id = u.execution_id
-      ORDER BY u2.event_timestamp_utc DESC LIMIT 1
+      ORDER BY u2.event_timestamp_utc DESC, u2.created_at_utc DESC LIMIT 1
   );
 
 CREATE VIEW IF NOT EXISTS v_candidate_findings_staged AS
@@ -430,11 +459,11 @@ SELECT c.* FROM candidate_finding_events c
 WHERE c.finding_event_id = (
     SELECT c2.finding_event_id FROM candidate_finding_events c2
     WHERE c2.finding_id = c.finding_id
-    ORDER BY c2.event_timestamp_utc DESC LIMIT 1
+    ORDER BY c2.event_timestamp_utc DESC, c2.created_at_utc DESC LIMIT 1
 );
 
 -- ============================================================================
--- 12. 36 IMMUTABILITY TRIGGERS (18 PROTECTED APPEND-ONLY TABLES)
+-- 12. 38 IMMUTABILITY TRIGGERS (19 PROTECTED APPEND-ONLY TABLES)
 -- ============================================================================
 
 -- 1. information_items
@@ -447,7 +476,17 @@ BEFORE DELETE ON information_items BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table information_items');
 END;
 
--- 2. plan_snapshots
+-- 2. information_item_review_events
+CREATE TRIGGER IF NOT EXISTS trg_prevent_update_information_item_review_events
+BEFORE UPDATE ON information_item_review_events BEGIN
+    SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table information_item_review_events');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_prevent_delete_information_item_review_events
+BEFORE DELETE ON information_item_review_events BEGIN
+    SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table information_item_review_events');
+END;
+
+-- 3. plan_snapshots
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_plan_snapshots
 BEFORE UPDATE ON plan_snapshots BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table plan_snapshots');
@@ -457,7 +496,7 @@ BEFORE DELETE ON plan_snapshots BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table plan_snapshots');
 END;
 
--- 3. plan_lifecycle_events
+-- 4. plan_lifecycle_events
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_plan_lifecycle_events
 BEFORE UPDATE ON plan_lifecycle_events BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table plan_lifecycle_events');
@@ -467,7 +506,7 @@ BEFORE DELETE ON plan_lifecycle_events BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table plan_lifecycle_events');
 END;
 
--- 4. plan_amendments
+-- 5. plan_amendments
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_plan_amendments
 BEFORE UPDATE ON plan_amendments BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table plan_amendments');
@@ -477,7 +516,7 @@ BEFORE DELETE ON plan_amendments BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table plan_amendments');
 END;
 
--- 5. forecast_run_inputs
+-- 6. forecast_run_inputs
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_forecast_run_inputs
 BEFORE UPDATE ON forecast_run_inputs BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table forecast_run_inputs');
@@ -487,7 +526,7 @@ BEFORE DELETE ON forecast_run_inputs BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table forecast_run_inputs');
 END;
 
--- 6. forecast_snapshots
+-- 7. forecast_snapshots
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_forecast_snapshots
 BEFORE UPDATE ON forecast_snapshots BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table forecast_snapshots');
@@ -497,7 +536,7 @@ BEFORE DELETE ON forecast_snapshots BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table forecast_snapshots');
 END;
 
--- 7. signal_opportunities
+-- 8. signal_opportunities
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_signal_opportunities
 BEFORE UPDATE ON signal_opportunities BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table signal_opportunities');
@@ -507,7 +546,7 @@ BEFORE DELETE ON signal_opportunities BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table signal_opportunities');
 END;
 
--- 8. signal_disposition_events
+-- 9. signal_disposition_events
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_signal_disposition_events
 BEFORE UPDATE ON signal_disposition_events BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table signal_disposition_events');
@@ -517,7 +556,7 @@ BEFORE DELETE ON signal_disposition_events BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table signal_disposition_events');
 END;
 
--- 9. signal_outcomes
+-- 10. signal_outcomes
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_signal_outcomes
 BEFORE UPDATE ON signal_outcomes BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table signal_outcomes');
@@ -527,7 +566,7 @@ BEFORE DELETE ON signal_outcomes BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table signal_outcomes');
 END;
 
--- 10. session_tape_actuals
+-- 11. session_tape_actuals
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_session_tape_actuals
 BEFORE UPDATE ON session_tape_actuals BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table session_tape_actuals');
@@ -537,7 +576,7 @@ BEFORE DELETE ON session_tape_actuals BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table session_tape_actuals');
 END;
 
--- 11. execution_events
+-- 12. execution_events
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_execution_events
 BEFORE UPDATE ON execution_events BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table execution_events');
@@ -547,7 +586,7 @@ BEFORE DELETE ON execution_events BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table execution_events');
 END;
 
--- 12. intervention_events
+-- 13. intervention_events
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_intervention_events
 BEFORE UPDATE ON intervention_events BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table intervention_events');
@@ -557,7 +596,7 @@ BEFORE DELETE ON intervention_events BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table intervention_events');
 END;
 
--- 13. drill_attempts
+-- 14. drill_attempts
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_drill_attempts
 BEFORE UPDATE ON drill_attempts BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table drill_attempts');
@@ -567,7 +606,7 @@ BEFORE DELETE ON drill_attempts BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table drill_attempts');
 END;
 
--- 14. behavioral_declarations
+-- 15. behavioral_declarations
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_behavioral_declarations
 BEFORE UPDATE ON behavioral_declarations BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table behavioral_declarations');
@@ -577,7 +616,7 @@ BEFORE DELETE ON behavioral_declarations BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table behavioral_declarations');
 END;
 
--- 15. unmatched_link_events
+-- 16. unmatched_link_events
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_unmatched_link_events
 BEFORE UPDATE ON unmatched_link_events BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table unmatched_link_events');
@@ -587,7 +626,7 @@ BEFORE DELETE ON unmatched_link_events BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table unmatched_link_events');
 END;
 
--- 16. candidate_finding_events
+-- 17. candidate_finding_events
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_candidate_finding_events
 BEFORE UPDATE ON candidate_finding_events BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table candidate_finding_events');
@@ -597,7 +636,7 @@ BEFORE DELETE ON candidate_finding_events BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table candidate_finding_events');
 END;
 
--- 17. strategy_versions
+-- 18. strategy_versions
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_strategy_versions
 BEFORE UPDATE ON strategy_versions BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table strategy_versions');
@@ -607,7 +646,7 @@ BEFORE DELETE ON strategy_versions BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table strategy_versions');
 END;
 
--- 18. model_versions
+-- 19. model_versions
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_model_versions
 BEFORE UPDATE ON model_versions BEGIN
     SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table model_versions');

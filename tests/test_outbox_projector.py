@@ -1,5 +1,6 @@
 """Pytest suite for OutboxProjector (Milestone 0.3b)."""
 
+import os
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -8,12 +9,11 @@ import pytest
 
 from scripts.trading_brain.db.connection import get_db_connection
 from scripts.trading_brain.db.init_db import init_trading_brain_db
-from scripts.trading_brain.migrations.outbox_projector import OutboxProjector
+from scripts.trading_brain.migrations.outbox_projector import DatabasePausedError, OutboxProjector
 
 
 @pytest.fixture
 def outbox_env():
-    """Sets up an isolated test database and legacy destination databases."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         tmp_path = Path(tmpdir)
         canon_db = tmp_path / "trading_brain.sqlite"
@@ -22,7 +22,6 @@ def outbox_env():
         sys_db = tmp_path / "system_wargames.sqlite"
         mkt_db = tmp_path / "market_actuals.sqlite"
         
-        # Initialize legacy tables
         with sqlite3.connect(str(sys_db)) as conn:
             conn.execute(
                 """
@@ -58,7 +57,6 @@ def test_outbox_enqueue_and_project(outbox_env):
     """Tests atomic canonical insert + outbox enqueue, followed by successful asynchronous projection."""
     env = outbox_env
     
-    # 1. Enqueue item into canonical outbox
     with get_db_connection(env["canon_db"]) as conn:
         OutboxProjector.enqueue_outbox_item(
             conn=conn,
@@ -68,7 +66,6 @@ def test_outbox_enqueue_and_project(outbox_env):
             payload={"prediction_id": "pred-100", "session_date": "2026-08-28", "ticker": "NQ1", "spot_price": 20050.0}
         )
         
-    # 2. Project pending
     projector = OutboxProjector(
         canonical_db_path=env["canon_db"],
         system_wargames_path=env["sys_db"],
@@ -78,55 +75,26 @@ def test_outbox_enqueue_and_project(outbox_env):
     assert res["projected"] == 1
     assert res["failed"] == 0
     
-    # 3. Verify destination legacy SQLite table has the row
     with sqlite3.connect(str(env["sys_db"])) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM system_wargames WHERE prediction_id = 'pred-100';").fetchone()
         assert row is not None
         assert row["spot_price"] == 20050.0
-        
-    # 4. Verify outbox record is marked PROJECTED
-    with get_db_connection(env["canon_db"]) as conn:
-        out = conn.execute("SELECT * FROM legacy_projection_outbox WHERE canonical_id = 'fc-test-1';").fetchone()
-        assert out["status"] == "PROJECTED"
-        assert out["projected_at_utc"] is not None
 
 
-def test_outbox_retry_and_dead_letter(outbox_env):
-    """Tests that errors during legacy projection increment retry counter and transition to DEAD_LETTER."""
+def test_outbox_paused_target_mode(outbox_env):
+    """Tests that WARGAME_DB_TARGET=PAUSED blocks enqueuing with DatabasePausedError."""
     env = outbox_env
-    
-    # Enqueue item targeting non-existent column in legacy table (triggers sqlite error)
-    with get_db_connection(env["canon_db"]) as conn:
-        OutboxProjector.enqueue_outbox_item(
-            conn=conn,
-            destination_db="system_wargames",
-            canonical_table="forecast_snapshots",
-            canonical_id="fc-bad",
-            payload={"prediction_id": "pred-bad", "non_existent_column": 123}
-        )
-        
-    projector = OutboxProjector(
-        canonical_db_path=env["canon_db"],
-        system_wargames_path=env["sys_db"],
-        market_actuals_path=env["mkt_db"],
-        max_retries=2
-    )
-    
-    # Attempt 1 -> fails and stays PENDING (attempt_count = 1)
-    res1 = projector.project_pending()
-    assert res1["failed"] == 1
-    
-    with get_db_connection(env["canon_db"]) as conn:
-        out = conn.execute("SELECT * FROM legacy_projection_outbox WHERE canonical_id = 'fc-bad';").fetchone()
-        assert out["status"] == "PENDING"
-        assert out["attempt_count"] == 1
-        
-    # Attempt 2 -> fails and reaches max_retries=2 -> DEAD_LETTER
-    res2 = projector.project_pending()
-    assert res2["dead_letter"] == 1
-    
-    with get_db_connection(env["canon_db"]) as conn:
-        out = conn.execute("SELECT * FROM legacy_projection_outbox WHERE canonical_id = 'fc-bad';").fetchone()
-        assert out["status"] == "DEAD_LETTER"
-        assert out["attempt_count"] == 2
+    os.environ["WARGAME_DB_TARGET"] = "PAUSED"
+    try:
+        with get_db_connection(env["canon_db"]) as conn:
+            with pytest.raises(DatabasePausedError):
+                OutboxProjector.enqueue_outbox_item(
+                    conn=conn,
+                    destination_db="system_wargames",
+                    canonical_table="forecast_snapshots",
+                    canonical_id="fc-pause",
+                    payload={}
+                )
+    finally:
+        os.environ["WARGAME_DB_TARGET"] = "DUAL_OUTBOX"

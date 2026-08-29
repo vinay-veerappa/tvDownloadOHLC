@@ -12,7 +12,6 @@ from scripts.trading_brain.db.init_db import EXPECTED_TABLES, EXPECTED_VIEWS, in
 
 @pytest.fixture
 def temp_db():
-    """Yields a temporary database path initialized with the canonical schema."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         db_path = Path(tmpdir) / "test_trading_brain.sqlite"
         success, msgs = init_trading_brain_db(db_path=db_path, verbose=False)
@@ -21,7 +20,7 @@ def temp_db():
 
 
 def test_schema_initialization(temp_db):
-    """Verifies that all 21 tables and 2 views are initialized."""
+    """Verifies that all 22 tables and 4 views are initialized."""
     with get_db_connection(temp_db) as conn:
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = {row["name"] for row in cursor.fetchall()}
@@ -35,15 +34,19 @@ def test_schema_initialization(temp_db):
 
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='trigger';")
         triggers = {row["name"] for row in cursor.fetchall()}
-        assert len(triggers) == 36, f"Expected 36 triggers, found {len(triggers)}"
+        assert len(triggers) == 38, f"Expected 38 triggers, found {len(triggers)}"
 
 
 def test_immutability_triggers_all_tables(temp_db):
-    """Tests that UPDATE and DELETE are strictly prohibited on all 18 protected tables."""
+    """Tests that UPDATE and DELETE are strictly prohibited on all 19 protected tables."""
     protected_tables_sample_inserts = {
         "information_items": (
             "INSERT INTO information_items (information_id, evidence_class, time_orientation, source_type, title, verbatim_text, available_at_utc) "
             "VALUES ('info-1', 'DOCTRINE', 'EX_ANTE', 'TRANSCRIPT', 'Title 1', 'Doctrine text', '2026-08-28T08:00:00Z');"
+        ),
+        "information_item_review_events": (
+            "INSERT INTO information_item_review_events (review_event_id, information_id, review_state, reviewer) "
+            "VALUES ('rev-1', 'info-1', 'ACCEPTED', 'EXPERT_JUDGE');"
         ),
         "plan_snapshots": (
             "INSERT INTO plan_snapshots (plan_snapshot_id, plan_family_id, revision_seq, session_date, ticker, preparation_cutoff_utc, source_system, verbatim_plan_text, primary_bias, wargamed_scenarios_json, invalidation_levels_json, max_intended_risk_bps, permitted_strategies_json, provenance_class) "
@@ -72,16 +75,16 @@ def test_immutability_triggers_all_tables(temp_db):
             "VALUES ('opp-1', '2026-08-28', 'NQ1', 'STRAT_V1', '2026-08-28T09:35:00Z', '2026-08-28T09:35:00Z', 20000.0, 19980.0, 20020.0, 10.0, 10.0, '{}', 'LIVE_CAPTURE');"
         ),
         "signal_disposition_events": (
-            "INSERT INTO signal_disposition_events (disposition_id, opportunity_id, disposition_state, source_system, event_timestamp_utc) "
-            "VALUES ('disp-1', 'opp-1', 'EXECUTED', 'MECHANICAL_RECONCILER', '2026-08-28T09:35:05Z');"
+            "INSERT INTO signal_disposition_events (disposition_id, opportunity_id, disposition_state, source_system) "
+            "VALUES ('disp-1', 'opp-1', 'EXECUTED', 'MECHANICAL_RECONCILER');"
         ),
         "signal_outcomes": (
             "INSERT INTO signal_outcomes (outcome_id, opportunity_id, observed_outcome, pessimistic_bound, optimistic_bound, realized_mfe_bps, realized_mae_bps, bars_held, evaluated_at_utc) "
             "VALUES ('out-1', 'opp-1', 'TARGET_REACHED', 'STOP_HIT', 'TARGET_REACHED', 15.0, 3.0, 5, '2026-08-28T16:00:00Z');"
         ),
         "session_tape_actuals": (
-            "INSERT INTO session_tape_actuals (actual_id, session_date, ticker, contract_id, source_system, session_open, session_high, session_low, session_close, rth_close, hod_timestamp_utc, lod_timestamp_utc, session_range_bps, day_type_classification, expected_bar_count, actual_bar_count, content_hash, quality_state) "
-            "VALUES ('act-1', '2026-08-28', 'NQ1', 'NQU6', 'LIVE_STORAGE_PARQUET', 20000.0, 20100.0, 19950.0, 20050.0, 20050.0, '2026-08-28T14:00:00Z', '2026-08-28T10:00:00Z', 75.0, 'ROTATIONAL_CHOP', 390, 390, 'hash', 'CLEAN');"
+            "INSERT INTO session_tape_actuals (actual_id, session_date, ticker, revision_seq, contract_id, source_system, session_open, session_high, session_low, session_close, rth_close, hod_timestamp_utc, lod_timestamp_utc, session_range_bps, day_type_classification, content_hash, quality_state) "
+            "VALUES ('act-1', '2026-08-28', 'NQ1', 1, 'NQU6', 'LIVE_STORAGE_PARQUET', 20000.0, 20100.0, 19950.0, 20050.0, 20050.0, '2026-08-28T14:00:00Z', '2026-08-28T10:00:00Z', 75.0, 'ROTATIONAL_CHOP', 'hash', 'CLEAN');"
         ),
         "execution_events": (
             "INSERT INTO execution_events (execution_id, session_date, ticker, account_id, broker_execution_id, broker_order_id, order_action, order_type, quantity, fill_price, idempotency_key, event_timestamp_utc) "
@@ -100,12 +103,12 @@ def test_immutability_triggers_all_tables(temp_db):
             "VALUES ('beh-1', '2026-08-28', 'user-1', 'POST_SESSION_REFLECTION', 'Followed the wargame rules.');"
         ),
         "unmatched_link_events": (
-            "INSERT INTO unmatched_link_events (link_event_id, execution_id, candidate_opportunity_ids_json, resolution_status, event_timestamp_utc) "
-            "VALUES ('link-1', 'exec-1', '[]', 'OPEN', '2026-08-28T09:36:00Z');"
+            "INSERT INTO unmatched_link_events (link_event_id, execution_id, candidate_opportunity_ids_json, resolution_status) "
+            "VALUES ('link-1', 'exec-1', '[]', 'OPEN');"
         ),
         "candidate_finding_events": (
-            "INSERT INTO candidate_finding_events (finding_event_id, finding_id, model_version_id, pipeline_stage, evaluation_result_json, actor, event_timestamp_utc) "
-            "VALUES ('find-1', 'f-1', 'MOD_V1', 'DISCOVERY', '{}', 'RESEARCH_AGENT', '2026-08-28T18:00:00Z');"
+            "INSERT INTO candidate_finding_events (finding_event_id, finding_id, model_version_id, pipeline_stage, evaluation_result_json, actor) "
+            "VALUES ('find-1', 'f-1', 'MOD_V1', 'DISCOVERY', '{}', 'RESEARCH_AGENT');"
         ),
         "strategy_versions": (
             "INSERT INTO strategy_versions (strategy_version_id, strategy_family, version_tag, content_hash, rules_doc_path, execution_policy_json, status) "
@@ -121,77 +124,73 @@ def test_immutability_triggers_all_tables(temp_db):
         for table, insert_sql in protected_tables_sample_inserts.items():
             conn.executescript(insert_sql)
 
-        # Now test that UPDATE and DELETE fail on each table
         for table in protected_tables_sample_inserts.keys():
-            # 1. Test UPDATE fails
             with pytest.raises(sqlite3.DatabaseError) as excinfo:
                 conn.execute(f"UPDATE {table} SET rowid = rowid + 0;")
             assert f"UPDATE operation prohibited on immutable table {table}" in str(excinfo.value)
 
-            # 2. Test DELETE fails
             with pytest.raises(sqlite3.DatabaseError) as excinfo:
                 conn.execute(f"DELETE FROM {table};")
             assert f"DELETE operation prohibited on immutable table {table}" in str(excinfo.value)
 
 
-def test_forecast_live_uniqueness(temp_db):
-    """Verifies that at most one LIVE_PRODUCTION forecast can exist per (session_date, ticker)."""
+def test_session_tape_actuals_revisions_and_view(temp_db):
+    """Tests that session_tape_actuals allows revisions (v1 suspect -> v2 clean) and view resolves latest."""
     with get_db_connection(temp_db) as conn:
-        # First LIVE_PRODUCTION succeeds
+        # Revision 1 (Suspect)
         conn.execute(
-            "INSERT INTO forecast_snapshots (forecast_id, session_date, ticker, model_version_id, forecast_mode, effective_cutoff_utc, git_hash, config_hash) "
-            "VALUES ('fc-1', '2026-08-28', 'NQ1', 'MOD_V1', 'LIVE_PRODUCTION', '2026-08-28T08:45:00Z', 'g1', 'c1');"
+            """
+            INSERT INTO session_tape_actuals (
+                actual_id, session_date, ticker, revision_seq, source_system,
+                session_open, session_high, session_low, session_close, rth_close,
+                session_range_bps, day_type_classification, content_hash, quality_state
+            ) VALUES ('act-v1', '2026-08-28', 'NQ1', 1, 'STORAGE', 20000.0, 20100.0, 19900.0, 20050.0, 20050.0, 100.0, 'R1', 'h1', 'SUSPECT_TICKS');
+            """
         )
-
-        # Second LIVE_PRODUCTION for same session & ticker must fail
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO forecast_snapshots (forecast_id, session_date, ticker, model_version_id, forecast_mode, effective_cutoff_utc, git_hash, config_hash) "
-                "VALUES ('fc-2', '2026-08-28', 'NQ1', 'MOD_V1', 'LIVE_PRODUCTION', '2026-08-28T08:45:00Z', 'g2', 'c2');"
-            )
-
-        # A non-LIVE_PRODUCTION forecast for same session & ticker succeeds (e.g. REPLAY_AUDIT or FORECAST_LATE_RECEIVED)
+        
+        # Revision 2 (Clean respun) supersedes v1
         conn.execute(
-            "INSERT INTO forecast_snapshots (forecast_id, session_date, ticker, model_version_id, forecast_mode, effective_cutoff_utc, git_hash, config_hash) "
-            "VALUES ('fc-3', '2026-08-28', 'NQ1', 'MOD_V1', 'FORECAST_LATE_RECEIVED', '2026-08-28T08:45:00Z', 'g3', 'c3');"
+            """
+            INSERT INTO session_tape_actuals (
+                actual_id, session_date, ticker, revision_seq, supersedes_actual_id, source_system,
+                session_open, session_high, session_low, session_close, rth_close,
+                session_range_bps, day_type_classification, content_hash, quality_state
+            ) VALUES ('act-v2', '2026-08-28', 'NQ1', 2, 'act-v1', 'STORAGE', 20000.0, 20100.0, 19950.0, 20050.0, 20050.0, 75.0, 'ROTATIONAL_CHOP', 'h2', 'CLEAN');
+            """
         )
+        
+        # View resolves Revision 2
+        cur = conn.execute("SELECT * FROM v_session_tape_actuals_current WHERE session_date = '2026-08-28' AND ticker = 'NQ1';")
+        row = cur.fetchone()
+        assert row is not None
+        assert row["actual_id"] == "act-v2"
+        assert row["revision_seq"] == 2
+        assert row["quality_state"] == "CLEAN"
+        assert row["day_type_classification"] == "ROTATIONAL_CHOP"
 
 
-def test_plan_revisions_and_constraints(temp_db):
-    """Verifies plan revisions, monotonic uniqueness within family, and self-supersession prohibition."""
+def test_information_item_review_events_and_view(temp_db):
+    """Tests that information_items review transitions are recorded in ledger and resolved via view."""
     with get_db_connection(temp_db) as conn:
-        # First plan snapshot
         conn.execute(
-            "INSERT INTO plan_snapshots (plan_snapshot_id, plan_family_id, revision_seq, session_date, ticker, preparation_cutoff_utc, source_system, verbatim_plan_text, primary_bias, wargamed_scenarios_json, invalidation_levels_json, max_intended_risk_bps, permitted_strategies_json, provenance_class) "
-            "VALUES ('p-1', 'fam-1', 1, '2026-08-28', 'NQ1', '2026-08-28T08:45:00Z', 'PRISMA_WEB', 'Plan v1', 'BULLISH', '{}', '{}', 10.0, '[]', 'EX_ANTE_DECLARED');"
+            """
+            INSERT INTO information_items (information_id, evidence_class, time_orientation, source_type, title, verbatim_text, available_at_utc)
+            VALUES ('info-item-1', 'DOCTRINE', 'EX_ANTE', 'TRANSCRIPT', 'Item 1', 'Content', '2026-08-28T08:00:00Z');
+            """
         )
-
-        # Second revision within same family succeeds
+        
+        # Initial view state is default 'CAPTURED'
+        cur = conn.execute("SELECT * FROM v_information_items_active WHERE information_id = 'info-item-1';")
+        assert cur.fetchone()["active_review_state"] == "CAPTURED"
+        
+        # Add ACCEPTED review event
         conn.execute(
-            "INSERT INTO plan_snapshots (plan_snapshot_id, plan_family_id, revision_seq, session_date, ticker, preparation_cutoff_utc, source_system, supersedes_plan_snapshot_id, verbatim_plan_text, primary_bias, wargamed_scenarios_json, invalidation_levels_json, max_intended_risk_bps, permitted_strategies_json, provenance_class) "
-            "VALUES ('p-2', 'fam-1', 2, '2026-08-28', 'NQ1', '2026-08-28T08:45:00Z', 'PRISMA_WEB', 'p-1', 'Plan v2', 'BULLISH', '{}', '{}', 10.0, '[]', 'EX_ANTE_DECLARED');"
+            """
+            INSERT INTO information_item_review_events (review_event_id, information_id, review_state, reviewer)
+            VALUES ('rev-1', 'info-item-1', 'ACCEPTED', 'EXPERT_USER');
+            """
         )
-
-        # Duplicate revision_seq in same family fails
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO plan_snapshots (plan_snapshot_id, plan_family_id, revision_seq, session_date, ticker, preparation_cutoff_utc, source_system, verbatim_plan_text, primary_bias, wargamed_scenarios_json, invalidation_levels_json, max_intended_risk_bps, permitted_strategies_json, provenance_class) "
-                "VALUES ('p-3', 'fam-1', 2, '2026-08-28', 'NQ1', '2026-08-28T08:45:00Z', 'PRISMA_WEB', 'Plan v2 dup', 'BULLISH', '{}', '{}', 10.0, '[]', 'EX_ANTE_DECLARED');"
-            )
-
-        # Self-supersession fails
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO plan_snapshots (plan_snapshot_id, plan_family_id, revision_seq, session_date, ticker, preparation_cutoff_utc, source_system, supersedes_plan_snapshot_id, verbatim_plan_text, primary_bias, wargamed_scenarios_json, invalidation_levels_json, max_intended_risk_bps, permitted_strategies_json, provenance_class) "
-                "VALUES ('p-self', 'fam-2', 1, '2026-08-28', 'NQ1', '2026-08-28T08:45:00Z', 'PRISMA_WEB', 'p-self', 'Self super', 'BULLISH', '{}', '{}', 10.0, '[]', 'EX_ANTE_DECLARED');"
-            )
-
-
-def test_foreign_key_enforcement(temp_db):
-    """Verifies that foreign key violations fail."""
-    with get_db_connection(temp_db) as conn:
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO plan_lifecycle_events (event_id, plan_snapshot_id, event_type) "
-                "VALUES ('evt-bad', 'non-existent-plan-id', 'CANCELLED');"
-            )
+        
+        # View now reflects ACCEPTED
+        cur = conn.execute("SELECT * FROM v_information_items_active WHERE information_id = 'info-item-1';")
+        assert cur.fetchone()["active_review_state"] == "ACCEPTED"

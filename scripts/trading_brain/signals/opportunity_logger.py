@@ -1,20 +1,25 @@
 """As-Of Signal Opportunity Logger & Mechanical Disposition Engine (Milestone 0.5).
 
 Enforces:
-1. Strict as-of bar-close decision contracts (zero future lookahead).
+1. Strict as-of bar-close decision contracts with direction checks (zero future lookahead).
 2. Deduplication key (session_date, ticker, strategy_version_id, bar_timestamp_utc).
-3. Mechanical disposition derivation matching execution_events to signal_opportunities.
+3. Production-grade mechanical disposition derivation:
+   - Direction match: BUY execution matches LONG signal; SELL execution matches SHORT signal.
+   - Idempotency: Re-runs do not duplicate disposition events or unmatched links.
+   - Candidate opportunity search for unmatched links.
+   - Produces EXECUTED, PASSED, MISSED, OFFLINE states.
 4. Intrabar ambiguity preservation for 1m bars touching stop and target.
 """
 
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from scripts.trading_brain.db.connection import get_db_connection
+from scripts.utils.market_calendar import now_iso_utc, parse_iso_utc, to_iso_utc
 
 
 @dataclass
@@ -31,6 +36,7 @@ class SignalOpportunity:
     stop_distance_bps: float
     target_1_bps: float
     feature_manifest: Dict[str, Any]
+    signal_direction: str = "LONG"             # 'LONG' or 'SHORT'
     declared_target_2_price: Optional[float] = None
     evaluation_mode: str = "LIVE_CAPTURE"
 
@@ -45,24 +51,27 @@ class OpportunityLogger:
     ) -> str:
         """Records an as-of setup trigger into signal_opportunities."""
         opp_id = opportunity.opportunity_id or str(uuid.uuid4())
+        bar_ts_iso = to_iso_utc(opportunity.bar_timestamp_utc)
+        dec_ts_iso = to_iso_utc(opportunity.decision_time_utc)
         
         with get_db_connection(db_path) as conn:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO signal_opportunities (
                     opportunity_id, session_date, ticker, strategy_version_id,
-                    bar_timestamp_utc, decision_time_utc, trigger_price,
+                    bar_timestamp_utc, decision_time_utc, signal_direction, trigger_price,
                     declared_stop_price, declared_target_1_price, declared_target_2_price,
                     stop_distance_bps, target_1_bps, feature_manifest_json, evaluation_mode
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     opp_id,
                     opportunity.session_date,
                     opportunity.ticker,
                     opportunity.strategy_version_id,
-                    opportunity.bar_timestamp_utc,
-                    opportunity.decision_time_utc,
+                    bar_ts_iso,
+                    dec_ts_iso,
+                    opportunity.signal_direction,
                     opportunity.trigger_price,
                     opportunity.declared_stop_price,
                     opportunity.declared_target_1_price,
@@ -83,40 +92,67 @@ class OpportunityLogger:
         expiry_seconds: int = 900,
         db_path: Optional[Union[str, Path]] = None
     ) -> Dict[str, Any]:
-        """Mechanically matches execution_events to signal_opportunities to derive dispositions."""
+        """Mechanically matches execution_events to signal_opportunities to derive dispositions.
+        
+        Enforces direction match and idempotency.
+        """
         with get_db_connection(db_path) as conn:
-            # Query opportunities for session
             opp_cursor = conn.execute(
                 "SELECT * FROM signal_opportunities WHERE session_date = ? AND ticker = ?;",
                 (session_date, ticker)
             )
             opportunities = opp_cursor.fetchall()
             
-            # Query executions for session
             exec_cursor = conn.execute(
                 "SELECT * FROM execution_events WHERE session_date = ? AND ticker = ?;",
                 (session_date, ticker)
             )
             executions = exec_cursor.fetchall()
             
+            # Check already existing dispositions to ensure idempotency
+            existing_disp_cursor = conn.execute(
+                """
+                SELECT d.* FROM signal_disposition_events d
+                JOIN signal_opportunities o ON d.opportunity_id = o.opportunity_id
+                WHERE o.session_date = ? AND o.ticker = ?;
+                """,
+                (session_date, ticker)
+            )
+            existing_disps = {d["opportunity_id"]: d for d in existing_disp_cursor.fetchall()}
+            
             matched_exec_ids = set()
-            disposition_counts = {"EXECUTED": 0, "PASSED": 0, "MISSED": 0}
+            disposition_counts = {"EXECUTED": 0, "PASSED": 0, "MISSED": 0, "OFFLINE": 0}
             
             for opp in opportunities:
                 opp_id = opp["opportunity_id"]
+                if opp_id in existing_disps:
+                    # Already derived
+                    prev_state = existing_disps[opp_id]["disposition_state"]
+                    disposition_counts[prev_state] = disposition_counts.get(prev_state, 0) + 1
+                    if existing_disps[opp_id]["matched_execution_id"]:
+                        matched_exec_ids.add(existing_disps[opp_id]["matched_execution_id"])
+                    continue
+                    
                 trigger_price = opp["trigger_price"]
-                opp_ts = datetime.fromisoformat(opp["bar_timestamp_utc"].replace("Z", "+00:00"))
+                direction = opp["signal_direction"]
+                opp_ts = parse_iso_utc(opp["bar_timestamp_utc"])
                 
                 matched_exec = None
                 for ex in executions:
                     if ex["execution_id"] in matched_exec_ids:
                         continue
-                    ex_ts = datetime.fromisoformat(ex["event_timestamp_utc"].replace("Z", "+00:00"))
-                    
-                    # Check if execution occurred within validity window
+                        
+                    # Direction matching
+                    action = ex["order_action"].upper()
+                    if direction == "LONG" and action not in ("BUY", "LONG"):
+                        continue
+                    if direction == "SHORT" and action not in ("SELL", "SELL_SHORT", "SHORT"):
+                        continue
+                        
+                    ex_ts = parse_iso_utc(ex["event_timestamp_utc"])
                     time_diff = (ex_ts - opp_ts).total_seconds()
+                    
                     if 0 <= time_diff <= expiry_seconds:
-                        # Check price tolerance
                         fill_price = ex["fill_price"]
                         price_diff_bps = abs(fill_price - trigger_price) / trigger_price * 10000.0
                         if price_diff_bps <= tolerance_bps:
@@ -127,10 +163,11 @@ class OpportunityLogger:
                 if matched_exec:
                     state = "EXECUTED"
                     exec_id = matched_exec["execution_id"]
-                    latency = (datetime.fromisoformat(matched_exec["event_timestamp_utc"].replace("Z", "+00:00")) - opp_ts).total_seconds()
+                    latency = (parse_iso_utc(matched_exec["event_timestamp_utc"]) - opp_ts).total_seconds()
                     reason = f"Matched execution {exec_id} with latency {latency:.1f}s"
                 else:
-                    state = "PASSED"
+                    # In real pipeline, if trader was online and took contrary/no action, tag MISSED vs PASSED
+                    state = "MISSED"
                     exec_id = None
                     latency = None
                     reason = "No matching execution event found during validity window"
@@ -143,22 +180,37 @@ class OpportunityLogger:
                         matched_execution_id, latency_seconds, disposition_reason, event_timestamp_utc
                     ) VALUES (?, ?, ?, 'MECHANICAL_RECONCILER', ?, ?, ?, ?);
                     """,
-                    (disp_id, opp_id, state, exec_id, latency, reason, datetime.now(timezone.utc).isoformat())
+                    (disp_id, opp_id, state, exec_id, latency, reason, now_iso_utc())
                 )
-                disposition_counts[state] += 1
+                disposition_counts[state] = disposition_counts.get(state, 0) + 1
                 
-            # Unmatched executions route to unmatched_link_events
+            # Unmatched executions route to unmatched_link_events with candidate opportunity search
             for ex in executions:
                 if ex["execution_id"] not in matched_exec_ids:
+                    # Check if already in unmatched_link_events
+                    cur_link = conn.execute(
+                        "SELECT link_event_id FROM unmatched_link_events WHERE execution_id = ?;",
+                        (ex["execution_id"],)
+                    )
+                    if cur_link.fetchone():
+                        continue
+                        
+                    ex_ts = parse_iso_utc(ex["event_timestamp_utc"])
+                    candidates = []
+                    for opp in opportunities:
+                        opp_ts = parse_iso_utc(opp["bar_timestamp_utc"])
+                        if abs((ex_ts - opp_ts).total_seconds()) <= 3600:
+                            candidates.append(opp["opportunity_id"])
+                            
                     link_id = str(uuid.uuid4())
                     conn.execute(
                         """
                         INSERT INTO unmatched_link_events (
                             link_event_id, execution_id, candidate_opportunity_ids_json,
                             resolution_status, event_timestamp_utc
-                        ) VALUES (?, ?, '[]', 'OPEN', ?);
+                        ) VALUES (?, ?, ?, 'OPEN', ?);
                         """,
-                        (link_id, ex["execution_id"], datetime.now(timezone.utc).isoformat())
+                        (link_id, ex["execution_id"], json.dumps(candidates), now_iso_utc())
                     )
                     
             return {
@@ -180,7 +232,7 @@ class OpportunityLogger:
     ) -> str:
         """Records theoretical post-hoc evaluation outcome with preserved ambiguity bounds."""
         outcome_id = str(uuid.uuid4())
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = now_iso_utc()
         
         with get_db_connection(db_path) as conn:
             conn.execute(

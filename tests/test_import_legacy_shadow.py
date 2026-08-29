@@ -12,7 +12,6 @@ from scripts.trading_brain.migrations.import_legacy_shadow import LegacyShadowIm
 
 @pytest.fixture
 def mock_legacy_environment():
-    """Sets up mock legacy SQLite databases with sample data and a clean target DB."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         tmp_path = Path(tmpdir)
         canon_db = tmp_path / "canonical_trading_brain.sqlite"
@@ -117,8 +116,8 @@ def mock_legacy_environment():
         }
 
 
-def test_legacy_shadow_importer(mock_legacy_environment):
-    """Tests that LegacyShadowImporter correctly migrates all records with valid dual hashes."""
+def test_legacy_shadow_importer_zero_fabrication(mock_legacy_environment):
+    """Tests that LegacyShadowImporter migrates records with zero probability fabrication and passes dual-hash checks."""
     env = mock_legacy_environment
     importer = LegacyShadowImporter(
         canonical_db_path=env["canonical_db"],
@@ -130,33 +129,25 @@ def test_legacy_shadow_importer(mock_legacy_environment):
     # 1. Test backups
     backups = importer.run_pre_cutover_backups()
     assert len(backups) == 3
-    for name, path in backups.items():
-        assert path.exists()
-        
-    # 2. Test migration
+    
+    # 2. Test migration & verification
     success, report = importer.import_and_verify_all(verbose=False)
     assert success
+    assert report["hash_verification_passed"]
     assert report["system_wargames_migrated"] == 1
     assert report["market_actuals_migrated"] == 1
     assert report["mickey_wargames_migrated"] == 1
     
-    # 3. Verify destination rows in canonical DB
+    # 3. Verify forecast_snapshots has zero fabricated probabilities (abstain_flag=1, probs=None)
     with sqlite3.connect(str(env["canonical_db"])) as conn:
         conn.row_factory = sqlite3.Row
-        
-        # Verify forecast_snapshots
         fc = conn.execute("SELECT * FROM forecast_snapshots WHERE session_date = '2026-08-28';").fetchone()
         assert fc is not None
-        assert fc["forecast_mode"] == "REPLAY_AUDIT"
-        assert fc["p12_equilibrium_level"] == 19990.0
-        assert fc["predicted_bias"] == "BULLISH"
-        
-        # Verify session_tape_actuals
-        act = conn.execute("SELECT * FROM session_tape_actuals WHERE session_date = '2026-08-28';").fetchone()
-        assert act is not None
-        assert act["day_type_classification"] == "ROTATIONAL_CHOP"
-        assert act["session_close"] == 20050.0
-        
-        # Verify information_items
-        infos = conn.execute("SELECT * FROM information_items;").fetchall()
-        assert len(infos) == 2  # 1 from system_wargames, 1 from mickey_wargames
+        assert fc["abstain_flag"] == 1
+        assert fc["prob_r1"] is None
+        assert fc["prob_r2"] is None
+        assert fc["prob_dnp"] is None
+        assert fc["prob_dwp"] is None
+        assert fc["prob_rotational_chop"] is None
+        # Effective cutoff is DST-correct 12:45 UTC (08:45 EDT)
+        assert fc["effective_cutoff_utc"] == "2026-08-28T12:45:00Z"

@@ -1,11 +1,12 @@
-"""Pre-Market Plan Snapshot, Revision & Deterministic As-Of Authority Adapter.
+"""Pre-Market Plan Snapshot, Revision & Deterministic As-Of Authority Adapter (Milestone 0.2).
 
-Implements:
-1. Immutable plan snapshot recording with transactional revision sequencing.
-2. Append-only lifecycle event tracking (SUBMITTED, SUPERSEDED, CANCELLED).
-3. Intraday plan amendments with sequence uniqueness and received_at_utc audit.
-4. Deterministic as-of authority resolution (`get_plan_as_of`).
-5. Prisma TradePlan snapshot adapter.
+Enforces:
+1. Calendar-derived preparation cutoff validation (cannot self-certify ex-ante past calendar cutoff).
+2. Immutable plan snapshot recording with transactional revision sequencing.
+3. Append-only lifecycle event tracking (SUBMITTED, SUPERSEDED, CANCELLED).
+4. Intraday plan amendments with sequence uniqueness and received_at_utc audit.
+5. Deterministic as-of authority resolution (`get_plan_as_of`).
+6. Prisma TradePlan snapshot adapter.
 """
 
 import json
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from scripts.trading_brain.db.connection import get_db_connection
-from scripts.utils.market_calendar import now_iso_utc, parse_iso_utc, to_iso_utc
+from scripts.utils.market_calendar import get_session_cutoff_utc, now_iso_utc, parse_iso_utc, to_iso_utc
 
 
 @dataclass
@@ -66,17 +67,27 @@ class PlanAdapter:
     ) -> PlanContext:
         """Saves a plan snapshot and records its SUBMITTED/SUPERSEDED lifecycle events.
         
-        Evaluates receipt timing: If received after cutoff, tags as POST_HOC_RECONSTRUCTION.
+        Derives canonical cutoff from market calendar (08:45 ET) to prevent caller self-certification bypass.
         """
         snapshot_id = plan.plan_snapshot_id or str(uuid.uuid4())
         family_id = plan.plan_family_id or str(uuid.uuid4())
         
-        cutoff_iso = to_iso_utc(plan.preparation_cutoff_utc)
-        cutoff_dt = parse_iso_utc(cutoff_iso)
+        # Derive canonical market calendar cutoff (DST-correct 08:45 ET)
+        canonical_cutoff_dt = get_session_cutoff_utc(plan.session_date, "08:45:00")
+        canonical_cutoff_iso = to_iso_utc(canonical_cutoff_dt)
+        
+        # If caller provided a preparation_cutoff_utc, ensure it does not exceed canonical calendar cutoff
+        if plan.preparation_cutoff_utc:
+            caller_cutoff_dt = parse_iso_utc(plan.preparation_cutoff_utc)
+            effective_cutoff_dt = min(caller_cutoff_dt, canonical_cutoff_dt)
+        else:
+            effective_cutoff_dt = canonical_cutoff_dt
+            
+        effective_cutoff_iso = to_iso_utc(effective_cutoff_dt)
         now_dt = datetime.now(timezone.utc)
         
-        # Enforce provenance classification based on server clock
-        provenance = "EX_ANTE_DECLARED" if now_dt <= cutoff_dt else "POST_HOC_RECONSTRUCTION"
+        # Enforce provenance classification strictly against canonical cutoff
+        provenance = "EX_ANTE_DECLARED" if now_dt <= effective_cutoff_dt else "POST_HOC_RECONSTRUCTION"
         
         with get_db_connection(db_path) as conn:
             # Transactionally determine revision_seq within plan_family_id
@@ -102,7 +113,7 @@ class PlanAdapter:
                     next_seq,
                     plan.session_date,
                     plan.ticker,
-                    cutoff_iso,
+                    effective_cutoff_iso,
                     plan.source_system,
                     plan.source_plan_id,
                     plan.supersedes_plan_snapshot_id,
@@ -116,7 +127,6 @@ class PlanAdapter:
                 )
             )
             
-            # Fetch the server-generated received_at_utc
             cur = conn.execute("SELECT received_at_utc, created_at_utc FROM plan_snapshots WHERE plan_snapshot_id = ?;", (snapshot_id,))
             row = cur.fetchone()
             received_at = row["received_at_utc"]
@@ -144,6 +154,7 @@ class PlanAdapter:
         plan.plan_snapshot_id = snapshot_id
         plan.plan_family_id = family_id
         plan.revision_seq = next_seq
+        plan.preparation_cutoff_utc = effective_cutoff_iso
         plan.provenance_class = provenance
         plan.received_at_utc = received_at
         plan.created_at_utc = created_at
@@ -264,7 +275,6 @@ class PlanAdapter:
                 
             snapshot_id = row["plan_snapshot_id"]
             
-            # Query amendments active as of decision_time
             amend_cursor = conn.execute(
                 """
                 SELECT * FROM plan_amendments
@@ -316,16 +326,16 @@ class PlanAdapter:
     @staticmethod
     def snapshot_prisma_plan(
         prisma_plan: Dict[str, Any],
-        preparation_cutoff_utc: Union[str, datetime],
+        preparation_cutoff_utc: Optional[Union[str, datetime]] = None,
         db_path: Optional[Union[str, Path]] = None
     ) -> PlanContext:
         """Adapts a Prisma TradePlan dictionary into a canonical PlanContext and persists it."""
-        cutoff_iso = to_iso_utc(preparation_cutoff_utc)
-        
         session_date = prisma_plan.get("sessionDate") or prisma_plan.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         ticker = prisma_plan.get("symbol") or prisma_plan.get("ticker") or "NQ1"
         plan_text = prisma_plan.get("planText") or prisma_plan.get("content") or "Ex-ante trading plan"
         bias = prisma_plan.get("bias") or "NEUTRAL"
+        
+        cutoff_iso = to_iso_utc(preparation_cutoff_utc) if preparation_cutoff_utc else to_iso_utc(get_session_cutoff_utc(session_date, "08:45:00"))
         
         scenarios = prisma_plan.get("scenarios") or {}
         if isinstance(scenarios, str):

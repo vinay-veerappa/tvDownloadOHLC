@@ -2,23 +2,31 @@
 
 Guarantees crash-resilient asynchronous replay of canonical Trading Brain records to legacy databases:
 1. Canonical transaction commits canonical row + legacy_projection_outbox row in a single atomic transaction.
-2. OutboxProjector acquires leases on PENDING outbox records.
-3. Projects payloads into legacy SQLite databases (system_wargames.sqlite, market_actuals.sqlite, mickey_ground_truth.sqlite).
-4. Marks outbox records as PROJECTED (or DEAD_LETTER after max_retries).
+2. Supports WARGAME_DB_TARGET environment variable ('CANONICAL', 'DUAL_OUTBOX', 'LEGACY_DIRECT', 'PAUSED').
+3. OutboxProjector acquires leases on PENDING outbox records.
+4. Projects payloads into legacy SQLite databases (system_wargames.sqlite, market_actuals.sqlite, mickey_ground_truth.sqlite).
+5. Marks outbox records as PROJECTED (or DEAD_LETTER after max_retries).
 """
 
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from scripts.trading_brain.db.connection import get_db_connection, resolve_db_path
+from scripts.trading_brain.db.connection import REPO_ROOT, get_db_connection, resolve_db_path
+from scripts.utils.market_calendar import now_iso_utc
 
-LEGACY_SYSTEM_WARGAMES = Path("data/wargaming/db/system_wargames.sqlite")
-LEGACY_MARKET_ACTUALS = Path("data/wargaming/db/market_actuals.sqlite")
-LEGACY_MICKEY_GROUND_TRUTH = Path("data/wargaming/db/mickey_ground_truth.sqlite")
+LEGACY_SYSTEM_WARGAMES = REPO_ROOT / "data" / "wargaming" / "db" / "system_wargames.sqlite"
+LEGACY_MARKET_ACTUALS = REPO_ROOT / "data" / "wargaming" / "db" / "market_actuals.sqlite"
+LEGACY_MICKEY_GROUND_TRUTH = REPO_ROOT / "data" / "wargaming" / "db" / "mickey_ground_truth.sqlite"
+
+
+class DatabasePausedError(Exception):
+    """Raised when writes are attempted while WARGAME_DB_TARGET is set to PAUSED."""
+    pass
 
 
 class OutboxProjector:
@@ -41,6 +49,11 @@ class OutboxProjector:
         self.lease_duration_sec = lease_duration_sec
 
     @staticmethod
+    def get_target_mode() -> str:
+        """Returns active database target mode: 'CANONICAL', 'DUAL_OUTBOX', 'LEGACY_DIRECT', 'PAUSED'."""
+        return os.environ.get("WARGAME_DB_TARGET", "DUAL_OUTBOX").upper()
+
+    @staticmethod
     def enqueue_outbox_item(
         conn: sqlite3.Connection,
         destination_db: str,
@@ -50,6 +63,10 @@ class OutboxProjector:
         schema_version: str = "1.0.0"
     ) -> str:
         """Enqueues an outbox record within an existing canonical transaction."""
+        target_mode = OutboxProjector.get_target_mode()
+        if target_mode == "PAUSED":
+            raise DatabasePausedError("Database writes are PAUSED via WARGAME_DB_TARGET=PAUSED")
+            
         outbox_id = str(uuid.uuid4())
         conn.execute(
             """
@@ -64,6 +81,10 @@ class OutboxProjector:
 
     def project_pending(self, limit: int = 50) -> Dict[str, int]:
         """Claims and projects pending outbox records to their legacy database destinations."""
+        target_mode = self.get_target_mode()
+        if target_mode == "PAUSED":
+            return {"projected": 0, "failed": 0, "dead_letter": 0}
+            
         now_dt = datetime.now(timezone.utc)
         now_iso = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=self.lease_duration_sec)).isoformat()
@@ -72,7 +93,6 @@ class OutboxProjector:
         counts = {"projected": 0, "failed": 0, "dead_letter": 0}
         
         with get_db_connection(self.canonical_db) as conn:
-            # 1. Acquire lease on pending records using standard subquery
             conn.execute(
                 """
                 UPDATE legacy_projection_outbox
@@ -102,14 +122,13 @@ class OutboxProjector:
                 try:
                     self._dispatch_to_legacy(dest_db, payload)
                     
-                    # Mark projected
                     conn.execute(
                         """
                         UPDATE legacy_projection_outbox
                         SET status = 'PROJECTED', projected_at_utc = ?, lease_token = NULL, lease_expires_at_utc = NULL, last_error = NULL
                         WHERE outbox_id = ?;
                         """,
-                        (datetime.now(timezone.utc).isoformat(), outbox_id)
+                        (now_iso_utc(), outbox_id)
                     )
                     counts["projected"] += 1
                 except Exception as ex:

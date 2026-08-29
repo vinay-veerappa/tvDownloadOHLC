@@ -2,6 +2,7 @@
 
 Enforces:
 1. Phase 1 Pre-Cutoff Run Initiation: Seals input bar manifests & content hashes before cutoff.
+   - Fail closed: Manifest items must have valid max_timestamp_utc and content_hash.
 2. Phase 2 Commit Completion: Evaluates server clock against cutoff and grace period:
    - <= cutoff -> LIVE_PRODUCTION
    - > cutoff and <= cutoff + grace -> FORECAST_LATE_RECEIVED (demoted)
@@ -27,7 +28,7 @@ class ForecastCutoffExpiredError(Exception):
 
 
 class ForecastInputValidationError(Exception):
-    """Raised when forecast inputs violate temporal cutoff or probability distribution rules."""
+    """Raised when forecast inputs violate temporal cutoff, fail-closed policy, or probability rules."""
     pass
 
 
@@ -47,6 +48,8 @@ class ForecastRun:
 
 @dataclass
 class ForecastSnapshotPayload:
+    git_hash: str                              # Mandatory provenance hash
+    config_hash: str                           # Mandatory config hash
     prob_r1: Optional[float] = None
     prob_r2: Optional[float] = None
     prob_dnp: Optional[float] = None
@@ -60,8 +63,6 @@ class ForecastSnapshotPayload:
     candle_science_target_low: Optional[float] = None
     expected_move_high: Optional[float] = None
     expected_move_low: Optional[float] = None
-    git_hash: str = "main"
-    config_hash: str = "default_config"
     abstain_flag: bool = False
     abstain_reason: Optional[str] = None
 
@@ -108,7 +109,10 @@ class ForecastRegistrar:
         cutoff_time_et: str = "08:45:00",
         db_path: Optional[Union[str, Path]] = None
     ) -> ForecastRun:
-        """Phase 1: Initiates a forecast run and seals input manifests before cutoff."""
+        """Phase 1: Initiates a forecast run and seals input manifests before cutoff.
+        
+        Enforces fail-closed validation on all input manifest entries.
+        """
         now_dt = datetime.now(timezone.utc)
         cutoff_dt = get_session_cutoff_utc(session_date, cutoff_time_et_str=cutoff_time_et)
         
@@ -117,14 +121,26 @@ class ForecastRegistrar:
                 f"Cannot create live forecast run after session cutoff: now={now_dt.isoformat()} > cutoff={cutoff_dt.isoformat()}"
             )
             
+        # Fail-closed validation on all input entries
         for inp in input_manifest:
             max_ts = inp.get("max_timestamp_utc")
-            if max_ts:
-                inp_dt = parse_iso_utc(max_ts)
-                if inp_dt > cutoff_dt:
-                    raise ForecastInputValidationError(
-                        f"Input {inp.get('provider_name')} max timestamp {max_ts} exceeds cutoff {cutoff_dt.isoformat()}"
-                    )
+            content_hash = inp.get("content_hash")
+            provider = inp.get("provider_name")
+            
+            if not max_ts:
+                raise ForecastInputValidationError(
+                    f"Fail-closed: Missing max_timestamp_utc for provider '{provider}'"
+                )
+            if not content_hash:
+                raise ForecastInputValidationError(
+                    f"Fail-closed: Missing content_hash for provider '{provider}'"
+                )
+                
+            inp_dt = parse_iso_utc(max_ts)
+            if inp_dt > cutoff_dt:
+                raise ForecastInputValidationError(
+                    f"Input {provider} max timestamp {max_ts} exceeds cutoff {cutoff_dt.isoformat()}"
+                )
                     
         run_id = str(uuid.uuid4())
         now_iso = now_iso_utc()
@@ -155,8 +171,8 @@ class ForecastRegistrar:
                         run_id,
                         inp.get("provider_name", "UNKNOWN"),
                         inp.get("data_type", "BARS"),
-                        to_iso_utc(inp.get("max_timestamp_utc", now_iso)),
-                        inp.get("content_hash", "hash")
+                        to_iso_utc(inp["max_timestamp_utc"]),
+                        inp["content_hash"]
                     )
                 )
                 
@@ -179,6 +195,11 @@ class ForecastRegistrar:
         db_path: Optional[Union[str, Path]] = None
     ) -> Dict[str, Any]:
         """Phase 2: Commits forecast predictions with probability validation and asymmetric cutoff enforcement."""
+        if not payload.git_hash:
+            raise ForecastInputValidationError("Provenance git_hash must be provided.")
+        if not payload.config_hash:
+            raise ForecastInputValidationError("Provenance config_hash must be provided.")
+            
         validate_probability_distribution(payload)
         
         now_dt = datetime.now(timezone.utc)

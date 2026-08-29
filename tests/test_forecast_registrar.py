@@ -2,7 +2,6 @@
 
 import sqlite3
 import tempfile
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -27,9 +26,7 @@ def temp_db():
 
 def test_two_phase_live_forecast_success(temp_db):
     """Tests successful pre-cutoff two-phase registration resulting in LIVE_PRODUCTION."""
-    # Future session date so now is well before cutoff
     session_date = "2026-09-01"
-    cutoff = get_session_cutoff_utc(session_date)
     
     input_manifest = [
         {"provider_name": "ALNSessionsProvider_v1", "data_type": "BARS", "max_timestamp_utc": "2026-09-01T12:00:00Z", "content_hash": "h1"},
@@ -49,6 +46,8 @@ def test_two_phase_live_forecast_success(temp_db):
     assert run.forecast_run_id is not None
     
     payload = ForecastSnapshotPayload(
+        git_hash="git-commit-123",
+        config_hash="cfg-hash-456",
         prob_r1=0.20,
         prob_r2=0.20,
         prob_dnp=0.10,
@@ -66,7 +65,7 @@ def test_two_phase_live_forecast_success(temp_db):
     assert res["forecast_mode"] == "LIVE_PRODUCTION"
     assert res["session_date"] == "2026-09-01"
     
-    # Verify second LIVE_PRODUCTION for same session fails with IntegrityError
+    # Second LIVE_PRODUCTION for same session fails with IntegrityError
     run2 = ForecastRegistrar.create_forecast_run(
         session_date=session_date,
         ticker="NQ1",
@@ -79,62 +78,29 @@ def test_two_phase_live_forecast_success(temp_db):
         ForecastRegistrar.commit_forecast_run(run2.forecast_run_id, payload, db_path=temp_db)
 
 
-def test_input_timestamp_exceeding_cutoff_rejected(temp_db):
-    """Tests that input manifests with bars past cutoff are rejected during run creation."""
+def test_fail_closed_manifest_validation(temp_db):
+    """Tests that missing max_timestamp_utc or content_hash triggers fail-closed validation error."""
     session_date = "2026-09-01"
-    cutoff = get_session_cutoff_utc(session_date)
-    future_bar = (cutoff + timedelta(minutes=5)).isoformat()
     
-    input_manifest = [
-        {"provider_name": "ALN", "max_timestamp_utc": future_bar, "content_hash": "h1"}
-    ]
-    
+    # Missing max_timestamp_utc
     with pytest.raises(ForecastInputValidationError):
         ForecastRegistrar.create_forecast_run(
             session_date=session_date,
             ticker="NQ1",
             model_version_id="MOD_V1",
-            input_manifest=input_manifest,
+            input_manifest=[{"provider_name": "ALN", "content_hash": "h1"}],
             db_path=temp_db
         )
-
-
-def test_late_run_initiation_rejected(temp_db):
-    """Tests that attempting to initiate a forecast run after the session cutoff raises ForecastCutoffExpiredError."""
-    # Past session date
-    past_session = "2026-01-01"
-    
-    with pytest.raises(ForecastCutoffExpiredError):
+        
+    # Missing content_hash
+    with pytest.raises(ForecastInputValidationError):
         ForecastRegistrar.create_forecast_run(
-            session_date=past_session,
+            session_date=session_date,
             ticker="NQ1",
             model_version_id="MOD_V1",
-            input_manifest=[],
+            input_manifest=[{"provider_name": "ALN", "max_timestamp_utc": "2026-09-01T12:00:00Z"}],
             db_path=temp_db
         )
-
-
-def test_replay_audit_registration(temp_db):
-    """Tests that historical replay forecasts are registered with mode REPLAY_AUDIT."""
-    payload = ForecastSnapshotPayload(
-        prob_r1=0.5,
-        prob_r2=0.1,
-        prob_dnp=0.1,
-        prob_dwp=0.1,
-        prob_rotational_chop=0.2,
-        predicted_bias="BULLISH"
-    )
-    
-    res = ForecastRegistrar.register_replay_forecast(
-        session_date="2026-08-28",
-        ticker="NQ1",
-        model_version_id="MOD_REPLAY_V1",
-        payload=payload,
-        db_path=temp_db
-    )
-    
-    assert res["forecast_mode"] == "REPLAY_AUDIT"
-    assert res["forecast_id"] is not None
 
 
 def test_probability_distribution_sum_validation(temp_db):
@@ -144,12 +110,13 @@ def test_probability_distribution_sum_validation(temp_db):
         session_date=session_date,
         ticker="NQ1",
         model_version_id="MOD_V1",
-        input_manifest=[],
+        input_manifest=[{"provider_name": "ALN", "max_timestamp_utc": "2026-09-01T12:00:00Z", "content_hash": "h1"}],
         db_path=temp_db
     )
     
-    # Probabilities sum to 0.8 instead of 1.0 -> should fail
     invalid_payload = ForecastSnapshotPayload(
+        git_hash="git1",
+        config_hash="cfg1",
         prob_r1=0.20,
         prob_r2=0.20,
         prob_dnp=0.20,

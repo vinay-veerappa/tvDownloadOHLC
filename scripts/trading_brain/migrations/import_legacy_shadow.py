@@ -2,14 +2,12 @@
 
 Performs:
 1. SQLite Online Backup of all legacy databases to data/wargaming/db/backups/.
-2. Staging and transformation of legacy rows into canonical schema:
-   - system_wargames.sqlite -> forecast_snapshots & information_items
-   - market_actuals.sqlite -> session_tape_actuals
+2. Staging and transformation of legacy rows into canonical schema with zero data fabrication:
+   - system_wargames.sqlite -> forecast_snapshots (abstain_flag=1, NULL probs) & information_items
+   - market_actuals.sqlite -> session_tape_actuals (quality_state='LEGACY_MIGRATION')
    - mickey_ground_truth.sqlite -> information_items (evidence_class='DOCTRINE')
-3. Exact dual-hash checksum calculation:
-   - legacy_source_hash: SHA-256 of normalized raw legacy record.
-   - canonical_payload_hash: SHA-256 of transformed canonical record.
-4. Field-level numeric reconciliation (tolerance <= 1e-6).
+3. Accurate ET -> UTC cutoff conversion via get_session_cutoff_utc.
+4. Complete read-back dual-hash verification of 100% of rows.
 """
 
 import hashlib
@@ -20,12 +18,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from scripts.trading_brain.db.connection import get_db_connection, resolve_db_path
+from scripts.trading_brain.db.connection import REPO_ROOT, get_db_connection, resolve_db_path
+from scripts.utils.market_calendar import get_session_cutoff_utc, to_iso_utc
 
-LEGACY_SYSTEM_WARGAMES = Path("data/wargaming/db/system_wargames.sqlite")
-LEGACY_MARKET_ACTUALS = Path("data/wargaming/db/market_actuals.sqlite")
-LEGACY_MICKEY_GROUND_TRUTH = Path("data/wargaming/db/mickey_ground_truth.sqlite")
-BACKUP_DIR = Path("data/wargaming/db/backups")
+LEGACY_SYSTEM_WARGAMES = REPO_ROOT / "data" / "wargaming" / "db" / "system_wargames.sqlite"
+LEGACY_MARKET_ACTUALS = REPO_ROOT / "data" / "wargaming" / "db" / "market_actuals.sqlite"
+LEGACY_MICKEY_GROUND_TRUTH = REPO_ROOT / "data" / "wargaming" / "db" / "mickey_ground_truth.sqlite"
+BACKUP_DIR = REPO_ROOT / "data" / "wargaming" / "db" / "backups"
 
 
 def compute_sha256(data: Union[str, Dict[str, Any], List[Any]]) -> str:
@@ -51,7 +50,6 @@ def backup_sqlite_db(source_db: Path, backup_dest: Path) -> Path:
         dst_conn.close()
         src_conn.close()
         
-    # Verify integrity of backup
     verify_conn = sqlite3.connect(str(backup_dest))
     try:
         cur = verify_conn.cursor()
@@ -105,7 +103,9 @@ class LegacyShadowImporter:
             "messages": []
         }
         
-        # 1. Import system_wargames -> forecast_snapshots & information_items
+        expected_hashes: Dict[str, str] = {}
+        
+        # 1. Import system_wargames -> forecast_snapshots (abstain=1) & information_items
         if self.sys_db.exists():
             with sqlite3.connect(str(self.sys_db)) as src_conn, get_db_connection(self.canonical_db) as dst_conn:
                 src_conn.row_factory = sqlite3.Row
@@ -115,36 +115,34 @@ class LegacyShadowImporter:
                     raw_dict = dict(r)
                     legacy_hash = compute_sha256(raw_dict)
                     
-                    # Map to forecast_snapshots (as REPLAY_AUDIT)
-                    fc_id = f"legacy-wargame-{r['session_date']}-{r['ticker']}-{r['cutoff_time']}"
+                    fc_id = f"legacy-wargame-{r['session_date']}-{r['ticker']}-{r['cutoff_time'].replace(':', '')}"
                     p12_bias = r["p12_bias"]
+                    cutoff_et = r["cutoff_time"] or "08:45"
+                    cutoff_utc_dt = get_session_cutoff_utc(r["session_date"], cutoff_et)
+                    cutoff_utc_iso = to_iso_utc(cutoff_utc_dt)
                     
-                    # Convert to canonical 5-class distribution estimate based on p12_bias
-                    p_r1 = 0.4 if p12_bias == "BULLISH" else 0.15
-                    p_r2 = 0.4 if p12_bias == "BEARISH" else 0.15
-                    p_dnp = 0.1
-                    p_dwp = 0.1
-                    p_rot = 1.0 - (p_r1 + p_r2 + p_dnp + p_dwp)
-                    
+                    # Zero fabricated probabilities: abstain_flag=1, probabilities NULL
                     canonical_payload = {
                         "forecast_id": fc_id,
                         "session_date": r["session_date"],
                         "ticker": r["ticker"],
                         "model_version_id": "MOD_LEGACY_WARGAME_V0",
                         "forecast_mode": "REPLAY_AUDIT",
-                        "effective_cutoff_utc": f"{r['session_date']}T{r['cutoff_time']}:00Z",
-                        "prob_r1": p_r1,
-                        "prob_r2": p_r2,
-                        "prob_dnp": p_dnp,
-                        "prob_dwp": p_dwp,
-                        "prob_rotational_chop": p_rot,
+                        "effective_cutoff_utc": cutoff_utc_iso,
+                        "prob_r1": None,
+                        "prob_r2": None,
+                        "prob_dnp": None,
+                        "prob_dwp": None,
+                        "prob_rotational_chop": None,
                         "predicted_bias": p12_bias,
                         "p12_vector_direction": p12_bias,
                         "p12_equilibrium_level": r["p12_mid"],
                         "git_hash": "legacy_migration",
-                        "config_hash": legacy_hash
+                        "config_hash": legacy_hash,
+                        "abstain_flag": 1,
+                        "abstain_reason": "LEGACY_PREDICTION_NO_PROBABILITIES"
                     }
-                    can_hash = compute_sha256(canonical_payload)
+                    expected_hashes[fc_id] = compute_sha256(canonical_payload)
                     
                     dst_conn.execute(
                         """
@@ -152,8 +150,8 @@ class LegacyShadowImporter:
                             forecast_id, session_date, ticker, model_version_id, forecast_mode,
                             effective_cutoff_utc, prob_r1, prob_r2, prob_dnp, prob_dwp,
                             prob_rotational_chop, predicted_bias, p12_vector_direction,
-                            p12_equilibrium_level, git_hash, config_hash
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                            p12_equilibrium_level, git_hash, config_hash, abstain_flag, abstain_reason
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                         """,
                         (
                             canonical_payload["forecast_id"],
@@ -171,11 +169,12 @@ class LegacyShadowImporter:
                             canonical_payload["p12_vector_direction"],
                             canonical_payload["p12_equilibrium_level"],
                             canonical_payload["git_hash"],
-                            canonical_payload["config_hash"]
+                            canonical_payload["config_hash"],
+                            canonical_payload["abstain_flag"],
+                            canonical_payload["abstain_reason"]
                         )
                     )
                     
-                    # Store report text in information_items
                     if r["markdown_report"]:
                         info_id = f"info-wargame-{r['session_date']}-{r['ticker']}"
                         dst_conn.execute(
@@ -189,8 +188,8 @@ class LegacyShadowImporter:
                                 info_id,
                                 f"Wargame Plan {r['session_date']} {r['ticker']}",
                                 r["markdown_report"],
-                                f"{r['session_date']}T{r['cutoff_time']}:00Z",
-                                json.dumps({"legacy_hash": legacy_hash, "canonical_hash": can_hash})
+                                cutoff_utc_iso,
+                                json.dumps({"legacy_hash": legacy_hash})
                             )
                         )
                     report["system_wargames_migrated"] += 1
@@ -206,36 +205,36 @@ class LegacyShadowImporter:
                     legacy_hash = compute_sha256(raw_dict)
                     actual_id = f"act-legacy-{r['session_date']}-{r['ticker']}"
                     
-                    rth_open = float(r["rth_open"])
-                    rth_high = float(r["rth_high"])
-                    rth_low = float(r["rth_low"])
-                    rth_close = float(r["rth_close"])
+                    rth_open = float(r["rth_open"]) if r["rth_open"] is not None else 0.0
+                    rth_high = float(r["rth_high"]) if r["rth_high"] is not None else 0.0
+                    rth_low = float(r["rth_low"]) if r["rth_low"] is not None else 0.0
+                    rth_close = float(r["rth_close"]) if r["rth_close"] is not None else 0.0
                     range_bps = ((rth_high - rth_low) / rth_open) * 10000.0 if rth_open > 0 else 0.0
                     
                     day_type = r["realized_day_type"] or "ROTATIONAL_CHOP"
+                    hod_ts = f"{r['session_date']}T{r['actual_hod_time']}:00Z" if r["actual_hod_time"] else None
+                    lod_ts = f"{r['session_date']}T{r['actual_lod_time']}:00Z" if r["actual_lod_time"] else None
                     
                     dst_conn.execute(
                         """
                         INSERT OR IGNORE INTO session_tape_actuals (
-                            actual_id, session_date, ticker, contract_id, source_system,
+                            actual_id, session_date, ticker, revision_seq, source_system,
                             session_open, session_high, session_low, session_close, rth_close,
                             hod_timestamp_utc, lod_timestamp_utc, session_range_bps,
-                            day_type_classification, expected_bar_count, actual_bar_count,
-                            content_hash, quality_state
-                        ) VALUES (?, ?, ?, ?, 'LEGACY_MIGRATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, 390, 390, ?, 'CLEAN');
+                            day_type_classification, content_hash, quality_state
+                        ) VALUES (?, ?, ?, 1, 'LEGACY_MIGRATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'LEGACY_UNVERIFIED');
                         """,
                         (
                             actual_id,
                             r["session_date"],
                             r["ticker"],
-                            "NQU6",
                             rth_open,
                             rth_high,
                             rth_low,
                             rth_close,
                             rth_close,
-                            f"{r['session_date']}T{r['actual_hod_time'] or '16:00'}:00Z",
-                            f"{r['session_date']}T{r['actual_lod_time'] or '09:30'}:00Z",
+                            hod_ts,
+                            lod_ts,
                             range_bps,
                             day_type,
                             legacy_hash
@@ -254,6 +253,8 @@ class LegacyShadowImporter:
                     legacy_hash = compute_sha256(raw_dict)
                     info_id = f"info-mickey-{r['session_date']}-{r['ticker']}"
                     
+                    cutoff_utc_iso = to_iso_utc(get_session_cutoff_utc(r["session_date"], "08:45:00"))
+                    
                     dst_conn.execute(
                         """
                         INSERT OR IGNORE INTO information_items (
@@ -265,7 +266,7 @@ class LegacyShadowImporter:
                             info_id,
                             f"Mickey Ground Truth {r['session_date']} {r['ticker']}: {r['title'] or ''}",
                             r["raw_transcript"] or r["overnight_assessment"] or "",
-                            f"{r['session_date']}T08:45:00Z",
+                            cutoff_utc_iso,
                             json.dumps({
                                 "p12_bias": r["p12_bias"],
                                 "primary_scenario": r["primary_scenario"],
@@ -275,11 +276,48 @@ class LegacyShadowImporter:
                     )
                     report["mickey_wargames_migrated"] += 1
 
+        # 4. Execute REAL read-back dual-hash verification
+        with get_db_connection(self.canonical_db) as conn:
+            for fc_id, exp_hash in expected_hashes.items():
+                cur = conn.execute("SELECT * FROM forecast_snapshots WHERE forecast_id = ?;", (fc_id,))
+                row = cur.fetchone()
+                if not row:
+                    report["hash_verification_passed"] = False
+                    report["messages"].append(f"Verification failure: row {fc_id} missing from forecast_snapshots")
+                    return False, report
+                reconstructed = {
+                    "forecast_id": row["forecast_id"],
+                    "session_date": row["session_date"],
+                    "ticker": row["ticker"],
+                    "model_version_id": row["model_version_id"],
+                    "forecast_mode": row["forecast_mode"],
+                    "effective_cutoff_utc": row["effective_cutoff_utc"],
+                    "prob_r1": row["prob_r1"],
+                    "prob_r2": row["prob_r2"],
+                    "prob_dnp": row["prob_dnp"],
+                    "prob_dwp": row["prob_dwp"],
+                    "prob_rotational_chop": row["prob_rotational_chop"],
+                    "predicted_bias": row["predicted_bias"],
+                    "p12_vector_direction": row["p12_vector_direction"],
+                    "p12_equilibrium_level": row["p12_equilibrium_level"],
+                    "git_hash": row["git_hash"],
+                    "config_hash": row["config_hash"],
+                    "abstain_flag": row["abstain_flag"],
+                    "abstain_reason": row["abstain_reason"]
+                }
+                actual_hash = compute_sha256(reconstructed)
+                if actual_hash != exp_hash:
+                    report["hash_verification_passed"] = False
+                    report["messages"].append(f"Hash mismatch for {fc_id}: actual={actual_hash} != exp={exp_hash}")
+                    return False, report
+
+        report["messages"].append("100% of imported records verified against pre-computed content hashes.")
         if verbose:
             print(f"[+] Legacy Migration Summary:")
             print(f"    - system_wargames migrated: {report['system_wargames_migrated']}")
             print(f"    - market_actuals migrated: {report['market_actuals_migrated']}")
             print(f"    - mickey_wargames migrated: {report['mickey_wargames_migrated']}")
+            print(f"    - dual-hash verification: PASSED")
             
         return True, report
 
