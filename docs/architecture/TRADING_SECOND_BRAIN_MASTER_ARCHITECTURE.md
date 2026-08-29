@@ -1,6 +1,6 @@
 # 🧠 Unified Trading Second Brain: Institutional Evidence & Decision Protocol
 
-> **Document Version**: 4.2.0 (Institutional Evidence, Intake & Decision Protocol)
+> **Document Version**: 4.3.0 (Institutional Evidence, Practice, Intake & Decision Protocol)
 > **Status**: Canonical Architecture Blueprint & System Specification  
 > **Location**: `docs/architecture/TRADING_SECOND_BRAIN_MASTER_ARCHITECTURE.md`  
 > **Core Axiom**: *The system automates observation collection, measurement, and candidate generation, but NEVER autonomously promotes hypotheses into live decision rules. Live models require registered hypotheses, multiplicity-controlled out-of-sample validation across multiple historical regimes, and explicit human governance.*
@@ -92,6 +92,51 @@ To prevent self-reinforcing statistical contamination and feedback loops, the sy
 ```
 
 The Knowledge Library arrow is a research-time hypothesis-proposal path only. Live feature computation cannot query doctrine, accept LLM-authored values, or change probabilities or sizing from retrieved text. A doctrinal proposal reaches runtime only after it becomes deterministic code and passes the promotion protocol.
+
+### Two Learning Problems, Two Feedback Clocks
+
+The system must not collapse market learning and trader learning into one daily post-mortem. They share records but answer different questions and require different feedback timescales:
+
+| Dimension | Market and Strategy Learning | Trader and Execution Learning |
+| :--- | :--- | :--- |
+| **Question** | Does a forecast, setup, or execution policy have durable incremental edge? | Did the trader recognize and execute an already-defined process correctly? |
+| **Primary unit** | Eligible market opportunity or complete session | Decision attempt, order event, intervention, trade, and drill attempt |
+| **Feedback clock** | Monthly or after a prospectively sufficient effective sample | Before order entry, immediately after intervention/trade, then EOD and weekly review |
+| **Evidence** | All eligible opportunities, forecasts, tape outcomes, costs, regimes | Active plan, opportunity, orders/fills, RiskGuard events, amendments, confirmed reflections |
+| **Valid output** | Candidate retained/rejected; model promoted/demoted; probability calibration | Immediate block/friction, process feedback, practice prescription, recurring-error summary |
+| **Invalid shortcut** | Updating priors from a few recent sessions | Inferring intent or causal leak cost from P&L alone |
+
+#### Market and Strategy Learning Loop
+
+```text
+Versioned hypothesis and executable policy
+        -> all eligible opportunities
+        -> market outcomes and executable costs
+        -> monthly/effective-sample audit against registered baselines
+        -> retain, reject, shadow, promote, or retire
+```
+
+Historical market evidence, current-regime shadow evidence, and personal execution evidence remain separate populations. Personal trades measure the trader's ability to capture an opportunity; they do not silently replace a broader historical market estimate. Narrow probability cells are updated only when their pre-registered precision or power requirement is reached, not merely because another week or month ended.
+
+#### Trader and Execution Learning Loop
+
+```text
+Active plan and pre-commitment
+        -> eligible setup or discretionary decision
+        -> order-time guardrail / friction
+        -> execution and intervention telemetry
+        -> immediate process feedback
+        -> EOD reconstruction
+        -> targeted replay practice and weekly pattern review
+```
+
+This loop distinguishes three mechanisms:
+
+1. **Hard guardrails** enforce non-negotiable account, risk, timing, and protective-stop rules.
+2. **Soft execution friction** requests acknowledgment or an explicit override for plan deviations that are observable but not safety-critical.
+3. **Reflection and practice** address recognition, interpretation, hesitation, FOMO, and other states that broker telemetry cannot establish by itself.
+
+A strategy loss with compliant execution is not a behavioral failure. A profitable rule violation is still a process violation. A RiskGuard intervention is evidence that a configured rule fired, not proof of the trader's motive.
 
 ---
 
@@ -395,6 +440,68 @@ Models are living systems that decay as market microstructures evolve:
 2. **Champion / Challenger Shadow Deployment**: New models run without execution authority until the pre-registered operational checks and prospective sample requirement are met. Twenty sessions may be an operational smoke test, but it is not statistical evidence of safety or edge.
 3. **Human Sign-Off Attestation**: Human approval confirms that all pre-registered criteria, FDR corrections, and shadow tests passed. Human approval **CANNOT** waive failed statistical safety gates.
 
+### Real-Time Execution Enforcement Plane (`nt8-riskguard`)
+
+Post-market review cannot prevent an intraday rule breach that has already occurred. Deterministically observable and enforceable constraints therefore run at order/account timescale in the separate `nt8-riskguard` repository; this repository consumes its versioned intervention telemetry through the NT8 MCP bridge rather than reimplementing the guard.
+
+#### Existing Enforcement Capabilities
+
+- Per-account and aggregate position-size limits.
+- Trade-count and consecutive-loss cooldown controls.
+- Permitted ET trading windows and news restrictions where configured.
+- Protective-stop attachment and position-coverage monitoring.
+- Daily-loss, trailing-drawdown, consistency, and profit-target protection.
+- Prop-firm rule mirrors, lockouts, cancel/flatten actions, and intervention logs.
+
+#### Authority Boundary
+
+RiskGuard may enforce only a versioned, machine-readable rule whose inputs it can observe reliably. It does not infer FOMO, setup quality, chart interpretation, intent, or whether discretion was wise. It never increases risk, invents a trade, or treats a self-reported emotion as an order-blocking fact.
+
+| Mechanism | Appropriate Use | Required Behavior |
+| :--- | :--- | :--- |
+| **Hard block / lockout** | Firm limits, account loss, size, disallowed time, missing protection | Fail closed, identify exact rule/version, preserve exits and risk-reducing actions |
+| **Soft friction** | Observable deviation from the active plan that is not a hard safety breach | Warn, show expected rule, require explicit acknowledgment/override, never masquerade as firm enforcement |
+| **Post-trade feedback** | Rule fired, override taken, stop changed, cooldown entered | Emit immediate factual feedback and append telemetry; do not infer motive |
+| **EOD/weekly coaching** | Repeated process pattern across events and confirmed reflections | Recommend review or drills; never modify guard configuration autonomously |
+
+Every intervention record links account, instrument, order/trade correlation IDs, active plan and strategy versions when available, guard version/config hash, rule ID, observed value, threshold, action, mode (`shadow` or acting), and timestamps. A config change requires explicit approval and creates a new version; learning outputs may propose changes but cannot deploy them.
+
+### Deliberate-Practice and Replay Plane
+
+Live trading provides sparse, expensive, and emotionally confounded repetitions. Deliberate practice accelerates recognition and execution learning by producing many bounded decisions with feedback in seconds or minutes. The existing TradingView replay, wargaming, chart-generation, and vision-verification tooling supplies the transport; a dedicated drill harness supplies experimental discipline.
+
+```text
+Select an unseen scenario from the drill library
+        -> hide date, future bars, original plan, and outcome
+        -> record bias, setup/no-trade, invalidation, entry, stop, target, and size
+        -> lock the answer before revealing more bars
+        -> replay decisions and capture timestamps/actions
+        -> give immediate process feedback from the strategy version
+        -> reveal outcome separately
+        -> schedule contrasting examples and recurring-error drills
+```
+
+#### Drill Types
+
+- Setup recognition and near-miss rejection.
+- Correct `NO_TRADE` decisions under incomplete or conflicting information.
+- Bias invalidation and scenario switching.
+- Entry timing, stop placement, sizing, and target management.
+- Hold versus premature exit decisions.
+- Response after a loss, cooldown, or RiskGuard intervention.
+- Conflicting price structure, GEX, expected-move, and calendar contexts.
+- Tail-risk, news, early-close, feed-failure, and prop-firm scenarios.
+
+#### Drill Measurement
+
+Process measures are primary: whether the setup qualified, invalidation was stated, size matched policy, decision preceded reveal, stop was widened, abstention was correct, and recognition latency. Replay P&L is secondary and cannot by itself grade competence. Drill feedback identifies the exact strategy/rule version and whether the miss was recognition, recall, timing, execution, or risk control.
+
+#### Drill Integrity
+
+Training, calibration, and assessment examples are separated. Assessment examples are unseen; repeated charts, visible dates, future-derived annotations, and prior model verdicts are hidden. Negative and near-miss examples prevent a habit of finding setups everywhere. Once assessment results influence the drill design, that assessment set is retired. Drill performance is evidence of simulated process execution, not proof of live profitability or market edge.
+
+Drill records link the source data manifest, chart artifact, hidden/revealed state transitions, prompt/rule version, user answers, event timestamps, feedback, and assessment split. They are stored as observations and cannot enter strategy promotion as independent market sessions.
+
 ---
 
 ## 5. Information Intake, Ingestion, and Meaning Preservation
@@ -588,6 +695,24 @@ Narratives and plans reference dynamic snapshot IDs. They do not copy a value wi
 
 Trade journals, behavioral notes, account identifiers, broker payloads, and screenshots may contain sensitive information. Intake therefore requires source-specific retention rules, access controls, export/delete procedures where legally and operationally permitted, and redaction before content is sent to external OCR, vision, embedding, or LLM services. Append-only evidence requirements do not justify retaining secrets or unnecessary personal data; redaction and cryptographic erasure policies must be designed before ingestion.
 
+### Anti-Goodhart Measurement Policy
+
+Once a coaching metric becomes a target, it can stop measuring the behavior it was intended to represent. No single metric may determine model promotion, trader grading, enforcement severity, or claims of improvement.
+
+Potentially gameable measures include plan alignment, checklist completion, journal count, self-assigned execution grade, compliance percentage, forecast confidence, number of setups identified, and replay P&L. They remain descriptive unless paired with underlying event evidence and counter-metrics.
+
+Prefer versioned, mechanically auditable process events:
+
+- A strategy-qualified opportunity existed before entry.
+- The active plan named the trigger and invalidation before the decision.
+- The order followed the trigger and respected the permitted time window.
+- Quantity matched the active risk policy.
+- Required protective coverage existed.
+- No risk-increasing stop modification occurred.
+- Required liquidation and account constraints were met.
+
+Self-reports retain value for emotion, intention, and interpretation but remain a separate evidence channel. The system never silently merges a checkbox or narrative claim with mechanical compliance. Metric definitions, exclusions, and denominators are versioned; changing them breaks longitudinal comparability and starts a new series.
+
 ---
 
 ## 6. Storage Architecture: Unified Relational Database
@@ -610,6 +735,8 @@ c:\\Users\\vinay\\tvDownloadOHLC\\
 │       │   │   ├── signal_outcomes             (Versioned post-hoc policy outcomes)
 │       │   │   ├── session_tape_actuals       (Mechanical tape facts with vendor provenance)
 │       │   │   ├── execution_events           (Event-sourced fills, orders, stop modifications)
+│       │   │   ├── intervention_events        (Normalized RiskGuard decisions and overrides)
+│       │   │   ├── drill_attempts             (Blinded practice decisions and feedback)
 │       │   │   ├── behavioral_declarations    (Habit discipline and psychology logs)
 │       │   │   ├── candidate_findings         (Staged hypotheses under FDR control)
 │       │   │   ├── model_registry             (Versioned, certified model parameter sets)
@@ -620,7 +747,7 @@ c:\\Users\\vinay\\tvDownloadOHLC\\
 
 ### Append-Only Storage, Corrections, and Operations
 
-Immutability applies to every evidence ledger, not only forecasts. `information_items`, `forecast_snapshots`, `signal_opportunities`, `signal_disposition_events`, `signal_outcomes`, raw tape revisions, execution events, and governance attestations reject `UPDATE` and `DELETE`. Corrections are new rows linked to the record they supersede. Derived caches may be rebuilt and are not evidence ledgers.
+Immutability applies to every evidence ledger, not only forecasts. `information_items`, `forecast_snapshots`, `signal_opportunities`, `signal_disposition_events`, `signal_outcomes`, raw tape revisions, execution events, normalized intervention events, drill attempts, and governance attestations reject `UPDATE` and `DELETE`. Corrections are new rows linked to the record they supersede. Derived caches may be rebuilt and are not evidence ledgers.
 
 Representative enforcement for forecasts:
 ```sql
@@ -648,7 +775,55 @@ The database layer additionally requires:
 
 ---
 
-## 7. Gated Component Implementation Status
+## 7. Minimum Viable Operating Loop and Complexity Budget
+
+The target architecture is not the initial build order. For one operator, every dependency in the daily path is a reliability and maintenance cost. The first production milestone is the smallest loop that creates trustworthy evidence with under five minutes of required human EOD work.
+
+### Phase 0: Zero-Human Capture Spine
+
+1. Freeze a timestamped pre-market plan and forecast version.
+2. Record every mechanically eligible opportunity, including ignored and missed signals.
+3. Import NT8 orders, fills, modifications, positions, and RiskGuard interventions idempotently.
+4. Capture versioned market actuals and data quality.
+5. Link records by session, instrument, plan, strategy, opportunity, and trade IDs.
+
+No manual trade re-entry is permitted where an authoritative broker or market source exists. A capture outage is reported as missing evidence, never filled from memory without being marked as a user reconstruction.
+
+### Phase 1: Daily Process Delta
+
+Produce one concise EOD report:
+
+- Planned scenarios versus mechanically classified tape.
+- Eligible opportunities versus taken, passed, and missed decisions.
+- Planned versus actual entry, size, stop, target, and exit behavior.
+- RiskGuard interventions and explicit overrides.
+- Data gaps and claims that cannot be evaluated.
+
+The report separates forecast quality, strategy outcome, execution quality, and subjective reflection. It does not generate conviction changes or strategy edits.
+
+### Phase 2: Minute-Scale Feedback and Deliberate Practice
+
+- Wire hard rules to RiskGuard and eligible soft deviations to explicit friction.
+- Emit immediate factual feedback after interventions and completed trades.
+- Add replay drills driven by recurring mechanically observed errors and user-selected skills.
+- Produce a weekly process review without promoting market-edge claims.
+
+### Phase 3: Edge Research and Model Governance
+
+- Build the candidate-finding registry and complete research-family ledger.
+- Run purged rolling validation against pre-registered baselines.
+- Add champion/challenger shadow operation, certification, retirement, and rollback.
+- Reconcile dynamic market sources and evaluate incremental portfolio utility.
+
+### Optional Components
+
+Large-scale KB expansion, image interpretation, automated coaching prose, and LoRA/custom-model training stay outside the critical daily path. An optional component advances only if it demonstrates at least one measured benefit: better decisions, fewer rule violations, less manual effort, better data integrity, better calibration, or faster transfer in held-out drills. Otherwise it remains offline research or a lookup utility.
+
+The daily spine must continue operating when the KB, vision model, local LLM, external OCR, or optional report renderer is unavailable. Degraded operation is explicit; safety-critical enforcement and raw capture fail independently and visibly.
+
+---
+
+## 8. Gated Component Implementation Status
 
 | Component | Layer | Status | Target Path / Active Path | Acceptance & Certification Manifest |
 | :--- | :--- | :--- | :--- | :--- |
@@ -659,7 +834,7 @@ The database layer additionally requires:
 | **P12 Scenario Engine** | 2 (Engines) | `Implemented, Uncertified` | `scripts/wargaming/p12_scenario_engine.py` | Calculation exists; published percentages are hypotheses until reproduced with versioned labels and data. |
 | **Session Budget Engine** | 2 (Engines) | `Implemented, Uncertified` | `scripts/wargaming/session_budget_engine.py` | Calculation exists; threshold and regime utility remain uncertified. |
 | **Signature Setup Scanner** | 2 (Engines) | `Implemented, Uncertified` | `scripts/wargaming/signature_setup_scanner.py` | Scanner exists; setup definitions and outcome validity remain uncertified. |
-| **NQStats ALN Sessions** | 2 (Engines) | `Implemented, Known Gap` | `scripts/concepts/providers.py` | Live slicing exists, but missing session fields still receive synthetic spot-offset fallbacks; must fail closed before certification. |
+| **NQStats ALN Sessions** | 2 (Engines) | `Implemented, Fail-Closed Verified` | `scripts/concepts/providers.py` | Live session slice parsing implemented with strict fail-closed validation; zero synthetic fallbacks; certification manifest pending. |
 | **Herman Probabilities** | 2 (Engines) | `Scaffold` | `scripts/concepts/providers.py` (`[SCAFFOLD]`) | Explicitly isolated; excluded from production master synthesis until mathematical engine is built. |
 | **Pre-Market Wargaming Synthesizer**| 3 (Forecasts)| `Implemented, Legacy Contract` | `scripts/wargaming/generate_daily_wargame.py` | Current four-outcome output predates the five-class ontology and immutable forecast registry; migration required. |
 | **Interactive Lightweight Chart UI**| 3 (Forecasts)| `Implemented, Uncertified` | `scripts/wargaming/render_wargame_chart.py` | Renderer exists; performance and forecast-contract acceptance evidence are not recorded here. |
@@ -668,6 +843,9 @@ The database layer additionally requires:
 | **Human-Native Journal/Plan Intake** | 1-4 (Intake) | `Target` | `web/` + `scripts/trading_brain/intake/` | Preserves original user text/media and stages reviewable structured assertions with hindsight boundaries. |
 | **Chart/Image Artifact Intake** | 1-4 (Intake) | `Partial` | `scripts/trader/chart_agent/`, `data/vision/` | Chart generation and vision exist; content-addressed originals, extraction provenance, user confirmation, privacy, and journal linkage remain target work. |
 | **Dynamic Market Snapshot Adapters** | 2 (Observations) | `Partial` | `scripts/streaming/options/`, Prisma `GexSnapshot`/`MacroSnapshot` | Producers exist; common TTL, lineage, fallback, reconciliation, and intake-envelope contracts remain target work. |
+| **RiskGuard Enforcement Integration** | Trader Loop (Realtime) | `Partial, External` | `C:\Users\vinay\nt8-riskguard`, `C:\Users\vinay\nt8-mcp-bridge` | Guard and MCP surfaces exist; plan/strategy linkage and normalized intervention intake remain target work. |
+| **Deliberate-Practice Replay Harness** | Trader Loop (Practice) | `Partial` | TradingView replay tools, `scripts/wargaming/batch_tv_replay_wargamer.py`, `scripts/trader/chart_agent/` | Replay transport exists; blinded drill library, answer locking, process scoring, split custody, and spaced scheduling remain target work. |
+| **Daily Process Delta Report** | Trader Loop (EOD) | `Target` | `scripts/trading_brain/evaluation/` | One-page mechanical plan/tape/opportunity/execution/intervention delta with under five minutes of required manual work. |
 | **Signal Opportunity Logger** | 2 (Ledgers) | `Target` | `scripts/wargaming/signal_logger.py` | Mechanical logger for all eligible setup opportunities (taken and passed). |
 | **Evaluation & Calibration Engine** | 5 (Evaluation)| `Target` | `scripts/wargaming/evaluation_engine.py` | Multiclass Brier score, log loss, R-expectancy, and observational attribution. |
 | **Walk-Forward Promotion Gate** | 6 (Promotion) | `Target` | `scripts/wargaming/promotion_gate.py` | Multi-fold rolling validator with preregistration, leakage controls, dependence-aware inference, and valid multiplicity control. |
