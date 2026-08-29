@@ -203,15 +203,15 @@ The remaining engineering backlog consists of **4 distinct workstreams**:
            • Wire Next.js Prisma TradePlan submissions to automatically mirror into plan_snapshots
              via PlanAdapter.snapshot_prisma_plan().
 
-  WORKSTREAM 3: MILESTONE 2.2 CROSS-REPOSITORY C# RISKGUARD & MCP PLAN PUSH ADDON
-  ├── 3.1: nt8-riskguard Repository (C:\Users\vinay\nt8-riskguard)
-  │        • Implement addons/PlanFrictionRule.cs: Soft friction prompts on orders violating declared
-  │          plan bias or exceeding max intended risk.
-  │        • Safety contract: Fail-open when offline; protective/risk-reducing exit orders are
-  │          NEVER intercepted or delayed.
-  └── 3.2: nt8-mcp-bridge Repository (C:\Users\vinay\nt8-mcp-bridge)
-           • Implement src/Rules/PlanPushHandler.cs to receive 08:45 ET plan constraints.
-           • Expose new MCP tool nt_riskguard_plan_push.
+  WORKSTREAM 3: [ON HOLD - DEFERRED] C# RISKGUARD PRE-TRADE ORDER INTERCEPTOR
+  ├── Status: ON HOLD / DEFERRED by user directive.
+  ├── Rationale:
+  │   1. Multi-Platform Execution: Orders are placed across TradingView, Tradovate, and NT8.
+  │      A pre-trade interceptor in NT8 cannot intercept orders submitted via TradingView/Tradovate.
+  │   2. Latency Penalty in NQ/MNQ: Synchronous 5s modal prompts cause unacceptable slippage.
+  │   3. Strategy Specificity: Risk and brackets depend heavily on the specific strategy context.
+  └── Future Direction: Post-fill asynchronous deviation classification via DeviationAnnotator
+      and non-blocking notifications (Discord/Desktop alerts) when revived.
 
   WORKSTREAM 4: MILESTONE 4.2 WEB DASHBOARD UI INTEGRATION (web/)
   ├── 4.1: Pre-Market Wargame Studio (Next.js / Tailwind / Shadcn)
@@ -236,8 +236,8 @@ The remaining engineering backlog consists of **4 distinct workstreams**:
 | **P1** | **WS-1.2** | Post-Market Pipeline Runner (16:15 ET automated tape, fills, reconciliation, triage report) | `scripts/trading_brain/orchestration/post_market_pipeline.py` | Phase 0 & 1 Complete (Done) |
 | **P2** | **WS-2.1** | Wire `generate_daily_wargame.py` to auto-register forecasts & plans | `scripts/wargaming/generate_daily_wargame.py` | WS-1.1 |
 | **P2** | **WS-2.2** | Wire Prisma TradePlan web submissions to `PlanAdapter` | `web/src/` & `scripts/trading_brain/plans/plan_adapter.py` | WS-1.1 |
-| **P3** | **M2.2** | Cross-Repo C# RiskGuard Addon (`PlanFrictionRule.cs`, `PlanPushHandler.cs`) | `nt8-riskguard`, `nt8-mcp-bridge` | WS-1.1 |
-| **P4** | **M4.2** | Interactive Next.js / Tailwind Web Workspace & Review Queues | `web/` | WS-1.2 |
+| **P3** | **WS-4** | Interactive Next.js / Tailwind Web Workspace & Review Queues | `web/` | WS-1.2 |
+| **HOLD**| **WS-3** | [ON HOLD] C# RiskGuard Pre-Trade Interceptor | `nt8-riskguard`, `nt8-mcp-bridge` | Deferred |
 
 ---
 
