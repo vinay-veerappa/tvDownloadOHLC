@@ -12,7 +12,7 @@ from scripts.trading_brain.plans.plan_adapter import PlanAdapter, PlanContext
 
 @pytest.fixture
 def temp_db():
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         db_path = Path(tmpdir) / "test_trading_brain.sqlite"
         init_trading_brain_db(db_path=db_path, verbose=False)
         yield db_path

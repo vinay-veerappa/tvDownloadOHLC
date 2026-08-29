@@ -1,15 +1,5 @@
-"""Comprehensive Pytest suite for Trading Second Brain Database Schema & Immutability Triggers.
+"""Comprehensive Pytest suite for Trading Second Brain Database Schema & Immutability Triggers."""
 
-Verifies:
-1. Clean initialization of all 21 tables and 2 views.
-2. Active immutability triggers on all 18 protected tables (rejecting UPDATE and DELETE).
-3. Partial unique index on forecast_snapshots (strictly 1 LIVE_PRODUCTION per session/ticker).
-4. Plan revision sequence and self-supersession constraint.
-5. Foreign key constraint enforcement.
-6. Projection views resolution.
-"""
-
-import os
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -23,7 +13,7 @@ from scripts.trading_brain.db.init_db import EXPECTED_TABLES, EXPECTED_VIEWS, in
 @pytest.fixture
 def temp_db():
     """Yields a temporary database path initialized with the canonical schema."""
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         db_path = Path(tmpdir) / "test_trading_brain.sqlite"
         success, msgs = init_trading_brain_db(db_path=db_path, verbose=False)
         assert success, f"Failed to initialize temp db: {msgs}"
