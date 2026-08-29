@@ -1,33 +1,55 @@
-# Context Checkpoint: Mickey & Austin Daily Profiler Wargaming & Interactive Chart System
-*Timestamp: 2026-08-28T14:06:00-07:00*
+# Context Checkpoint: Modular Wargaming, Concept Providers & Institutional Second Brain
+*Timestamp: 2026-08-28T19:06:00-07:00*
+*Git Commit: 38ddfe7a (pushed to origin/main)*
+
+---
 
 ## 1. Executive Summary
-Successfully engineered, validated, and pushed to `origin/main` the authentic Mickey & Austin Daily Profiler Wargaming system. Replicated the exact Pine Script indicator framework in Python and Lightweight Charts v5: time-based initial range reference boxes, forward-extending midpoint rays, empirical touch probability percentages stamped on price rays, full 4-outcome decision tree (SF, LF, LT, ST) with pre-market elimination filtering, and dynamic outcome-specific target boxes and mode timing windows.
+Successfully modularized the Mickey & Austin Pre-Market Wargaming pipeline into 6 testable standalone engines with dedicated agent skills, eliminated the legacy `src/` directory to unify all Python packages under `scripts/`, implemented provider lifecycle states (`STATUS_PRODUCTION` vs `STATUS_SCAFFOLD`) with fail-closed live data feeds, and established the canonical **Version 4.0.0: Institutional Evidence & Decision Protocol** architecture document resolving all 25 audit findings.
+
+---
 
 ## 2. Key Files & State
-- [`scripts/wargaming/wargame_trajectory_engine.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/wargaming/wargame_trajectory_engine.py): Algorithmic 4-outcome decision tree, elimination state filter, conditional probabilities, magnet tiering, and outcome-specific target boxes.
-- [`scripts/wargaming/render_wargame_chart.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/wargaming/render_wargame_chart.py): 100% self-contained Lightweight Charts v5.2.0 renderer with ET localization, exact initial range boxes (`Asia 18:00-19:30`, `Lon 02:30-03:30`, `NY1 07:30-08:30`), forward midpoint rays, 4-scenario interactive toolbar, 60fps canvas sync loop, live HUD, and magnet hierarchy ranking table.
-- [`scripts/wargaming/generate_daily_wargame.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/wargaming/generate_daily_wargame.py): Pre-market wargaming playbook generator with NY1 range anchors and Section 3 Decision Tree markdown report.
-- [`data/wargaming/reports/2026-08-28_NQ1_wargame.html`](file:///c:/Users/vinay/tvDownloadOHLC/data/wargaming/reports/2026-08-28_NQ1_wargame.html): Live generated interactive wargame report.
-- [`data/wargaming/reports/2026-08-28_NQ1_wargame.json`](file:///c:/Users/vinay/tvDownloadOHLC/data/wargaming/reports/2026-08-28_NQ1_wargame.json): Platform-ready JSON data payload for Next.js dashboard ingestion.
+
+### A. Analytical Engines & Concept Providers (`scripts/`)
+- [`scripts/candle_science/run_candle_science.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/candle_science/run_candle_science.py): 3-Candle sequence analysis & MFE/MAE percentiles (`P30`, `P50`, `P70`).
+- [`scripts/wargaming/htf_macro_levels.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/wargaming/htf_macro_levels.py): Monthly Mid (50%), First-Friday NFP Mid, Weekly EMA(5) 52-week excursions.
+- [`scripts/wargaming/weekly_outlook_engine.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/wargaming/weekly_outlook_engine.py): Day-of-Week Cycle (Mon/Tue vs Thu/Fri) + Multi-Expiry Expected Moves (0DTE $\rightarrow$ Next Friday).
+- [`scripts/wargaming/p12_scenario_engine.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/wargaming/p12_scenario_engine.py): P12 Directional Vector, 88.5% Midline gravity well, 99.26% Goalposts, Handshake vectors.
+- [`scripts/wargaming/session_budget_engine.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/wargaming/session_budget_engine.py): 10-day median range (DRO) vs overnight checkbook spend %.
+- [`scripts/wargaming/signature_setup_scanner.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/wargaming/signature_setup_scanner.py): Firecracker, Spongebob, and Broken-Broken Goalpost detection.
+- [`scripts/concepts/base.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/concepts/base.py): BaseConceptProvider interface with lifecycle states (`STATUS_PRODUCTION`, `STATUS_SCAFFOLD`, `STATUS_EXPERIMENTAL`) and failure diagnostics.
+- [`scripts/concepts/registry.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/concepts/registry.py): Central registry enforcing scaffold isolation during production runs and loud error reporting.
+- [`scripts/concepts/providers.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/concepts/providers.py): Real live ALN session parsing (exact ADR-004 slices, fail-closed on missing data, zero synthetic fallbacks).
+- [`scripts/concepts/runner.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/concepts/runner.py): Universal CLI for independent concept runs (`--concept`) or production master synthesis (`--all`).
+
+### B. Master Wargaming & UI Visualizer
+- [`scripts/wargaming/generate_daily_wargame.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/wargaming/generate_daily_wargame.py): 4-Outcome Decision Tree, dynamic target boxes, pack brackets.
+- [`scripts/wargaming/render_wargame_chart.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/wargaming/render_wargame_chart.py): Self-contained Lightweight Charts HTML report with live HUD and overlays.
+
+### C. Architecture Documentation
+- [`docs/architecture/TRADING_SECOND_BRAIN_MASTER_ARCHITECTURE.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/TRADING_SECOND_BRAIN_MASTER_ARCHITECTURE.md): Version 4.0.0 Institutional Evidence & Decision Protocol (4 Evidence Layers, Signal Opportunity Ledger, Multiclass Brier Scoring, Benjamini-Hochberg FDR Multiplicity Control, Rolling Walk-Forward Folds, 1-Time Sealed Shadow Test, Unified Relational SQLite DB with Immutability Triggers).
+
+---
 
 ## 3. Critical Decisions & Invariants
-- **Time-Based Reference Ranges**: Boxes on the chart represent the exact initial formation windows (`Asia 18:00-19:30`, `London 02:30-03:30`, `NY1 07:30-08:30 ET`), with 50% midpoint rays projecting forward across the day to 17:00 ET.
-- **Empirical Hit Rates**: Price rays on the right scale are dynamically stamped with empirical touch rates for the active session (e.g. `P12 MIDLINE [88.5%]`, `MIDNIGHT OPEN [84.1%]`, `P12 HIGH [81.7%]`, `NY1 MIDPOINT [99.4%]`).
-- **4-Outcome Elimination Tree**:
-  - `Pre-Breakout (08:30-09:30 ET)`: All 4 outcomes active (`SF 32.8%`, `LF 33.3%`, `LT 17.2%`, `ST 16.5%`). False edge is 66.1% vs True 33.7%.
-  - `Breakout > NY1 High`: Eliminates ST & SF -> Active branch: `[LF 66.0% vs LT 34.0%]`.
-  - `Breakout < NY1 Low`: Eliminates LT & LF -> Active branch: `[SF 66.5% vs ST 33.5%]`.
-- **Dynamic Outcome Targets & Times**:
-  - `SF`: LOD Target Box (09:30-10:15 ET) -> HOD Target Box (13:30-16:00 ET).
-  - `LF`: HOD Target Box (09:30-10:15 ET) -> LOD Target Box (13:30-16:00 ET).
-  - `LT`: LOD Baseline (09:30-09:45 ET) -> HOD Extension (14:30-16:15 ET).
-  - `ST`: HOD Baseline (09:30-09:45 ET) -> LOD Extension (14:30-16:15 ET).
+1. **Four Strict Evidence Layers**: Knowledge/Doctrine (Hypotheses) $\ne$ Measured Tape Observations $\ne$ Pre-Registered Candidate Findings $\ne$ Promoted Production Decision Models.
+2. **Zero Synthetic Fallbacks & Fail-Closed Session Logic**: No provider may substitute dummy/hardcoded levels (`spot + 20`). Missing data triggers explicit loud errors or abstention (`NO_FORECAST` / `NO_TRADE`).
+3. **No Autonomous Memory Writes to Decision Rules**: Candidate lessons must be staged in `candidate_lessons`; live decision model promotion requires rolling walk-forward validation and human governance.
+4. **All Python Packages Under `scripts/`**: Removed legacy `src/` directory. All core packages live in `scripts/<domain>/`.
+5. **DST-Safe Time Contract (ADR-001)**: UTC storage with 'Z' suffix (`timestamp_utc`) in databases; ET (`America/New_York`) for all session windows and business logic.
+
+---
 
 ## 4. Current Blockers & Unresolved Items
-- None. All 12 commits pushed and synchronized with `origin/main` (`4a4897e2`).
+- None. All 25 audit findings have been resolved in code, tested with `pytest`, verified via CLI, and pushed to `origin/main`.
 
-## 5. Next Actions / Planned Capabilities
-1. Integrate the standalone interactive Lightweight Charts widget into the Next.js platform dashboard (`web/src/`).
-2. Implement automated morning cron / scheduler to run `render_wargame_chart.py` at 08:30 & 08:45 AM and post directly to Discord / platform.
-3. Add multi-asset wargaming support (ES, RTY, YM, CL, GC).
+---
+
+## 5. Next Actions
+1. **Implement Unified Relational SQLite Schema (`data/wargaming/db/trading_brain.sqlite`)**:
+   - Create tables: `forecast_snapshots`, `signal_opportunities`, `session_tape_actuals`, `execution_events`, `behavioral_declarations`, `candidate_findings`, `strategies`, and immutability triggers.
+2. **Build Signal Opportunity Logger (`scripts/wargaming/signal_logger.py`)**:
+   - Mechanically log every eligible strategy trigger (taken or passed) to enable true strategy expectancy evaluation.
+3. **Build Multi-Pillar Evaluation & Post-Mortem Engine (`scripts/wargaming/evaluation_engine.py`)**:
+   - Compute Multiclass Brier score, R-expectancy, execution capture efficiency, and observational habit associations.
