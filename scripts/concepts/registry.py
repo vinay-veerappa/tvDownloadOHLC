@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from typing import Dict, Any, Optional, List, Type
-from src.concepts.base import BaseConceptProvider, ConceptPayload
+from scripts.concepts.base import BaseConceptProvider, ConceptPayload
 
 log = logging.getLogger(__name__)
 

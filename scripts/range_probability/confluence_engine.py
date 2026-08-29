@@ -10,8 +10,8 @@ import pandas as pd
 from datetime import datetime
 import pytz
 
-from src.range_prob.calculator import build_ranges_from_ohlc, compute_probability_matrix, get_bucket_index, get_bucket_char
-from src.range_prob.matrix_store import MatrixStore
+from scripts.range_probability.calculator import build_ranges_from_ohlc, compute_probability_matrix, get_bucket_index, get_bucket_char
+from scripts.range_probability.matrix_store import MatrixStore
 
 
 class ConfluenceFeatureEngine:

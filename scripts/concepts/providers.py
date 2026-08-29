@@ -6,8 +6,8 @@ and registers them automatically in the ConceptRegistry.
 from __future__ import annotations
 
 from typing import Dict, Any, Optional, List
-from src.concepts.base import BaseConceptProvider, ConceptPayload, ChartOverlays
-from src.concepts.registry import ConceptRegistry
+from scripts.concepts.base import BaseConceptProvider, ConceptPayload, ChartOverlays
+from scripts.concepts.registry import ConceptRegistry
 
 from scripts.candle_science.run_candle_science import analyze_candle_science, format_candle_science_markdown
 from scripts.wargaming.htf_macro_levels import compute_htf_macro_levels, format_htf_macro_markdown

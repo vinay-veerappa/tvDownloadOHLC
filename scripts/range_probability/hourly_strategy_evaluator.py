@@ -14,9 +14,9 @@ import numpy as np
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from src.range_prob.backtest_adapter import RangeProbBacktester
+from scripts.range_probability.backtest_adapter import RangeProbBacktester
 from scripts.range_probability.extractor import extract_features_for_ticker
-from src.range_prob.matrix_store import MatrixStore
+from scripts.range_probability.matrix_store import MatrixStore
 
 POINT_VALUES = {
     "NQ": 20.0,

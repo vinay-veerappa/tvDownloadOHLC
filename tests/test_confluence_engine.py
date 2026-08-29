@@ -8,8 +8,8 @@ import numpy as np
 from datetime import datetime, timedelta
 import pytz
 
-from src.range_prob.confluence_engine import ConfluenceFeatureEngine
-from src.range_prob.confluence_backtester import ConfluenceBacktester
+from scripts.range_probability.confluence_engine import ConfluenceFeatureEngine
+from scripts.range_probability.confluence_backtester import ConfluenceBacktester
 
 
 @pytest.fixture

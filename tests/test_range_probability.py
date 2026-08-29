@@ -8,7 +8,7 @@ import numpy as np
 from datetime import datetime, timezone
 import zoneinfo
 
-from src.range_prob.calculator import (
+from scripts.range_probability.calculator import (
     get_bucket_index,
     get_bucket_char,
     get_bucket_name,
@@ -17,10 +17,10 @@ from src.range_prob.calculator import (
 )
 
 try:
-    from src.range_prob.calculator import compute_expanding_probabilities
+    from scripts.range_probability.calculator import compute_expanding_probabilities
 except ImportError:
     compute_expanding_probabilities = None
-from src.range_prob.backtest_adapter import RangeProbBacktester
+from scripts.range_probability.backtest_adapter import RangeProbBacktester
 
 NY_TZ = zoneinfo.ZoneInfo("America/New_York")
 

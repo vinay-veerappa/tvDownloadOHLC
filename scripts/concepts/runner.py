@@ -21,8 +21,8 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from src.concepts.registry import ConceptRegistry
-import src.concepts.providers
+from scripts.concepts.registry import ConceptRegistry
+import scripts.concepts.providers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 

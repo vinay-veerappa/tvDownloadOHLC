@@ -17,23 +17,23 @@ We establish a decentralized, plugin-based Concept Provider Architecture:
    - `get_skill_definition() -> SkillMetadata`: Metadata for dedicated AI agent skills.
 
 2. **Central Concept Registry (`ConceptRegistry`)**:
-   - Auto-discovers and registers all concept providers in `src/concepts/`.
+   - Auto-discovers and registers all concept providers in `scripts/concepts/`.
    - Allows running any concept independently via CLI:
      ```bash
-     python -m src.concepts.runner --concept aln --ticker NQ1
+     python -m scripts.concepts.runner --concept aln --ticker NQ1
      ```
    - Allows running the unified master synthesis:
      ```bash
-     python -m src.concepts.runner --all --ticker NQ1
+     python -m scripts.concepts.runner --all --ticker NQ1
      ```
 
 3. **Unified 4-Layer Trading Second Brain**:
-   - **Layer 1: Standalone Concept Engines (`src/concepts/`)**: Pure executable Python engines.
+   - **Layer 1: Standalone Concept Engines (`scripts/concepts/`)**: Pure executable Python engines.
    - **Layer 2: Domain Reference Documentation (`docs/<domain>/`)**: Deep methodology manuals.
    - **Layer 3: Persistent Memory & Graph (`SQLite DB`, `NotebookLM`, `codebase-memory-mcp`)**: Shared cross-session knowledge and transcripts.
    - **Layer 4: Master Confluence Synthesizer**: Blends all active concept outputs into the Master Wargame Playbook, Lightweight Charts visualizer, and Next.js Platform.
 
 ## 3. Benefits & Extensibility
-- **Zero-Friction Addition of New Concepts**: Adding ALN, Herman, or any future concept only requires creating `src/concepts/<concept_name>.py` and `docs/<concept_name>/`.
+- **Zero-Friction Addition of New Concepts**: Adding ALN, Herman, or any future concept only requires creating `scripts/concepts/<concept_name>.py` and `docs/<concept_name>/`.
 - **Independent Testing**: Every concept has its own unit tests and standalone CLI.
 - **AI Agent Skill Autonomy**: AI subagents can load and execute individual concepts with minimal token overhead.

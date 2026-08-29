@@ -20,8 +20,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(line_buffering=True)
 
-from src.range_prob.confluence_engine import ConfluenceFeatureEngine
-from src.range_prob.confluence_backtester import ConfluenceBacktester
+from scripts.range_probability.confluence_engine import ConfluenceFeatureEngine
+from scripts.range_probability.confluence_backtester import ConfluenceBacktester
 from scripts.range_probability.engine import DATA_SOURCES
 
 POINT_VALUES = {

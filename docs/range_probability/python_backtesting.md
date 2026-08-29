@@ -36,8 +36,8 @@ You can easily integrate the Range Probability Engine into your own research not
 
 ```python
 import pandas as pd
-from src.range_prob.calculator import build_ranges_from_ohlc, compute_probability_matrix
-from src.range_prob.backtest_adapter import RangeProbBacktester
+from scripts.range_probability.calculator import build_ranges_from_ohlc, compute_probability_matrix
+from scripts.range_probability.backtest_adapter import RangeProbBacktester
 from scripts.range_probability.extractor import extract_features_for_ticker
 
 # 1. Extract enriched features

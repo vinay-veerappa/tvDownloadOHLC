@@ -14,8 +14,8 @@ import numpy as np
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from src.range_prob.calculator import build_ranges_from_ohlc, compute_probability_matrix, compute_expanding_probabilities, get_bucket_char
-from src.range_prob.matrix_store import MatrixStore
+from scripts.range_probability.calculator import build_ranges_from_ohlc, compute_probability_matrix, compute_expanding_probabilities, get_bucket_char
+from scripts.range_probability.matrix_store import MatrixStore
 from scripts.range_probability.engine import load_ticker_data
 
 
