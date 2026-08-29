@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -156,7 +157,7 @@ class ForecastRegistrar:
         cls,
         first_arg: Union[str, ForecastSnapshotPayload],
         second_arg: Optional[ForecastSnapshotPayload] = None,
-        grace_period_seconds: int = 300,
+        grace_period_seconds: Optional[int] = None,
         db_path: Optional[Union[str, Path]] = None
     ) -> ForecastCommitResult:
         if isinstance(first_arg, str):
@@ -168,7 +169,7 @@ class ForecastRegistrar:
             
         if payload is None:
             raise ValueError("ForecastSnapshotPayload must be provided.")
-            
+
         if payload.abstain_flag:
             if not payload.abstain_reason:
                 raise ForecastInputValidationError("Abstaining forecast MUST provide a non-empty abstain_reason.")
@@ -181,6 +182,8 @@ class ForecastRegistrar:
             ]
             if any(p is None for p in probs):
                 raise ForecastInputValidationError("Non-abstaining forecast must supply all 5 day-type probabilities.")
+            if any(not isinstance(p, (int, float)) or not math.isfinite(p) or p < 0.0 or p > 1.0 for p in probs):
+                raise ForecastInputValidationError("All probabilities must be finite and within [0,1].")
             prob_sum = sum(probs)
             if abs(prob_sum - 1.0) > 1e-4:
                 raise ForecastInputValidationError(f"5 MECE probabilities must sum to 1.0 +- 1e-4, got sum={prob_sum:.6f}")
@@ -202,8 +205,13 @@ class ForecastRegistrar:
             now_iso = now_iso_utc()
             now_dt = datetime.now(timezone.utc)
             
+            # Use the run's pinned commit_grace_period_sec unless an explicit override is supplied.
+            effective_grace_sec = (
+                grace_period_seconds if grace_period_seconds is not None
+                else run_row["commit_grace_period_sec"]
+            )
             cutoff_dt = parse_iso_utc(run_row["effective_cutoff_utc"])
-            grace_dt = cutoff_dt + timedelta(seconds=grace_period_seconds)
+            grace_dt = cutoff_dt + timedelta(seconds=effective_grace_sec)
             
             if payload.forecast_mode == "LIVE_PRODUCTION":
                 if now_dt <= cutoff_dt:

@@ -56,28 +56,37 @@ class CatalogRouter:
     def create_item(
         cls,
         payload: InformationItemPayload,
-        db_path: Optional[Union[str, Path]] = None
+        db_path: Optional[Union[str, Path]] = None,
+        *,
+        received_at_utc: Optional[Union[str, datetime]] = None,
     ) -> str:
-        """Persists a new typed information item into information_items."""
+        """Persists a new typed information item into information_items.
+
+        `received_at_utc` is normally the actual database receipt time. An optional
+        override is accepted for audited backfills or tests, but it is recorded
+        verbatim and subject to the same query cutoffs as the default clock time.
+        """
         ev_class = payload.evidence_class.upper()
         if ev_class not in VALID_EVIDENCE_CLASSES:
             raise ValueError(f"Invalid evidence_class '{payload.evidence_class}'. Must be one of {VALID_EVIDENCE_CLASSES}")
-            
+
         time_ori = payload.time_orientation.upper()
         if time_ori not in VALID_TIME_ORIENTATIONS:
             raise ValueError(f"Invalid time_orientation '{payload.time_orientation}'. Must be one of {VALID_TIME_ORIENTATIONS}")
-            
+
         info_id = payload.information_id or str(uuid.uuid4())
         avail_ts_iso = to_iso_utc(payload.available_at_utc)
         payload_json = json.dumps(payload.structured_payload) if payload.structured_payload else None
-        
+        recv_iso = to_iso_utc(received_at_utc) if received_at_utc else now_iso_utc()
+
         with get_db_connection(db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO information_items (
                     information_id, evidence_class, time_orientation, source_type,
-                    title, verbatim_text, structured_payload_json, available_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                    title, verbatim_text, structured_payload_json, available_at_utc,
+                    received_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     info_id,
@@ -87,7 +96,8 @@ class CatalogRouter:
                     payload.title,
                     payload.verbatim_text,
                     payload_json,
-                    avail_ts_iso
+                    avail_ts_iso,
+                    recv_iso
                 )
             )
         return info_id
@@ -98,13 +108,24 @@ class CatalogRouter:
         decision_cutoff_utc: Union[str, datetime],
         evidence_class: Optional[str] = None,
         only_accepted: bool = True,
+        min_review_state: Optional[str] = None,
         limit: int = 50,
         db_path: Optional[Union[str, Path]] = None
     ) -> List[Dict[str, Any]]:
-        """Queries information items strictly available and created as of decision_cutoff_utc,
-        resolving historical review state as of the cutoff."""
+        """Queries information items strictly available and received as of decision_cutoff_utc,
+        resolving historical review state as of the cutoff.
+
+        Trust boundary:
+        - `available_at_utc` is the semantic availability boundary (declared by the producer).
+        - `received_at_utc` is the trusted database receipt time (set by create_item).
+        - Both must be <= decision_cutoff_utc to prevent hindsight ingestion from appearing
+          as contemporaneous evidence.
+
+        Review state can be filtered by `min_review_state` (e.g., 'ACCEPTED' requires an
+        explicit ACCEPTED event; 'CAPTURED' accepts items that have not been reviewed).
+        """
         cutoff_iso = to_iso_utc(decision_cutoff_utc)
-        
+
         with get_db_connection(db_path) as conn:
             query = """
             SELECT i.*,
@@ -117,22 +138,31 @@ class CatalogRouter:
                    ), 'CAPTURED') AS active_review_state
             FROM information_items i
             WHERE i.available_at_utc <= ?
+              AND i.received_at_utc <= ?
             """
-            params: List[Any] = [cutoff_iso, cutoff_iso]
-            
+            params: List[Any] = [cutoff_iso, cutoff_iso, cutoff_iso]
+
             if evidence_class:
                 query += " AND i.evidence_class = ?"
                 params.append(evidence_class.upper())
-                
+
             query += " ORDER BY i.available_at_utc DESC LIMIT ?;"
             params.append(limit)
-            
+
             cur = conn.execute(query, params)
             results = []
             for r in cur.fetchall():
                 d = dict(r)
-                if only_accepted and d["active_review_state"] != "ACCEPTED":
-                    continue
+                state = d["active_review_state"]
+                if only_accepted:
+                    if min_review_state:
+                        # Require at least the requested state in the review-state hierarchy.
+                        hierarchy = {"CAPTURED": 0, "REJECTED": 0, "QUARANTINED": 0, "ACCEPTED": 1}
+                        if hierarchy.get(state, 0) < hierarchy.get(min_review_state.upper(), 1):
+                            continue
+                    else:
+                        if state != "ACCEPTED":
+                            continue
                 if d.get("structured_payload_json"):
                     d["structured_payload"] = json.loads(d["structured_payload_json"])
                 results.append(d)

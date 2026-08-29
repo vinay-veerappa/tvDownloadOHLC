@@ -463,12 +463,13 @@ def main():
             config_hash = compute_config_hash()
 
             manifest = build_input_manifest(args.ticker, session_date_str, args.register_cutoff)
+            cutoff_str = args.register_cutoff if len(args.register_cutoff) == 8 else f"{args.register_cutoff}:00"
             run = ForecastRegistrar.create_forecast_run(
                 session_date=session_date_str,
                 ticker=args.ticker,
                 model_version_id=DEFAULT_MODEL_VERSION_ID,
                 input_manifest=manifest,
-                cutoff_time_et=args.register_cutoff,
+                cutoff_time_et_str=cutoff_str,
             )
             payload = wargame_data_to_forecast_payload(
                 data,
@@ -481,9 +482,8 @@ def main():
             log.info(f"[WS-2.1] Registered forecast {commit.forecast_id} mode={commit.forecast_mode}")
 
             plan_ctx = wargame_data_to_plan_context(data, md_output, session_date_str, args.register_cutoff)
-            saved_plan = PlanAdapter.save_plan_snapshot(plan_ctx)
-            log.info(f"[WS-2.1] Registered plan snapshot {saved_plan.plan_snapshot_id} "
-                     f"(rev {saved_plan.revision_seq}, {saved_plan.provenance_class})")
+            saved_plan_id = PlanAdapter.save_plan_snapshot(plan_ctx)
+            log.info(f"[WS-2.1] Registered plan snapshot {saved_plan_id}")
         except Exception as e:
             log.error(f"[WS-2.1] Canonical registration failed (fail-closed): {e}")
             raise

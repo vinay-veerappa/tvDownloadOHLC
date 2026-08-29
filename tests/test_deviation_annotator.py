@@ -40,7 +40,8 @@ def test_deviation_annotator_contrary_bias_and_unpermitted_strat(temp_db):
             max_intended_risk_bps=10.0,
             permitted_strategies=["STRAT_GOALPOST_BB_V0_1"]
         ),
-        db_path=temp_db
+        db_path=temp_db,
+        received_at_utc="2026-08-28T12:30:00Z",
     )
     
     # Execution 1: BUY order on STRAT_ALN_LPEU_V0_1 -> BOTH violations (Contrary Bias + Unpermitted Strategy)

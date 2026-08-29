@@ -78,28 +78,33 @@ def build_input_manifest(ticker: str, session_date: str, cutoff_time_et: str) ->
 
     Includes every data source the wargame computes from: live storage 1m parquet and the
     frozen strategy artifact registry. Fail-closed: any missing required input aborts
-    registration. Input max_timestamp_utc is bounded by the cutoff per the sealing contract.
+    registration. The live storage entry is sliced as-of the session cutoff, hashed, and
+    its max_timestamp_utc is derived from the actual selected records.
     """
-    from scripts.utils.live_storage_resolver import get_live_storage_path
+    import pandas as pd
+    from scripts.utils.live_storage_resolver import get_session_slice_manifest, get_live_storage_path
+    from scripts.utils.market_calendar import get_session_cutoff_utc
 
     manifest: List[Dict[str, Any]] = []
-    cutoff_bound = f"{session_date}T{cutoff_time_et}:00Z"
 
-    live_path = get_live_storage_path(ticker)
-    if not live_path.exists():
-        raise FileNotFoundError(f"Live storage parquet missing for {ticker}: {live_path}")
-    manifest.append({
-        "provider_name": "LIVE_STORAGE_1M",
-        "data_type": "BARS_1M",
-        "max_timestamp_utc": cutoff_bound,
-        "content_hash": _hash_file(live_path),
-    })
+    # Live storage: slice as-of cutoff, hash the slice, derive real max timestamp.
+    cutoff_dt = get_session_cutoff_utc(session_date, cutoff_time_et)
+    cutoff_ts = pd.Timestamp(cutoff_dt)
+    if cutoff_ts.tz is None:
+        cutoff_ts = cutoff_ts.tz_localize("UTC")
+    else:
+        cutoff_ts = cutoff_ts.tz_convert("UTC")
+    live_entry = get_session_slice_manifest(ticker, session_date, cutoff_ts)
+    manifest.append(live_entry)
 
+    # Strategy artifacts: frozen files. Hash the whole file; max_timestamp is the cutoff
+    # because artifacts are version-controlled and not allowed to mutate post-cutoff.
+    cutoff_iso = cutoff_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     for artifact in sorted(STRATEGY_ARTIFACTS_DIR.glob("*.json")):
         manifest.append({
             "provider_name": f"STRATEGY_ARTIFACT_{artifact.stem.upper()}",
             "data_type": "STRATEGY_DEFINITION",
-            "max_timestamp_utc": cutoff_bound,
+            "max_timestamp_utc": cutoff_iso,
             "content_hash": _hash_file(artifact),
         })
 
@@ -333,6 +338,7 @@ def run_post_market_pipeline(
     from datetime import datetime
     from zoneinfo import ZoneInfo
     from scripts.trading_brain.evaluation.daily_process_delta import DailyProcessDeltaReconciler
+    from scripts.trading_brain.guard.deviation_annotator import DeviationAnnotator
     from scripts.trading_brain.ingest.nt8_broker_adapter import NT8BrokerAdapter
     from scripts.trading_brain.reports.daily_triage_report import DailyTriageReportGenerator
     from scripts.trading_brain.signals.opportunity_logger import OpportunityLogger
@@ -375,7 +381,16 @@ def run_post_market_pipeline(
     disp = OpportunityLogger.derive_dispositions(session_date, ticker, db_path=db_path)
     result["steps"]["dispositions"] = disp
 
-    # 4. 4-way reconciliation
+    # 4. Deviation annotation for any fills that were not already annotated in step 2
+    if executions_file is None:
+        ann = annotate_executions_for_session(session_date, ticker, account_id=account_id, db_path=db_path)
+        result["steps"]["deviation_annotation_backfill"] = ann
+    else:
+        # Re-run annotation in execution-timestamp order with running position awareness
+        ann = annotate_executions_for_session(session_date, ticker, account_id=account_id, db_path=db_path)
+        result["steps"]["deviation_annotation"] = ann
+
+    # 5. 4-way reconciliation
     summary = DailyProcessDeltaReconciler.reconcile_session(session_date, ticker, db_path=db_path)
     result["steps"]["reconciliation"] = {
         "plan_found": summary.plan.plan_found,
@@ -386,7 +401,7 @@ def run_post_market_pipeline(
         "risk_budget_respected": summary.risk_budget_respected,
     }
 
-    # 5. Triage report persistence
+    # 6. Triage report persistence
     md, json_report = DailyTriageReportGenerator.generate_report(session_date, ticker, db_path=db_path)
     result["steps"]["report"] = {
         "markdown_bytes": len(md),
@@ -396,6 +411,60 @@ def run_post_market_pipeline(
 
     log.info(f"[WS-1.2] Post-market pipeline complete for {session_date} {ticker}")
     return result
+
+
+def annotate_executions_for_session(
+    session_date: str,
+    ticker: str,
+    account_id: str = "PRIMARY",
+    db_path: Optional[Any] = None
+) -> Dict[str, Any]:
+    """Backfill DeviationAnnotator evaluations for all execution_events lacking one.
+
+    This is exposed as a reusable helper so the post-market pipeline, ad-hoc audits,
+    and test fixtures can all use the same position-aware evaluation path.
+    """
+    from scripts.trading_brain.db.connection import get_db_connection
+    from scripts.trading_brain.guard.deviation_annotator import DeviationAnnotator
+
+    evaluated = 0
+    findings = 0
+    unannotated = []
+    with get_db_connection(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT e.* FROM execution_events e
+            WHERE e.session_date = ? AND e.ticker = ? AND e.account_id = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM intervention_events i
+                WHERE i.source_event_id = e.execution_id
+                  AND i.producer = 'PYTHON_DEVIATION_ANNOTATOR'
+              )
+            ORDER BY e.event_timestamp_utc ASC;
+            """,
+            (session_date, ticker, account_id),
+        )
+        unannotated = [dict(row) for row in cur.fetchall()]
+
+    running_position = 0
+    for exec_row in unannotated:
+        qty = int(exec_row.get("quantity", 1))
+        action = str(exec_row.get("order_action", "")).upper()
+        net_before = running_position
+        # Update running position after evaluating so the NEXT fill sees the pre-fill position.
+        ann_ids = DeviationAnnotator.evaluate_execution(
+            exec_row,
+            current_net_position_before_fill=net_before,
+            db_path=db_path,
+        )
+        if action in ("BUY", "LONG"):
+            running_position += qty
+        elif action in ("SELL", "SELL_SHORT", "SHORT"):
+            running_position -= qty
+        evaluated += 1
+        findings += len(ann_ids)
+
+    return {"evaluated": evaluated, "findings": findings, "final_net_position": running_position}
 
 
 # ---------------------------------------------------------------------------

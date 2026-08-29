@@ -81,8 +81,8 @@ class CalibrationEngine:
             raise ValueError(f"Forecast{idx_label} missing day types: {missing}")
         for dt in DAY_TYPES:
             p = probs[dt]
-            if not isinstance(p, (int, float)) or not (0.0 <= float(p) <= 1.0):
-                raise ValueError(f"Forecast{idx_label} probability for {dt} is out of [0,1]: {p}")
+            if not isinstance(p, (int, float)) or not math.isfinite(float(p)) or not (0.0 <= float(p) <= 1.0):
+                raise ValueError(f"Forecast{idx_label} probability for {dt} is out of [0,1] or non-finite: {p}")
         total = sum(float(probs[dt]) for dt in DAY_TYPES)
         if abs(total - 1.0) > 1e-4:
             raise ValueError(f"Forecast{idx_label} probabilities must sum to 1.0, got {total:.6f}")

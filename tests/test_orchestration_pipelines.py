@@ -35,15 +35,14 @@ def temp_db():
 
 
 def _make_live_storage_parquet(tmpdir: Path, session_date: str, ticker: str = "NQ1"):
-    """Creates a synthetic live-storage parquet for one full RTH session."""
-    bars = 390
+    """Creates a synthetic live-storage parquet covering pre-market through close."""
+    bars = 780  # 04:00 ET -> 16:00 ET in 1m bars
     start_dt = datetime(int(session_date[:4]), int(session_date[5:7]), int(session_date[8:10]),
-                        9, 30, tzinfo=EASTERN_TZ)
+                        4, 0, tzinfo=EASTERN_TZ)
     records = []
     price = 20000.0
     for i in range(bars):
         dt = start_dt + timedelta(minutes=i)
-        # Hourly box structure so the classifier sees a real session shape
         drift = (0.05 if (i // 60) % 2 == 0 else -0.03)
         price += drift * 10
         records.append({
@@ -71,7 +70,8 @@ def test_pre_market_pipeline_sealing_and_plan(temp_db, tmp_path):
     from scripts.trading_brain.db.connection import get_db_connection
     from scripts.utils import live_storage_resolver as lsr
 
-    session_date = datetime.now(EASTERN_TZ).strftime("%Y-%m-%d")  # today ET: 23:59 cutoff is always future
+    # Use a future session date so the 08:45 ET cutoff is comfortably in the future.
+    session_date = (datetime.now(EASTERN_TZ) + timedelta(days=7)).strftime("%Y-%m-%d")
     parquet_path = _make_live_storage_parquet(tmp_path, session_date)
     original = lsr.get_live_storage_path
     lsr.get_live_storage_path = lambda ticker, custom_dir=None: parquet_path
@@ -87,7 +87,7 @@ def test_pre_market_pipeline_sealing_and_plan(temp_db, tmp_path):
         result = run_pre_market_pipeline(
             ticker="NQ1",
             session_date=session_date,
-            cutoff_time_et="23:59",  # far future so the test clock is comfortably pre-cutoff
+            cutoff_time_et="08:45",  # real production cutoff
             db_path=temp_db,
         )
     finally:

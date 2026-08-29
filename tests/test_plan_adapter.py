@@ -21,7 +21,7 @@ def test_save_and_resolve_single_plan(temp_db):
         verbatim_plan_text="Test Plan text", primary_bias="BULLISH", wargamed_scenarios={"sc1": "LPEU"},
         invalidation_levels={"inv1": 19950.0}, max_intended_risk_bps=10.0, permitted_strategies=["STRAT_ALN_LPEU_V0_1"]
     )
-    plan_id = PlanAdapter.save_plan_snapshot(plan, db_path=temp_db)
+    plan_id = PlanAdapter.save_plan_snapshot(plan, db_path=temp_db, received_at_utc="2026-08-28T12:30:00Z")
     assert plan_id is not None
 
     resolved = PlanAdapter.get_plan_as_of("2026-08-28", "NQ1", "2026-08-28T13:00:00Z", db_path=temp_db)
@@ -37,22 +37,27 @@ def test_post_hoc_plan_does_not_supersede_ex_ante_plan(temp_db):
         invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["STRAT_1"],
         provenance_class="EX_ANTE"
     )
-    ante_id = PlanAdapter.save_plan_snapshot(plan_ante, db_path=temp_db)
+    ante_id = PlanAdapter.save_plan_snapshot(plan_ante, db_path=temp_db, received_at_utc="2026-08-28T12:30:00Z")
 
-    # Post-hoc reconstruction referencing ex-ante plan
+    # Post-hoc reconstruction with a preparation cutoff AFTER the query time must not shadow the ex-ante plan
     plan_post = PlanContext(
         session_date="2026-08-28", ticker="NQ1", preparation_cutoff_utc="2026-08-28T20:00:00Z",
         verbatim_plan_text="Post-Hoc Plan", primary_bias="BEARISH", wargamed_scenarios={},
         invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["STRAT_1"],
         provenance_class="POST_HOC_RECONSTRUCTION", supersedes_plan_snapshot_id=ante_id
     )
-    PlanAdapter.save_plan_snapshot(plan_post, db_path=temp_db)
+    PlanAdapter.save_plan_snapshot(plan_post, db_path=temp_db, received_at_utc="2026-08-28T20:00:00Z")
 
-    # Historical query must STILL return the ex-ante plan with full authority
+    # Historical query at 13:00 must STILL return the ex-ante plan with full authority
     resolved = PlanAdapter.get_plan_as_of("2026-08-28", "NQ1", "2026-08-28T13:00:00Z", db_path=temp_db)
     assert resolved is not None
     assert resolved.plan_snapshot_id == ante_id
     assert resolved.primary_bias == "BULLISH"
+    # The post-hoc plan is in the DB but must not be eligible for as-of queries before its preparation cutoff
+    post_rows = sqlite3.connect(str(temp_db)).execute(
+        "SELECT COUNT(*) FROM plan_snapshots WHERE provenance_class='POST_HOC_RECONSTRUCTION'"
+    ).fetchone()[0]
+    assert post_rows == 1
 
 def test_plan_revision_supersession(temp_db):
     plan_v1 = PlanContext(
@@ -60,7 +65,7 @@ def test_plan_revision_supersession(temp_db):
         verbatim_plan_text="Plan Rev 1", primary_bias="BULLISH", wargamed_scenarios={},
         invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["STRAT_1"]
     )
-    v1_id = PlanAdapter.save_plan_snapshot(plan_v1, db_path=temp_db)
+    v1_id = PlanAdapter.save_plan_snapshot(plan_v1, db_path=temp_db, received_at_utc="2026-08-28T12:30:00Z")
 
     plan_v2 = PlanContext(
         session_date="2026-08-28", ticker="NQ1", preparation_cutoff_utc="2026-08-28T12:45:00Z",
@@ -68,7 +73,7 @@ def test_plan_revision_supersession(temp_db):
         invalidation_levels={}, max_intended_risk_bps=5.0, permitted_strategies=["STRAT_1"],
         supersedes_plan_snapshot_id=v1_id
     )
-    v2_id = PlanAdapter.save_plan_snapshot(plan_v2, db_path=temp_db)
+    v2_id = PlanAdapter.save_plan_snapshot(plan_v2, db_path=temp_db, received_at_utc="2026-08-28T12:35:00Z")
 
     resolved = PlanAdapter.get_plan_as_of("2026-08-28", "NQ1", "2026-08-28T13:00:00Z", db_path=temp_db)
     assert resolved is not None
@@ -82,15 +87,16 @@ def test_intraday_plan_amendments(temp_db):
         verbatim_plan_text="Base Plan", primary_bias="BULLISH", wargamed_scenarios={},
         invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["STRAT_1"]
     )
-    plan_id = PlanAdapter.save_plan_snapshot(plan, db_path=temp_db)
+    plan_id = PlanAdapter.save_plan_snapshot(plan, db_path=temp_db, received_at_utc="2026-08-28T12:30:00Z")
 
     with sqlite3.connect(str(temp_db)) as conn:
         conn.execute(
             """
             INSERT INTO plan_amendments (
                 amendment_id, plan_snapshot_id, amendment_seq, effective_at_utc,
-                reason_code, amendment_text, amended_bias, amended_risk_bps
-            ) VALUES ('amd-1', ?, 1, '2026-08-28T14:30:00Z', 'REGIME_CHANGE', 'Invalidation breached', 'BEARISH', 5.0);
+                received_at_utc, reason_code, amendment_text, amended_bias, amended_risk_bps
+            ) VALUES ('amd-1', ?, 1, '2026-08-28T14:30:00Z', '2026-08-28T14:30:00Z',
+                      'REGIME_CHANGE', 'Invalidation breached', 'BEARISH', 5.0);
             """,
             (plan_id,)
         )

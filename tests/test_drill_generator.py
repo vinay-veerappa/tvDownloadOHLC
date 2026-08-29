@@ -63,11 +63,11 @@ def test_drill_split_custody_violation_rejected(temp_db):
     )
 
     BlindedDrillEngine.generate_blinded_drill(
-        dataset_split="ASSESSMENT", session_date="2026-07-15", ticker="NQ1", synthetic_mode=True
+        dataset_split="ASSESSMENT", session_date="2026-07-15", ticker="NQ1", synthetic_mode=True, db_path=temp_db
     )
     with pytest.raises(SplitCustodyViolationError):
         BlindedDrillEngine.generate_blinded_drill(
-            dataset_split="TRAINING", session_date="2026-07-15", ticker="NQ1", synthetic_mode=True
+            dataset_split="TRAINING", session_date="2026-07-15", ticker="NQ1", synthetic_mode=True, db_path=temp_db
         )
 
 
@@ -87,4 +87,5 @@ def test_calibration_rolling_baseline_and_validation(temp_db):
     with pytest.raises(ValueError):
         # Probabilities do not sum to 1 -> fail closed
         CalibrationEngine.validate_forecast_probs({dt: 0.2 for dt in ["R1", "R2", "DNP", "DWP"]})
+    with pytest.raises(ValueError):
         CalibrationEngine.validate_forecast_probs({dt: 0.2 for dt in ["R1", "R2", "DNP", "DWP", "ROTATIONAL_CHOP"]} | {"R1": 0.5})

@@ -338,18 +338,44 @@ class DailyProcessDeltaReconciler:
                 strat_respected = (total_execs == 0)
                 risk_respected = (total_execs == 0)
             else:
-                bias_respected = (interventions_count == 0)
-                
-                # Permitted Strategies Check
+                # Bias respected: no deviation annotations (PLAN_BIAS_DIRECTION_DEVIATION / NO_TRADE_PLAN_DEVIATION)
+                # against the effective plan. Generic interventions are orthogonal to plan adherence.
+                bias_dev_cur = conn.execute(
+                    """
+                    SELECT COUNT(*) AS c FROM intervention_events
+                    WHERE session_date = ? AND ticker = ?
+                      AND producer = 'PYTHON_DEVIATION_ANNOTATOR'
+                      AND rule_id IN ('PLAN_BIAS_DIRECTION_DEVIATION', 'NO_TRADE_PLAN_DEVIATION')
+                      AND action_mode = 'ACTING';
+                    """,
+                    (session_date, ticker)
+                )
+                bias_respected = (bias_dev_cur.fetchone()["c"] == 0)
+
+                # Permitted Strategies Check: every execution must carry a strategy_version_id that is in the
+                # effective permitted list, unless no list was declared (then any tag is a breach).
                 if total_execs > 0:
                     if not plan_summary.permitted_strategies or plan_summary.primary_bias == "NO_TRADE":
                         strat_respected = False
                     else:
-                        strat_respected = True
+                        bad_strat_cur = conn.execute(
+                            """
+                            SELECT COUNT(*) AS c FROM execution_events
+                            WHERE session_date = ? AND ticker = ?
+                              AND (
+                                strategy_version_id IS NULL
+                                OR strategy_version_id NOT IN ({})
+                              );
+                            """.format(",".join(["?"] * len(plan_summary.permitted_strategies))),
+                            (session_date, ticker, *plan_summary.permitted_strategies)
+                        )
+                        strat_respected = (bad_strat_cur.fetchone()["c"] == 0)
                 else:
                     strat_respected = True
-                    
-                # Risk Budget Check
+
+                # Risk Budget Check: every executed opportunity's declared stop distance must be within
+                # 5% of the plan's max intended risk budget. The 5% tolerance accounts for rounding/entry
+                # variance but does NOT allow strategic stop widening.
                 if total_execs > 0:
                     if plan_summary.max_intended_risk_bps is None or plan_summary.max_intended_risk_bps <= 0.0:
                         risk_respected = False
@@ -362,7 +388,7 @@ class DailyProcessDeltaReconciler:
                                     break
                 else:
                     risk_respected = True
-                    
+
                 plan_compliant = bias_respected and strat_respected and risk_respected
 
             # 6. Quadrant Assignment

@@ -95,6 +95,10 @@ scratch/
 notebooks/
 processed/
 
+# Exception: source code under scripts/trading_brain/reports/ is tracked
+!scripts/trading_brain/reports/
+!scripts/trading_brain/reports/**
+
 # Ignore dynamic runtime state files
 scripts/libs_py/strategy_engine/scheduler_state.json
 tradingview-mcp/

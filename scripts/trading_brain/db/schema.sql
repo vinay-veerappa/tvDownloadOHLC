@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS plan_snapshots (
     preparation_cutoff_utc TIMESTAMP NOT NULL,
     source_system TEXT NOT NULL,               -- 'PRISMA_WEB', 'MARKDOWN_CLI', 'MANUAL_IMPORT'
     source_plan_id TEXT,                       -- Reference to Prisma TradePlan.id
+    source_revision_hash TEXT,                 -- Content hash of the external source at mirror time
     supersedes_plan_snapshot_id TEXT,          -- Nullable FK for replacement snapshots
     
     -- Plan Content & Declarations
@@ -61,7 +62,8 @@ CREATE TABLE IF NOT EXISTS plan_snapshots (
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (supersedes_plan_snapshot_id) REFERENCES plan_snapshots(plan_snapshot_id),
     CONSTRAINT ck_no_self_supersession CHECK (supersedes_plan_snapshot_id <> plan_snapshot_id),
-    UNIQUE(plan_family_id, revision_seq)
+    UNIQUE(plan_family_id, revision_seq),
+    UNIQUE(source_plan_id, source_revision_hash)
 );
 
 CREATE TABLE IF NOT EXISTS plan_lifecycle_events (
@@ -127,11 +129,11 @@ CREATE TABLE IF NOT EXISTS forecast_snapshots (
     effective_cutoff_utc TIMESTAMP NOT NULL,
     
     -- Quant Probabilities across 5 MECE Day Types (0.0 to 1.0, sum to 1.0 unless abstained)
-    prob_r1 REAL,
-    prob_r2 REAL,
-    prob_dnp REAL,
-    prob_dwp REAL,
-    prob_rotational_chop REAL,
+    prob_r1 REAL CHECK(prob_r1 IS NULL OR (prob_r1 >= 0.0 AND prob_r1 <= 1.0)),
+    prob_r2 REAL CHECK(prob_r2 IS NULL OR (prob_r2 >= 0.0 AND prob_r2 <= 1.0)),
+    prob_dnp REAL CHECK(prob_dnp IS NULL OR (prob_dnp >= 0.0 AND prob_dnp <= 1.0)),
+    prob_dwp REAL CHECK(prob_dwp IS NULL OR (prob_dwp >= 0.0 AND prob_dwp <= 1.0)),
+    prob_rotational_chop REAL CHECK(prob_rotational_chop IS NULL OR (prob_rotational_chop >= 0.0 AND prob_rotational_chop <= 1.0)),
     predicted_day_type TEXT,
     
     -- Directional Anchors & Levels
@@ -316,7 +318,7 @@ CREATE TABLE IF NOT EXISTS drill_attempts (
     drill_id TEXT NOT NULL,
     drill_type TEXT NOT NULL,                  -- 'RECOGNITION', 'BRACKET_DISCIPLINE', 'REVERSAL_COUNTER'
     dataset_split TEXT NOT NULL,               -- 'TRAINING', 'CALIBRATION', 'ASSESSMENT'
-    
+
     -- Locked User Declarations
     declared_bias TEXT NOT NULL,
     declared_setup TEXT NOT NULL,
@@ -324,13 +326,36 @@ CREATE TABLE IF NOT EXISTS drill_attempts (
     declared_stop_bps REAL,
     declared_target_bps REAL,
     answer_locked_at_utc TIMESTAMP NOT NULL,
-    
+
     -- Process Score & Feedback
     process_adherence_score REAL NOT NULL,     -- 0.0 to 100.0
     rule_match_flag BOOLEAN NOT NULL,
     latency_ms INTEGER NOT NULL,
     review_notes TEXT,
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- Sealed drill ground truth: persisted by the custodian process, never returned to callers
+-- during drill generation.  Only the evaluation path reads this table.
+CREATE TABLE IF NOT EXISTS drill_sealed_answers (
+    drill_id TEXT PRIMARY KEY,
+    true_session_date DATE NOT NULL,
+    true_ticker TEXT NOT NULL,
+    true_target_bps REAL NOT NULL,
+    true_stop_bps REAL NOT NULL,
+    true_bias TEXT NOT NULL,
+    true_setup TEXT NOT NULL,
+    is_locked BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- Persisted split-partition registry: anti-memorization invariant survives process restarts.
+CREATE TABLE IF NOT EXISTS drill_split_registry (
+    session_date DATE NOT NULL,
+    ticker TEXT NOT NULL,
+    dataset_split TEXT NOT NULL,
+    registered_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (session_date, ticker, dataset_split)
 );
 
 CREATE TABLE IF NOT EXISTS behavioral_declarations (
@@ -371,6 +396,16 @@ CREATE TABLE IF NOT EXISTS candidate_finding_events (
     actor TEXT NOT NULL,
     event_timestamp_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS sealed_holdouts (
+    holdout_dataset_id TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,                -- sha256 of serialized features + labels
+    features_json TEXT NOT NULL,
+    labels_json TEXT NOT NULL,
+    benchmark_metric REAL NOT NULL,
+    expected_effect_size_d REAL NOT NULL,
+    registered_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- ----------------------------------------------------------------------------
@@ -606,6 +641,26 @@ BEFORE DELETE ON drill_attempts BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table drill_attempts');
 END;
 
+-- 14a. drill_sealed_answers
+CREATE TRIGGER IF NOT EXISTS trg_prevent_update_drill_sealed_answers
+BEFORE UPDATE ON drill_sealed_answers BEGIN
+    SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table drill_sealed_answers');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_prevent_delete_drill_sealed_answers
+BEFORE DELETE ON drill_sealed_answers BEGIN
+    SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table drill_sealed_answers');
+END;
+
+-- 14b. drill_split_registry
+CREATE TRIGGER IF NOT EXISTS trg_prevent_update_drill_split_registry
+BEFORE UPDATE ON drill_split_registry BEGIN
+    SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table drill_split_registry');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_prevent_delete_drill_split_registry
+BEFORE DELETE ON drill_split_registry BEGIN
+    SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table drill_split_registry');
+END;
+
 -- 15. behavioral_declarations
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_behavioral_declarations
 BEFORE UPDATE ON behavioral_declarations BEGIN
@@ -634,6 +689,16 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_prevent_delete_candidate_finding_events
 BEFORE DELETE ON candidate_finding_events BEGIN
     SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table candidate_finding_events');
+END;
+
+-- 18. sealed_holdouts
+CREATE TRIGGER IF NOT EXISTS trg_prevent_update_sealed_holdouts
+BEFORE UPDATE ON sealed_holdouts BEGIN
+    SELECT RAISE(FAIL, 'UPDATE operation prohibited on immutable table sealed_holdouts');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_prevent_delete_sealed_holdouts
+BEFORE DELETE ON sealed_holdouts BEGIN
+    SELECT RAISE(FAIL, 'DELETE operation prohibited on immutable table sealed_holdouts');
 END;
 
 -- 18. strategy_versions

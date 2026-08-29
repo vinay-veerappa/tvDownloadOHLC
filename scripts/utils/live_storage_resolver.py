@@ -5,9 +5,10 @@ Anchors all paths to REPO_ROOT.
 Includes mtime-aware in-memory caching for sub-millisecond repeated queries.
 """
 
+import hashlib
 import os
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -72,6 +73,15 @@ def get_live_storage_path(ticker: str, custom_dir: Optional[Union[str, Path]] = 
     return target_dir / filename
 
 
+def _hash_dataframe(df: pd.DataFrame) -> str:
+    """Deterministic SHA-256 hash of a DataFrame's sorted byte representation."""
+    # Sort by the canonical dt column; hash the stable CSV bytes.
+    cols = [c for c in ["dt", "open", "high", "low", "close", "volume"] if c in df.columns]
+    sorted_df = df[cols].sort_values("dt").reset_index(drop=True)
+    payload = sorted_df.to_csv(index=False, date_format="%Y-%m-%dT%H:%M:%SZ")
+    return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:32]}"
+
+
 def load_session_bars(
     ticker: str,
     session_date: str,
@@ -113,3 +123,47 @@ def load_session_bars(
     session_df = df[df["session_date_str"] == session_str].copy()
     
     return session_df
+
+
+def load_session_bars_as_of_cutoff(
+    ticker: str,
+    session_date: str,
+    cutoff_utc: pd.Timestamp,
+    custom_dir: Optional[Union[str, Path]] = None
+) -> pd.DataFrame:
+    """Loads session bars up to and including a UTC cutoff timestamp."""
+    df = load_session_bars(ticker, session_date, custom_dir=custom_dir)
+    if df.empty:
+        return df
+    return df[df["dt"] <= cutoff_utc].copy()
+
+
+def get_session_slice_manifest(
+    ticker: str,
+    session_date: str,
+    cutoff_utc: pd.Timestamp,
+    custom_dir: Optional[Union[str, Path]] = None
+) -> Dict[str, Any]:
+    """Returns a manifest entry for the live-storage slice as-of cutoff.
+
+    The returned dict contains:
+      - provider_name: 'LIVE_STORAGE_1M'
+      - data_type: 'BARS_1M'
+      - max_timestamp_utc: actual maximum UTC timestamp in the slice
+      - content_hash: deterministic hash of the slice rows
+      - row_count: number of bars in the slice
+    """
+    slice_df = load_session_bars_as_of_cutoff(ticker, session_date, cutoff_utc, custom_dir=custom_dir)
+    if slice_df.empty:
+        raise ValueError(
+            f"No live storage bars for {ticker} on {session_date} as of {cutoff_utc}. "
+            f"Cannot seal an empty input manifest."
+        )
+    max_ts = slice_df["dt"].max()
+    return {
+        "provider_name": "LIVE_STORAGE_1M",
+        "data_type": "BARS_1M",
+        "max_timestamp_utc": max_ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "content_hash": _hash_dataframe(slice_df),
+        "row_count": int(len(slice_df)),
+    }

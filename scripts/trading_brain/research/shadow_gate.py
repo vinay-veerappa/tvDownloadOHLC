@@ -3,21 +3,37 @@
 Enforces:
 1. Mandatory Preregistration with Sealed Holdout: Findings MUST be preregistered with
    holdout_dataset_id, holdout_dataset_hash, benchmark_metric, and MDE before shadow evaluation.
-2. Duplicate Preregistration Protection: Re-registering existing finding_id raises PreregistrationConflictError.
-3. 1-Time Sealed Evaluation: Terminal states (PROMOTED, REJECTED, INVALID_TEST) cannot be re-evaluated.
-4. Model ID & MDE Binding: Evaluates requested model matches preregistered model, and improvement >= MDE.
-5. Minimum Statistical Power >= 0.80.
+2. Sealed Holdout Custody: the holdout features and labels are stored in the canonical ledger
+   at preregistration time.  At evaluation, the gate loads the sealed holdout, executes the
+   preregistered model function on the stored features, and computes the realized metric
+   from the stored labels.  Callers cannot submit favorable realized_metric/fdr values.
+3. Duplicate Preregistration Protection: Re-registering existing finding_id raises
+   PreregistrationConflictError.
+4. 1-Time Sealed Evaluation: Terminal states (PROMOTED, REJECTED, INVALID_TEST) cannot be
+   re-evaluated.
+5. Model ID Binding: Evaluated model must match preregistered model.
+6. Minimum Statistical Power >= 0.80 and FDR q <= 0.05 with improvement over benchmark.
 """
 
+import hashlib
 import json
 import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+
+import numpy as np
 
 from scripts.trading_brain.db.connection import get_db_connection
+from scripts.trading_brain.research.sealed_holdout import (
+    HoldoutHashMismatchError,
+    HoldoutRegistry,
+    SealedHoldout,
+    compute_binary_accuracy,
+    compute_directional_accuracy,
+)
 from scripts.utils.market_calendar import now_iso_utc
 
 
@@ -36,6 +52,11 @@ class ShadowGateLockedError(Exception):
     pass
 
 
+class HoldoutHashMismatchError(Exception):
+    """Raised when the sealed holdout hash does not match the preregistered hash."""
+    pass
+
+
 @dataclass
 class ShadowEvaluationResult:
     finding_event_id: str
@@ -46,6 +67,8 @@ class ShadowEvaluationResult:
     fdr_q_value: float
     realized_metric: float
     benchmark_metric: float
+    holdout_dataset_id: str
+    holdout_hash: str
     notes: str
 
 
@@ -66,6 +89,23 @@ class ShadowGate:
         power = 0.5 * (1.0 + math.erf(z_score / math.sqrt(2.0)))
         return max(0.0, min(1.0, power))
 
+    @staticmethod
+    def _compute_fdr_q_value(p_value: float, total_comparisons: int = 1) -> float:
+        """Conservative Benjamini-Hochberg for a single family: q = min(1, p * m / rank)."""
+        if total_comparisons <= 0:
+            total_comparisons = 1
+        return min(1.0, p_value * total_comparisons)
+
+    @staticmethod
+    def _one_sided_p_value(observed_metric: float, benchmark: float, sample_size: int,
+                           effect_size_d: float) -> float:
+        """Approximate p-value for one-tailed z-test of metric > benchmark."""
+        if sample_size <= 0 or effect_size_d <= 0:
+            return 1.0
+        se = 1.0 / (effect_size_d * math.sqrt(sample_size)) if effect_size_d > 0 else 1.0
+        z = (observed_metric - benchmark) / max(se, 1e-9)
+        return 1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
     @classmethod
     def preregister_candidate_finding(
         cls,
@@ -74,8 +114,9 @@ class ShadowGate:
         benchmark_metric: float,
         expected_effect_size_d: float,
         feature_manifest: Dict[str, Any],
-        holdout_dataset_id: str = "HOLDOUT_2026_Q1",
-        holdout_dataset_hash: str = "sha256:sealed_holdout_hash",
+        holdout_dataset_id: str,
+        holdout_dataset_hash: str,
+        metric_kind: str = "DIRECTIONAL_ACCURACY",
         actor: str = "RESEARCH_AGENT",
         db_path: Optional[Union[str, Path]] = None
     ) -> str:
@@ -84,19 +125,20 @@ class ShadowGate:
             cur = conn.execute("SELECT finding_id FROM candidate_finding_events WHERE finding_id = ?;", (finding_id,))
             if cur.fetchone():
                 raise PreregistrationConflictError(f"Candidate finding '{finding_id}' has already been preregistered.")
-                
+
             event_id = str(uuid.uuid4())
             eval_json = json.dumps({
                 "stage": "PREREGISTERED",
                 "model_version_id": model_version_id,
                 "benchmark_metric": benchmark_metric,
                 "expected_effect_size_d": expected_effect_size_d,
+                "metric_kind": metric_kind,
                 "holdout_dataset_id": holdout_dataset_id,
                 "holdout_dataset_hash": holdout_dataset_hash,
                 "feature_manifest": feature_manifest,
                 "preregistered_at_utc": now_iso_utc()
             })
-            
+
             conn.execute(
                 """
                 INSERT INTO candidate_finding_events (
@@ -114,13 +156,17 @@ class ShadowGate:
         cls,
         finding_id: str,
         model_version_id: str,
-        sample_size: int,
-        realized_metric: float,
-        fdr_q_value: float,
+        model_predict_fn: Callable[[Any], Sequence[float]],
+        sample_size: Optional[int] = None,
         actor: str = "RESEARCH_AGENT",
         db_path: Optional[Union[str, Path]] = None
     ) -> ShadowEvaluationResult:
-        """Evaluates a candidate finding on sealed shadow data and transitions candidate_finding_events."""
+        """Evaluates a candidate finding on sealed shadow data and transitions candidate_finding_events.
+
+        The realized metric is computed by the gate from the sealed holdout labels and the
+        predictions produced by model_predict_fn applied to the sealed holdout features.
+        Callers cannot pass in favorable numbers directly.
+        """
         with get_db_connection(db_path) as conn:
             cur = conn.execute(
                 """
@@ -131,53 +177,99 @@ class ShadowGate:
                 (finding_id,)
             )
             row = cur.fetchone()
-            
+
             if not row:
                 raise PreregistrationRequiredError(
-                    f"Candidate finding '{finding_id}' must be preregistered via preregister_candidate_finding() before evaluation on sealed shadow data."
+                    f"Candidate finding '{finding_id}' must be preregistered via preregister_candidate_finding() "
+                    "before evaluation on sealed shadow data."
                 )
-                
+
             prev_stage = row["pipeline_stage"]
             if prev_stage in ("PROMOTED", "REJECTED", "INVALID_TEST"):
                 raise ShadowGateLockedError(
-                    f"Candidate finding '{finding_id}' has already been evaluated to terminal stage '{prev_stage}' and cannot be re-evaluated."
+                    f"Candidate finding '{finding_id}' has already been evaluated to terminal stage "
+                    f"'{prev_stage}' and cannot be re-evaluated."
                 )
-                
+
             prev_json = json.loads(row["evaluation_result_json"]) if row["evaluation_result_json"] else {}
             prereg_model = prev_json.get("model_version_id", row["model_version_id"])
             if prereg_model != model_version_id:
-                raise ValueError(f"Requested model '{model_version_id}' does not match preregistered model '{prereg_model}' for finding '{finding_id}'.")
-                
+                raise ValueError(
+                    f"Requested model '{model_version_id}' does not match preregistered model '{prereg_model}' "
+                    f"for finding '{finding_id}'."
+                )
+
             sealed_benchmark = float(prev_json["benchmark_metric"])
             sealed_effect_d = float(prev_json["expected_effect_size_d"])
+            metric_kind = prev_json.get("metric_kind", "DIRECTIONAL_ACCURACY")
+            holdout_dataset_id = prev_json["holdout_dataset_id"]
+            preregistered_hash = prev_json.get("holdout_dataset_hash")
+            if not holdout_dataset_id:
+                raise PreregistrationRequiredError(
+                    f"Candidate finding '{finding_id}' was preregistered without a sealed holdout_dataset_id."
+                )
 
-            power = cls.calculate_statistical_power(sample_size, sealed_effect_d)
-            
-            # Improvement over benchmark
-            improvement = realized_metric - sealed_benchmark
-            
-            # Decision Policy: Power >= 0.80, FDR q <= 0.05, and positive improvement
-            if power < 0.80:
-                stage = "INCONCLUSIVE_WAITING"
-                notes = f"Insufficient statistical power ({power:.2f} < 0.80) at N={sample_size}. Frozen awaiting unobserved samples."
-            elif fdr_q_value <= 0.05 and improvement > 0:
-                stage = "PROMOTED"
-                notes = f"Validated on shadow data (Power={power:.2f}, FDR q={fdr_q_value:.4f}, Metric={realized_metric:.4f} > {sealed_benchmark:.4f})."
-            else:
-                stage = "REJECTED"
-                notes = f"Failed criteria on shadow data (FDR q={fdr_q_value:.4f}, Metric={realized_metric:.4f} <= {sealed_benchmark:.4f})."
-                
-            event_id = str(uuid.uuid4())
-            eval_json = json.dumps({
-                "sample_size": sample_size,
-                "realized_metric": realized_metric,
-                "benchmark_metric": sealed_benchmark,
-                "effect_size_d": sealed_effect_d,
-                "statistical_power": power,
-                "fdr_q_value": fdr_q_value,
-                "decision_notes": notes
-            })
-            
+        # Load sealed holdout outside the candidate row lock.  The registry enforces the hash.
+        holdout = HoldoutRegistry.load_holdout(
+            holdout_dataset_id=holdout_dataset_id,
+            expected_hash=preregistered_hash,
+            db_path=db_path,
+        )
+
+        labels = list(holdout.labels)
+        n = sample_size if sample_size is not None else len(labels)
+        if n > len(labels):
+            raise ValueError(f"Requested sample_size {n} exceeds holdout size {len(labels)}.")
+        if n <= 0:
+            raise ValueError("sample_size must be positive.")
+
+        features_subset = holdout.features[:n] if isinstance(holdout.features, list) else holdout.features
+        predictions = list(model_predict_fn(features_subset))
+        labels_subset = labels[:n]
+
+        if metric_kind == "DIRECTIONAL_ACCURACY":
+            realized_metric = compute_directional_accuracy(predictions, labels_subset)
+        elif metric_kind == "BINARY_ACCURACY":
+            realized_metric = compute_binary_accuracy(predictions, labels_subset)
+        else:
+            raise ValueError(f"Unsupported metric_kind: {metric_kind}")
+
+        power = cls.calculate_statistical_power(n, sealed_effect_d)
+        p_value = cls._one_sided_p_value(realized_metric, sealed_benchmark, n, sealed_effect_d)
+        fdr_q_value = cls._compute_fdr_q_value(p_value)
+        improvement = realized_metric - sealed_benchmark
+
+        if power < 0.80:
+            stage = "INCONCLUSIVE_WAITING"
+            notes = f"Insufficient statistical power ({power:.2f} < 0.80) at N={n}. Frozen awaiting unobserved samples."
+        elif fdr_q_value <= 0.05 and improvement > 0:
+            stage = "PROMOTED"
+            notes = (
+                f"Validated on sealed shadow data (Power={power:.2f}, FDR q={fdr_q_value:.4f}, "
+                f"Metric={realized_metric:.4f} > {sealed_benchmark:.4f})."
+            )
+        else:
+            stage = "REJECTED"
+            notes = (
+                f"Failed criteria on sealed shadow data (FDR q={fdr_q_value:.4f}, "
+                f"Metric={realized_metric:.4f} <= {sealed_benchmark:.4f})."
+            )
+
+        event_id = str(uuid.uuid4())
+        eval_json = json.dumps({
+            "sample_size": n,
+            "realized_metric": realized_metric,
+            "benchmark_metric": sealed_benchmark,
+            "effect_size_d": sealed_effect_d,
+            "statistical_power": power,
+            "fdr_q_value": fdr_q_value,
+            "holdout_dataset_id": holdout_dataset_id,
+            "holdout_hash": holdout.content_hash,
+            "metric_kind": metric_kind,
+            "decision_notes": notes
+        })
+
+        with get_db_connection(db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO candidate_finding_events (
@@ -188,7 +280,7 @@ class ShadowGate:
                 """,
                 (event_id, finding_id, model_version_id, stage, eval_json, power, fdr_q_value, actor, now_iso_utc())
             )
-            
+
         return ShadowEvaluationResult(
             finding_event_id=event_id,
             finding_id=finding_id,
@@ -198,5 +290,7 @@ class ShadowGate:
             fdr_q_value=round(fdr_q_value, 4),
             realized_metric=realized_metric,
             benchmark_metric=sealed_benchmark,
+            holdout_dataset_id=holdout_dataset_id,
+            holdout_hash=holdout.content_hash,
             notes=notes
         )

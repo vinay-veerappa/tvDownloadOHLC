@@ -47,6 +47,7 @@ class PlanContext:
     provenance_class: str = "EX_ANTE_DECLARED"
     source_system: str = "MARKDOWN_CLI"
     source_plan_id: Optional[str] = None
+    source_revision_hash: Optional[str] = None
     supersedes_plan_snapshot_id: Optional[str] = None
     amendments: List[PlanAmendment] = field(default_factory=list)
     
@@ -68,7 +69,9 @@ class PlanAdapter:
     def save_plan_snapshot(
         cls,
         plan: PlanContext,
-        db_path: Optional[Union[str, Path]] = None
+        db_path: Optional[Union[str, Path]] = None,
+        *,
+        received_at_utc: Optional[Union[str, datetime]] = None,
     ) -> str:
         snapshot_id = plan.plan_snapshot_id or str(uuid.uuid4())
         plan_family_id = plan.plan_family_id or str(uuid.uuid4())
@@ -83,7 +86,15 @@ class PlanAdapter:
             cutoff_iso = cal_cutoff_iso
             
         prov = "EX_ANTE_DECLARED" if plan.provenance_class in ("EX_ANTE", "EX_ANTE_DECLARED") else "POST_HOC_RECONSTRUCTION"
-            
+
+        # Trust boundary: received_at_utc must be the actual database receipt time unless an
+        # explicit (audited) override is supplied. Ex-ante certification is awarded only if
+        # the receipt is on or before the session cutoff; otherwise degrade honestly.
+        real_recv_iso = to_iso_utc(received_at_utc) if received_at_utc else now_iso_utc()
+        if prov == "EX_ANTE_DECLARED" and parse_iso_utc(real_recv_iso) > parse_iso_utc(cutoff_iso):
+            prov = "POST_HOC_RECONSTRUCTION"
+        recv_iso = real_recv_iso
+
         with get_db_connection(db_path) as conn:
             cur = conn.execute(
                 "SELECT IFNULL(MAX(revision_seq), 0) + 1 AS next_seq FROM plan_snapshots WHERE session_date = ? AND ticker = ?;",
@@ -91,20 +102,19 @@ class PlanAdapter:
             )
             rev_seq = cur.fetchone()["next_seq"]
             
-            recv_iso = cutoff_iso if prov == "EX_ANTE_DECLARED" else now_iso_utc()
             conn.execute(
                 """
                 INSERT INTO plan_snapshots (
                     plan_snapshot_id, plan_family_id, revision_seq, session_date, ticker,
-                    preparation_cutoff_utc, source_system, source_plan_id, supersedes_plan_snapshot_id,
-                    primary_bias, wargamed_scenarios_json, invalidation_levels_json,
+                    preparation_cutoff_utc, source_system, source_plan_id, source_revision_hash,
+                    supersedes_plan_snapshot_id, primary_bias, wargamed_scenarios_json, invalidation_levels_json,
                     max_intended_risk_bps, permitted_strategies_json, verbatim_plan_text, provenance_class,
                     received_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     snapshot_id, plan_family_id, rev_seq, plan.session_date, plan.ticker,
-                    cutoff_iso, plan.source_system, plan.source_plan_id,
+                    cutoff_iso, plan.source_system, plan.source_plan_id, plan.source_revision_hash,
                     plan.supersedes_plan_snapshot_id, plan.primary_bias,
                     json.dumps(plan.wargamed_scenarios), json.dumps(plan.invalidation_levels),
                     plan.max_intended_risk_bps, json.dumps(plan.permitted_strategies),
@@ -152,16 +162,17 @@ class PlanAdapter:
                 WHERE p.session_date = ? AND p.ticker = ?
                   AND p.provenance_class IN ('EX_ANTE', 'EX_ANTE_DECLARED')
                   AND p.received_at_utc <= ?
+                  AND p.preparation_cutoff_utc <= ?
                   AND NOT EXISTS (
                       SELECT 1 FROM plan_lifecycle_events e
                       WHERE e.plan_snapshot_id = p.plan_snapshot_id
                         AND e.event_type IN ('SUPERSEDED', 'CANCELLED')
                         AND e.recorded_at_utc <= ?
                   )
-                ORDER BY p.revision_seq DESC, p.received_at_utc DESC
+                ORDER BY p.revision_seq DESC, p.received_at_utc DESC, p.preparation_cutoff_utc DESC
                 LIMIT 1;
                 """,
-                (session_date, ticker, as_of_iso, as_of_iso)
+                (session_date, ticker, as_of_iso, as_of_iso, as_of_iso)
             )
             row = cur.fetchone()
             if not row:
@@ -175,10 +186,12 @@ class PlanAdapter:
             amd_cur = conn.execute(
                 """
                 SELECT * FROM plan_amendments
-                WHERE plan_snapshot_id = ? AND effective_at_utc <= ?
+                WHERE plan_snapshot_id = ?
+                  AND effective_at_utc <= ?
+                  AND received_at_utc <= ?
                 ORDER BY amendment_seq ASC;
                 """,
-                (snapshot_id, as_of_iso)
+                (snapshot_id, as_of_iso, as_of_iso)
             )
             amd_rows = amd_cur.fetchall()
             amendments = []
@@ -220,6 +233,7 @@ class PlanAdapter:
                 provenance_class=row["provenance_class"],
                 source_system=row["source_system"],
                 source_plan_id=row["source_plan_id"],
+                source_revision_hash=row["source_revision_hash"],
                 supersedes_plan_snapshot_id=row["supersedes_plan_snapshot_id"],
                 amendments=amendments,
                 effective_primary_bias=eff_bias,

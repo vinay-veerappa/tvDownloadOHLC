@@ -2,10 +2,20 @@
 
 Guarantees crash-resilient asynchronous replay of canonical Trading Brain records to legacy databases:
 1. Canonical transaction commits canonical row + legacy_projection_outbox row in a single atomic transaction.
-2. Supports WARGAME_DB_TARGET environment variable ('CANONICAL', 'DUAL_OUTBOX', 'LEGACY_DIRECT', 'PAUSED').
+2. Supports WARGAME_DB_TARGET environment variable:
+     'CANONICAL'      - authoritative writes only; no legacy projections are enqueued.
+     'DUAL_OUTBOX'    - default: canonical + outbox enqueue; legacy projection runs asynchronously.
+     'LEGACY_DIRECT'  - canonical + outbox + immediate legacy projection (deprecated, for rollback testing).
+     'PAUSED'         - all writes rejected.
 3. OutboxProjector acquires leases on PENDING outbox records.
 4. Projects payloads into legacy SQLite databases (system_wargames.sqlite, market_actuals.sqlite, mickey_ground_truth.sqlite).
 5. Marks outbox records as PROJECTED (or DEAD_LETTER after max_retries).
+
+Mode semantics:
+- CANONICAL mode intentionally skips enqueue_outbox_item; it still writes to the canonical DB.
+- DUAL_OUTBOX enqueues outbox records within the canonical transaction and expects a later project_pending().
+- LEGACY_DIRECT enqueues records and immediately calls project_pending() inside the same flow (testing only).
+- PAUSED rejects all canonical writes that try to enqueue; callers must handle DatabasePausedError.
 """
 
 import json
@@ -51,7 +61,11 @@ class OutboxProjector:
     @staticmethod
     def get_target_mode() -> str:
         """Returns active database target mode: 'CANONICAL', 'DUAL_OUTBOX', 'LEGACY_DIRECT', 'PAUSED'."""
-        return os.environ.get("WARGAME_DB_TARGET", "DUAL_OUTBOX").upper()
+        mode = os.environ.get("WARGAME_DB_TARGET", "DUAL_OUTBOX").upper()
+        valid = {"CANONICAL", "DUAL_OUTBOX", "LEGACY_DIRECT", "PAUSED"}
+        if mode not in valid:
+            raise ValueError(f"Invalid WARGAME_DB_TARGET={mode}. Must be one of {valid}")
+        return mode
 
     @staticmethod
     def enqueue_outbox_item(
@@ -61,12 +75,20 @@ class OutboxProjector:
         canonical_id: str,
         payload: Dict[str, Any],
         schema_version: str = "1.0.0"
-    ) -> str:
-        """Enqueues an outbox record within an existing canonical transaction."""
+    ) -> Optional[str]:
+        """Enqueues an outbox record within an existing canonical transaction.
+
+        In CANONICAL mode this is a no-op (returns None) because no legacy projection is requested.
+        In PAUSED mode it raises DatabasePausedError to prevent any canonical write that would
+        later need projection.
+        In DUAL_OUTBOX and LEGACY_DIRECT modes it inserts a PENDING outbox row and returns the id.
+        """
         target_mode = OutboxProjector.get_target_mode()
         if target_mode == "PAUSED":
             raise DatabasePausedError("Database writes are PAUSED via WARGAME_DB_TARGET=PAUSED")
-            
+        if target_mode == "CANONICAL":
+            return None
+
         outbox_id = str(uuid.uuid4())
         conn.execute(
             """
@@ -82,16 +104,16 @@ class OutboxProjector:
     def project_pending(self, limit: int = 50) -> Dict[str, int]:
         """Claims and projects pending outbox records to their legacy database destinations."""
         target_mode = self.get_target_mode()
-        if target_mode == "PAUSED":
-            return {"projected": 0, "failed": 0, "dead_letter": 0}
-            
+        if target_mode in ("PAUSED", "CANONICAL"):
+            return {"projected": 0, "failed": 0, "dead_letter": 0, "skipped": 0}
+
         now_dt = datetime.now(timezone.utc)
         now_iso = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=self.lease_duration_sec)).isoformat()
         lease_token = str(uuid.uuid4())
-        
-        counts = {"projected": 0, "failed": 0, "dead_letter": 0}
-        
+
+        counts = {"projected": 0, "failed": 0, "dead_letter": 0, "skipped": 0}
+
         with get_db_connection(self.canonical_db) as conn:
             conn.execute(
                 """
@@ -106,22 +128,22 @@ class OutboxProjector:
                 """,
                 (lease_token, lease_expires, now_iso, limit)
             )
-            
+
             cur = conn.execute(
                 "SELECT * FROM legacy_projection_outbox WHERE lease_token = ? AND status = 'PENDING';",
                 (lease_token,)
             )
             records = cur.fetchall()
-            
+
             for r in records:
                 outbox_id = r["outbox_id"]
                 dest_db = r["destination_db"]
                 payload = json.loads(r["payload_json"])
                 attempt_count = r["attempt_count"] + 1
-                
+
                 try:
                     self._dispatch_to_legacy(dest_db, payload)
-                    
+
                     conn.execute(
                         """
                         UPDATE legacy_projection_outbox
@@ -134,7 +156,7 @@ class OutboxProjector:
                 except Exception as ex:
                     error_msg = str(ex)
                     new_status = "DEAD_LETTER" if attempt_count >= self.max_retries else "PENDING"
-                    
+
                     conn.execute(
                         """
                         UPDATE legacy_projection_outbox
@@ -147,7 +169,7 @@ class OutboxProjector:
                         counts["dead_letter"] += 1
                     else:
                         counts["failed"] += 1
-                        
+
         return counts
 
     def _dispatch_to_legacy(self, destination_db: str, payload: Dict[str, Any]) -> None:

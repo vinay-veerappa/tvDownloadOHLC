@@ -31,9 +31,12 @@ EXPECTED_TABLES = [
     "execution_events",
     "intervention_events",
     "drill_attempts",
+    "drill_sealed_answers",
+    "drill_split_registry",
     "behavioral_declarations",
     "unmatched_link_events",
     "candidate_finding_events",
+    "sealed_holdouts",
     "strategy_versions",
     "model_versions",
     "model_deployment_events",
@@ -48,13 +51,13 @@ EXPECTED_VIEWS = [
     "v_candidate_findings_staged"
 ]
 
-PROTECTED_TABLES_COUNT = 19
-EXPECTED_TRIGGER_COUNT = PROTECTED_TABLES_COUNT * 2  # 38 triggers
+PROTECTED_TABLES_COUNT = 22
+EXPECTED_TRIGGER_COUNT = PROTECTED_TABLES_COUNT * 2  # 44 triggers
 
 # Bump this constant with EVERY backward-incompatible schema change, and add the matching
 # migration step to _apply_schema_migrations. A database stamped newer than the code is
 # refused (downgrade risk); a database stamped older runs pending migrations before use.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _apply_schema_migrations(conn, from_version: int, messages: List[str], verbose: bool) -> None:
@@ -69,6 +72,30 @@ def _apply_schema_migrations(conn, from_version: int, messages: List[str], verbo
         messages.append("MIGRATED: schema v1 -> v2 (model_deployment_events ledger adopted).")
         if verbose:
             print("  -> migration v1 -> v2 applied (model_deployment_events ledger).")
+    if from_version < 3:
+        # v2 -> v3: plan_snapshots gains source_revision_hash and a unique constraint
+        # enabling revision-aware Prisma TradePlan mirroring with supersession.
+        messages.append("MIGRATED: schema v2 -> v3 (plan_snapshots source_revision_hash + unique index).")
+        if verbose:
+            print("  -> migration v2 -> v3 applied (source_revision_hash).")
+        try:
+            conn.execute(
+                """
+                ALTER TABLE plan_snapshots ADD COLUMN source_revision_hash TEXT;
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_plan_source_revision
+                ON plan_snapshots(source_plan_id, source_revision_hash)
+                WHERE source_plan_id IS NOT NULL;
+                """
+            )
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                messages.append("NOTE: source_revision_hash already present, migration idempotent.")
+            else:
+                raise
 
 
 def _check_and_migrate_schema(conn, messages: List[str], verbose: bool) -> None:

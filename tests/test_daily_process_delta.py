@@ -26,7 +26,8 @@ def test_4way_reconciler_live_production_and_replay_scoring(temp_db):
             verbatim_plan_text="Bullish plan", primary_bias="BULLISH", wargamed_scenarios={},
             invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["STRAT_ALN_LPEU_V0_1"]
         ),
-        db_path=temp_db
+        db_path=temp_db,
+        received_at_utc="2026-08-28T12:30:00Z"
     )
     
     with sqlite3.connect(str(temp_db)) as conn:
