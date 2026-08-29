@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from scripts.trading_brain.db.connection import get_db_connection
 from scripts.trading_brain.practice.drill_engine import BlindedDrillContext, BlindedDrillEngine
+from scripts.utils.market_calendar import now_iso_utc
 
 
 @dataclass
@@ -27,6 +28,14 @@ class CurriculumSummary:
     recurrence_count: int
     recommended_drills: List[BlindedDrillContext]
     curriculum_notes: str
+    approval_status: str = "PENDING_USER_APPROVAL"      # 'PENDING_USER_APPROVAL', 'APPROVED', 'DISMISSED'
+    source_rule_event_samples: List[Dict[str, Any]] = None   # links to the intervention events that motivated it
+    synthetic_labeling: str = (
+        "SYNTHETIC_PRICE_SERIES_NOT_HISTORICAL: drills are synthetic bullish ramps "
+        "with no relation to the motivating incidents. Do NOT count toward transfer claims."
+    )
+    approved_by: Optional[str] = None
+    approved_at_utc: Optional[str] = None
 
 
 class TargetedDrillGenerator:
@@ -91,7 +100,7 @@ class TargetedDrillGenerator:
                 rule_id = row["rule_id"]
                 count = row["recurrence_count"]
 
-                # Build a deterministic pool of independent session dates for this curriculum.
+                # Deterministic pool of independent incident dates from the intervention ledger.
                 weakness_sessions = cls._get_weakness_sessions(rule_id, ticker, db_path=db_path)
                 used_session_dates: set[str] = set()
                 drills: List[BlindedDrillContext] = []
@@ -102,10 +111,11 @@ class TargetedDrillGenerator:
                     else:
                         # Deterministic offset fallback: offset from the most recent weakness session
                         # so the curriculum remains reproducible without re-slicing the same day.
+                        # Negative offsets stay in the verifiable past.
                         base = weakness_sessions[0] if weakness_sessions else "2026-08-28"
                         dt = datetime.strptime(base, "%Y-%m-%d").date()
-                        offset = i - len(weakness_sessions) + 1
                         from datetime import timedelta
+                        offset = -(i - len(weakness_sessions) + 2)
                         session_date = (dt + timedelta(days=offset)).isoformat()
 
                     if session_date in used_session_dates:
@@ -130,6 +140,26 @@ class TargetedDrillGenerator:
                 if not drills:
                     continue
 
+                # Downgrade synthetic drills to CALIBRATION-style TRAINING practice; they are
+                # explicitly excluded from transfer claims. Historical near-matches are the
+                # curriculum's real material — synthetic series exist only as smoke proxies.
+                for d in drills:
+                    if getattr(d, "dataset_split", None) == "ASSESSMENT":
+                        raise ValueError("Synthetic curriculum drills must never be ASSESSMENT.")
+
+                # Sample the motivating intervention events for the user-approval review.
+                with get_db_connection(db_path) as conn:
+                    ev_cur = conn.execute(
+                        """
+                        SELECT intervention_id, session_date, rule_id, ticker, event_timestamp_utc
+                        FROM intervention_events
+                        WHERE rule_id = ? AND ticker = ?
+                        ORDER BY event_timestamp_utc DESC LIMIT 5;
+                        """,
+                        (rule_id, ticker),
+                    )
+                    source_samples = [dict(r) for r in ev_cur.fetchall()]
+
                 curricula.append(CurriculumSummary(
                     curriculum_id=str(uuid.uuid4()),
                     weakness_rule_id=rule_id,
@@ -138,7 +168,37 @@ class TargetedDrillGenerator:
                     curriculum_notes=(
                         f"Targeted curriculum addressing recurring deviation '{rule_id}' "
                         f"({count} independent incident sessions). Drills use {len(used_session_dates)} "
-                        f"independent session date(s): {sorted(used_session_dates)}."
-                    )
+                        f"independent session date(s): {sorted(used_session_dates)}. "
+                        f"SYNTHETIC_PROXY_DRILLS: not derived from historical incident context; "
+                        f"requires user approval before activation."
+                    ),
+                    approval_status="PENDING_USER_APPROVAL",
+                    source_rule_event_samples=source_samples,
                 ))
             return curricula
+
+    @classmethod
+    def approve_curriculum(
+        cls,
+        curriculum: CurriculumSummary,
+        approved_by: str,
+    ) -> CurriculumSummary:
+        """Records explicit user approval; a curriculum is not activated without it.
+
+        Interpretation of repeated rule events as a 'weakness' is automatic, but
+        SCHEDULING practice from it is a behavior intervention requiring human consent.
+        """
+        if curriculum.approval_status != "PENDING_USER_APPROVAL":
+            raise ValueError(f"Curriculum {curriculum.curriculum_id} is already '{curriculum.approval_status}'.")
+        curriculum.approval_status = "APPROVED"
+        curriculum.approved_by = approved_by
+        curriculum.approved_at_utc = now_iso_utc()
+        return curriculum
+
+    @classmethod
+    def dismiss_curriculum(cls, curriculum: CurriculumSummary) -> CurriculumSummary:
+        """Records explicit dismissal; dismissed curricula are terminal."""
+        if curriculum.approval_status != "PENDING_USER_APPROVAL":
+            raise ValueError(f"Curriculum {curriculum.curriculum_id} is already '{curriculum.approval_status}'.")
+        curriculum.approval_status = "DISMISSED"
+        return curriculum

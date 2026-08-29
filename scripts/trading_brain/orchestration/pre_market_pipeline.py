@@ -23,7 +23,7 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from scripts.trading_brain.db.connection import REPO_ROOT
 from scripts.trading_brain.forecast.forecast_registrar import (
@@ -192,7 +192,12 @@ def wargame_data_to_plan_context(
     ] or ["ALN_LPEU", "FIRECRACKER", "GOALPOST_BB", "P12_MID"]
 
     max_risk_bps = float(pack.get("stop_ceiling_bps") or 15.0)
-    cutoff_iso = f"{session_date}T{cutoff_time_et}:00Z"
+
+    # Calendar-derived cutoff (ET wall-clock -> UTC, DST-aware). Never interpolate an ET
+    # wall-clock value with a 'Z' suffix: at 08:45 EDT that produces a 4h-early boundary
+    # and can misclassify genuine premarket receipts as post-hoc.
+    from scripts.utils.market_calendar import get_session_cutoff_utc, to_iso_utc
+    cutoff_iso = to_iso_utc(get_session_cutoff_utc(session_date, f"{cutoff_time_et}:00" if len(cutoff_time_et) == 5 else cutoff_time_et))
 
     scenarios = {
         "p12_bias": p12.get("bias"),
@@ -309,6 +314,46 @@ def run_pre_market_pipeline(
 # WS-1.2: Post-Market Pipeline
 # ---------------------------------------------------------------------------
 
+def _bind_and_validate_ticker(
+    records: List[Dict[str, Any]],
+    requested_ticker: str,
+    record_kind: str,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """Binds the requested ticker to records that lack one and validates the rest.
+
+    Adapter-layer ticker defaults (NQ1) would silently re-label ticker-less ES fills.
+    Scope contract:
+    - records WITHOUT a ticker field: injected with the requested ticker (source contract
+      explicitly lacked one, e.g. single-symbol NT8 export).
+    - records WITH a ticker that mismatches the requested scope: EXCLUDED and counted
+      (fail-closed against cross-account/cross-market contamination).
+    """
+    bound: List[Dict[str, Any]] = []
+    injected = 0
+    mismatched = 0
+    mismatch_details: List[str] = []
+    for rec in records:
+        rec = dict(rec)
+        t = rec.get("ticker")
+        if t is None or str(t).strip() == "":
+            rec["ticker"] = requested_ticker
+            injected += 1
+            bound.append(rec)
+        elif str(t).upper() == str(requested_ticker).upper():
+            bound.append(rec)
+        else:
+            mismatched += 1
+            mismatch_details.append(
+                f"{record_kind} {rec.get('broker_execution_id') or rec.get('intervention_id') or '?'} "
+                f"has ticker={t} != requested {requested_ticker}"
+            )
+            log.warning(f"[WS-1.2] {mismatch_details[-1]}")
+    meta = {"injected_ticker": injected, "mismatched_ticker": mismatched}
+    if mismatch_details:
+        meta["mismatch_details"] = mismatch_details[:10]
+    return bound, meta
+
+
 def _load_json_records(path: Path) -> List[Dict[str, Any]]:
     """Loads a JSON file containing either an array of records or {"records": [...]}."""
     content = json.loads(path.read_text(encoding="utf-8"))
@@ -333,7 +378,9 @@ def run_post_market_pipeline(
     Fills/interventions are ingested from JSON ingest files (NT8 bridge export or MCP
     dump). Missing ingest files are tolerated (capture-only day) but logged. Tape
     extraction failure on a live session is a hard error - outcome evidence cannot be
-    fabricated or skipped silently.
+    fabricated or skipped silently. Ticker-less records are bound to the requested
+    ticker; records carrying a DIFFERENT ticker are excluded and counted, never
+    re-labeled.
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -369,12 +416,14 @@ def run_post_market_pipeline(
 
     # 2. Broker fills & interventions (optional files)
     if executions_file is not None:
-        fills = _load_json_records(Path(executions_file))
+        fills, fill_scope_meta = _bind_and_validate_ticker(_load_json_records(Path(executions_file)), ticker, "fill")
         ingest_result = NT8BrokerAdapter.ingest_fills(fills=fills, account_id=account_id, db_path=db_path)
+        ingest_result["ticker_scope"] = fill_scope_meta
         result["steps"]["execution_ingest"] = ingest_result
     if interventions_file is not None:
-        interventions = _load_json_records(Path(interventions_file))
+        interventions, inv_scope_meta = _bind_and_validate_ticker(_load_json_records(Path(interventions_file)), ticker, "intervention")
         inv_result = NT8BrokerAdapter.ingest_interventions(interventions=interventions, db_path=db_path)
+        inv_result["ticker_scope"] = inv_scope_meta
         result["steps"]["intervention_ingest"] = inv_result
 
     # 3. Mechanical dispositions

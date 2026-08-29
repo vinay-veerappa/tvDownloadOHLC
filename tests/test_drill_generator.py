@@ -78,11 +78,18 @@ def test_calibration_rolling_baseline_and_validation(temp_db):
     outcomes = ["R1"] * 10 + ["DWP"] * 10 + ["R2"] * 5
     baseline = CalibrationEngine.compute_rolling_frequency_baseline(outcomes, window=50, min_history=5)
     assert len(baseline) == len(outcomes)
-    # First sessions fall back to unconditional prior
-    assert baseline[0]["R1"] == pytest.approx(10 / 25)
-    # Session 15 has 10 R1 + 5 DWP trailing history
+    # Warm-up sessions have no usable trailing history: UNIFORM prior (0.2), never the
+    # full-series frequency (computing it would leak future outcomes into warm-up rows).
+    assert baseline[0]["R1"] == pytest.approx(1 / 5)
+    assert baseline[0]["DWP"] == pytest.approx(1 / 5)
+    assert baseline[4]["R2"] == pytest.approx(1 / 5)
+    # Session 15 sees only rows strictly BEFORE it: 10 R1 + 5 DWP trailing history.
     assert baseline[15]["R1"] == pytest.approx(10 / 15)
     assert baseline[15]["DWP"] == pytest.approx(5 / 15)
+    # No warm-up row may equal the full-series frequency (leak check).
+    full_series_r1_share = 10 / 25
+    for i in range(4):
+        assert baseline[i]["R1"] != pytest.approx(full_series_r1_share)
 
     with pytest.raises(ValueError):
         # Probabilities do not sum to 1 -> fail closed

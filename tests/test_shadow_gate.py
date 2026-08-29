@@ -85,10 +85,22 @@ def test_shadow_evaluation_preregistration_and_terminal_locking(temp_db):
 
 
 def test_shadow_evaluation_underpowered_inconclusive_state(temp_db):
-    """Tests underpowered test (N=10) transitioning to INCONCLUSIVE_WAITING."""
+    """Tests underpowered test transitioning to INCONCLUSIVE_WAITING.
+
+    A model barely above benchmark at small N cannot reach power 0.80: observed metric
+    0.60 vs benchmark 0.55 at N=10 yields Cohen's h ~0.10 and thus ~0.1 power.
+    """
     finding_id = "f-under-1"
-    labels = ["LONG"] * 8 + ["SHORT"] * 2
+    labels = ["LONG"] * 6 + ["SHORT"] * 4
     features = list(range(len(labels)))
+
+    def mediocre_model(feats):
+        # 3 of 5 correct on any prefix: mirrors 0.60 realized accuracy
+        out = []
+        for i, _ in enumerate(feats):
+            out.append(labels[i] if i % 5 != 4 else ("SHORT" if labels[i] == "LONG" else "LONG"))
+        return out
+
     hash_ = HoldoutRegistry.register_holdout(
         holdout_dataset_id="HOLDOUT_UNDER",
         features=features,
@@ -112,7 +124,7 @@ def test_shadow_evaluation_underpowered_inconclusive_state(temp_db):
     res_under = ShadowGate.evaluate_candidate_finding(
         finding_id=finding_id,
         model_version_id="MOD_V1",
-        model_predict_fn=_directional_model_factory(labels),
+        model_predict_fn=mediocre_model,
         sample_size=10,
         db_path=temp_db
     )

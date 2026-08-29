@@ -57,7 +57,7 @@ EXPECTED_TRIGGER_COUNT = PROTECTED_TABLES_COUNT * 2  # 44 triggers
 # Bump this constant with EVERY backward-incompatible schema change, and add the matching
 # migration step to _apply_schema_migrations. A database stamped newer than the code is
 # refused (downgrade risk); a database stamped older runs pending migrations before use.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _apply_schema_migrations(conn, from_version: int, messages: List[str], verbose: bool) -> None:
@@ -96,6 +96,53 @@ def _apply_schema_migrations(conn, from_version: int, messages: List[str], verbo
                 messages.append("NOTE: source_revision_hash already present, migration idempotent.")
             else:
                 raise
+    if from_version < 4:
+        # v3 -> v4: (a) review events gain a trusted received_at_utc separate from the
+        # user-declared event_timestamp_utc (anti-backdating); (b) drill_sealed_answers
+        # gains sealed drill metadata (drill_type, dataset_split) and a custody token so
+        # submission cannot trust caller-declared classification.
+        messages.append("MIGRATED: schema v3 -> v4 (review receipt time + sealed drill metadata/custody token).")
+        if verbose:
+            print("  -> migration v3 -> v4 applied.")
+        # (a) review events: trusted receipt column
+        try:
+            conn.execute(
+                "ALTER TABLE information_item_review_events ADD COLUMN received_at_utc TIMESTAMP;"
+            )
+            # Backfill trusted receipt for pre-existing rows with the max observable time
+            # (honest floor: cannot manufacture an earlier trusted clock than what exists).
+            conn.execute(
+                """
+                UPDATE information_item_review_events
+                SET received_at_utc = COALESCE(received_at_utc, event_timestamp_utc, created_at_utc);
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_review_events_default_received
+                AFTER INSERT ON information_item_review_events
+                WHEN NEW.received_at_utc IS NULL
+                BEGIN
+                    UPDATE information_item_review_events
+                    SET received_at_utc = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                    WHERE review_event_id = NEW.review_event_id;
+                END;
+                """
+            )
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e):
+                raise
+        # (b) sealed drill metadata + custody token
+        for col, ddl in [
+            ("drill_type", "ALTER TABLE drill_sealed_answers ADD COLUMN drill_type TEXT NOT NULL DEFAULT 'RECOGNITION';"),
+            ("dataset_split", "ALTER TABLE drill_sealed_answers ADD COLUMN dataset_split TEXT NOT NULL DEFAULT 'TRAINING';"),
+            ("custody_token", "ALTER TABLE drill_sealed_answers ADD COLUMN custody_token TEXT;"),
+        ]:
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e):
+                    raise
 
 
 def _check_and_migrate_schema(conn, messages: List[str], verbose: bool) -> None:

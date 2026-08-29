@@ -98,3 +98,90 @@ def test_outbox_paused_target_mode(outbox_env):
                 )
     finally:
         os.environ["WARGAME_DB_TARGET"] = "DUAL_OUTBOX"
+
+
+def test_outbox_invalid_target_mode_fails_closed(outbox_env):
+    """Invalid WARGAME_DB_TARGET values must fail closed, not silently default."""
+    env = outbox_env
+    os.environ["WARGAME_DB_TARGET"] = "SOMETHING_ELSE"
+    try:
+        with pytest.raises(ValueError, match="Invalid WARGAME_DB_TARGET"):
+            OutboxProjector.get_target_mode()
+    finally:
+        os.environ["WARGAME_DB_TARGET"] = "DUAL_OUTBOX"
+
+
+def test_outbox_canonical_mode_skips_enqueue(outbox_env):
+    """CANONICAL mode: canonical DB only; no outbox rows and no legacy projection."""
+    env = outbox_env
+    os.environ["WARGAME_DB_TARGET"] = "CANONICAL"
+    try:
+        with get_db_connection(env["canon_db"]) as conn:
+            outbox_id = OutboxProjector.enqueue_outbox_item(
+                conn=conn,
+                destination_db="system_wargames",
+                canonical_table="forecast_snapshots",
+                canonical_id="fc-canon",
+                payload={"prediction_id": "pred-canon"}
+            )
+            assert outbox_id is None  # no-op, not an error
+
+        with get_db_connection(env["canon_db"]) as conn:
+            n = conn.execute("SELECT COUNT(*) FROM legacy_projection_outbox;").fetchone()[0]
+        assert n == 0
+
+        projector = OutboxProjector(
+            canonical_db_path=env["canon_db"],
+            system_wargames_path=env["sys_db"],
+            market_actuals_path=env["mkt_db"]
+        )
+        res = projector.project_pending()
+        assert res["projected"] == 0
+    finally:
+        os.environ["WARGAME_DB_TARGET"] = "DUAL_OUTBOX"
+
+
+def test_outbox_dual_outbox_default_projects(outbox_env):
+    """DUAL_OUTBOX (default) enqueues but only projects on explicit project_pending()."""
+    env = outbox_env
+    os.environ["WARGAME_DB_TARGET"] = "DUAL_OUTBOX"
+    with get_db_connection(env["canon_db"]) as conn:
+        OutboxProjector.enqueue_outbox_item(
+            conn=conn,
+            destination_db="market_actuals",
+            canonical_table="session_tape_actuals",
+            canonical_id="act-dual",
+            payload={"session_id": "sess-dual", "rth_close": 20100.0}
+        )
+    # Nothing projected yet
+    with sqlite3.connect(str(env["mkt_db"])) as conn:
+        n = conn.execute("SELECT COUNT(*) FROM market_actuals;").fetchone()[0]
+    assert n == 0
+
+    projector = OutboxProjector(
+        canonical_db_path=env["canon_db"],
+        system_wargames_path=env["sys_db"],
+        market_actuals_path=env["mkt_db"]
+    )
+    res = projector.project_pending()
+    assert res["projected"] == 1
+    with sqlite3.connect(str(env["mkt_db"])) as conn:
+        n = conn.execute("SELECT COUNT(*) FROM market_actuals;").fetchone()[0]
+    assert n == 1
+
+
+def test_outbox_paused_mode_blocks_projection(outbox_env):
+    """PAUSED mode disables projection (no legacy writes, clean no-op counts)."""
+    env = outbox_env
+    os.environ["WARGAME_DB_TARGET"] = "PAUSED"
+    try:
+        projector = OutboxProjector(
+            canonical_db_path=env["canon_db"],
+            system_wargames_path=env["sys_db"],
+            market_actuals_path=env["mkt_db"]
+        )
+        res = projector.project_pending()
+        assert res["projected"] == 0
+        assert res["failed"] == 0
+    finally:
+        os.environ["WARGAME_DB_TARGET"] = "DUAL_OUTBOX"

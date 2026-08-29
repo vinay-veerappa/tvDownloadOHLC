@@ -10,7 +10,7 @@ the canonical ledger, then checks:
 4. Unmatched links / quarantine counts are measured, not assumed.
 5. Replay audit: the same sequence replayed against a fresh DB yields identical counts.
 
-It returns OPERATIONALLY_ACCEPTED_CAPTURE_V1 only when all measurable checks pass.
+It returns FIXTURE_REPLAY_ACCEPTED only when allmeasurable checks pass.
 """
 
 import json
@@ -126,8 +126,12 @@ class OperationalSoakGate:
 
         for plan in cls.SOURCE_PLANS:
             if plan.source_plan_id not in existing_plans:
-                PlanAdapter.save_plan_snapshot(plan, db_path=db_path,
-                                               received_at_utc=plan.preparation_cutoff_utc)
+                PlanAdapter.save_plan_snapshot(
+                    plan, db_path=db_path,
+                    received_at_utc=plan.preparation_cutoff_utc,
+                    override_reason="soak-fixture deterministic replay receipt",
+                    override_actor="OPERATIONAL_SOAK_GATE",
+                )
         for fill in cls.SOURCE_FILLS:
             if fill["broker_execution_id"] not in existing_execs:
                 NT8BrokerAdapter.ingest_fills(fills=[fill], account_id="SOAK_ACC", db_path=db_path)
@@ -275,7 +279,7 @@ class OperationalSoakGate:
             extra_records = max(0, total_records - expected_records)
 
             status = (
-                "OPERATIONALLY_ACCEPTED_CAPTURE_V1"
+                "FIXTURE_REPLAY_ACCEPTED"
                 if (scenarios_passed == 5 and data_loss == 0 and duplicates == 0
                     and idempotency_violations == 0 and replay_drift == 0)
                 else "REJECTED"

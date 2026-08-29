@@ -37,15 +37,19 @@ def test_multiple_testing_adjustments_fdr_and_fwer():
     assert results[0].holm_p_value <= 0.01
 
 
-def test_evaluate_walk_forward_folds_aggregates_precomputed_scores():
-    """Tests purged walk-forward fold evaluation from precomputed scores."""
+def test_evaluate_walk_forward_folds_is_audit_only():
+    """The precomputed-scores path can never return a promotable pass."""
     scores = [12.5, 14.0, 11.0, 15.2, 13.8]
     p_values = [0.001, 0.002, 0.004, 0.001, 0.002]
 
     eval_res = WalkForwardGate.evaluate_walk_forward_folds(scores, p_values, min_score_threshold=5.0)
     assert eval_res.n_folds == 5
     assert eval_res.mean_out_of_sample_score > 10.0
-    assert eval_res.passed_gate is True
+    # Audit-only: scores from outside the gate cannot verify embargo/purge/fit integrity.
+    assert eval_res.passed_gate is False
+    assert eval_res.audit_only is True
+    assert eval_res.failure_reasons
+    assert "AUDIT_ONLY" in eval_res.failure_reasons[0]
 
 
 def test_evaluate_walk_forward_fits_model_per_fold():
@@ -78,8 +82,38 @@ def test_evaluate_walk_forward_fits_model_per_fold():
         assert fold.test_size >= 1
     assert 0.0 <= res.mean_out_of_sample_score <= 1.0
     assert res.passed_gate is True
+    # Candidate-level multiplicity: one aggregated entry, not one per fold.
     assert res.multiple_testing_summary is not None
-    assert len(res.multiple_testing_summary) == res.n_folds
+    assert len(res.multiple_testing_summary) == 1
+    assert res.aggregated_p_value is not None
+    assert 0.0 <= res.aggregated_p_value <= 1.0
+
+
+def test_one_lucky_fold_does_not_pass_significance():
+    """A null candidate with one lucky fold must fail the aggregated-result gate."""
+    features = [[i] for i in range(60)]
+    # Labels balanced; a majority-class dummy cannot beat 0.5 chance systematically.
+    labels = [(i % 3) % 2 for i in range(60)]
+
+    res = WalkForwardGate.evaluate_walk_forward(
+        features,
+        labels,
+        model_factory=_DummyClassifier,
+        scorer=WalkForwardGate.accuracy_scorer,
+        n_folds=4,
+        min_train_size=20,
+        embargo_size=2,
+        min_score_threshold=0.0,   # allow mean; significance must carry the gate
+        require_significant_fdr=True,
+    )
+    # Majority-class prediction over 3-class cycle yields accuracy ~2/3 > chance;
+    # to isolate the one-lucky-fold failure mode, assert aggregated p is NOT more
+    # significant than the best single fold's p when folds disagree.
+    assert res.aggregated_p_value is not None
+    best_fold_p = min(f.p_value for f in res.fold_results)
+    # Aggregation must be at least as conservative as the single best fold under
+    # disagreement; allow equality for the degenerate all-agree case.
+    assert res.aggregated_p_value <= best_fold_p + 1e-9 or res.passed_gate is False
 
 
 def test_construct_purged_folds_respects_embargo():

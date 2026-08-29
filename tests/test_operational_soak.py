@@ -17,9 +17,9 @@ def temp_db():
 
 
 def test_operational_soak_all_scenarios(temp_db):
-    """Executes the 5 measured integration scenarios and certifies OPERATIONALLY_ACCEPTED_CAPTURE_V1."""
+    """Executes the 5 measured integration scenarios and certifies FIXTURE_REPLAY_ACCEPTED."""
     res = OperationalSoakGate.run_all_scenarios(db_path=temp_db, verbose=False)
-    assert res.status == "OPERATIONALLY_ACCEPTED_CAPTURE_V1"
+    assert res.status == "FIXTURE_REPLAY_ACCEPTED"
     assert res.scenarios_passed == 5
     assert res.data_loss_count == 0
     assert res.duplicate_event_count == 0

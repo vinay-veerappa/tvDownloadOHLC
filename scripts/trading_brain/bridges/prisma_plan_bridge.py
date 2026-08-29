@@ -104,10 +104,16 @@ def _tradplan_to_plan_context(row: Dict[str, Any], revision_hash: str,
 
     bias = _detect_bias(entry, exit_p)
 
+    # Calendar-derived cutoff (ET wall-clock 08:45 -> UTC, DST-aware). String-interpolated
+    # '08:45Z' understates the boundary by 4-5 hours during EDT and misclassifies genuine
+    # premarket mirrored plans as post-hoc reconstructions.
+    from scripts.utils.market_calendar import get_session_cutoff_utc, to_iso_utc
+    prep_cutoff_iso = to_iso_utc(get_session_cutoff_utc(session_date, "08:45:00"))
+
     return PlanContext(
         session_date=session_date,
         ticker=ticker,
-        preparation_cutoff_utc=f"{session_date}T08:45:00Z",
+        preparation_cutoff_utc=prep_cutoff_iso,
         verbatim_plan_text=verbatim_text,
         primary_bias=bias,
         wargamed_scenarios={"setup": setup, "source": "PRISMA_TRADEPLAN"},

@@ -127,24 +127,51 @@ class CatalogRouter:
         cutoff_iso = to_iso_utc(decision_cutoff_utc)
 
         with get_db_connection(db_path) as conn:
+            # Review-state filtering happens IN SQL before LIMIT: Python-side filtering
+            # after pagination would let a page of newer rejected/quarantined rows hide
+            # older accepted evidence entirely.
             query = """
-            SELECT i.*,
-                   COALESCE((
-                       SELECT r.review_state FROM information_item_review_events r
-                       WHERE r.information_id = i.information_id
-                         AND r.event_timestamp_utc <= ?
-                       ORDER BY r.event_timestamp_utc DESC, r.created_at_utc DESC, r.rowid DESC
-                       LIMIT 1
-                   ), 'CAPTURED') AS active_review_state
+            WITH active_state AS (
+                SELECT i.information_id,
+                       COALESCE((
+                           SELECT r.review_state FROM information_item_review_events r
+                           WHERE r.information_id = i.information_id
+                             AND COALESCE(r.received_at_utc, r.event_timestamp_utc) <= ?
+                           ORDER BY COALESCE(r.received_at_utc, r.event_timestamp_utc) DESC,
+                                    r.created_at_utc DESC, r.rowid DESC
+                           LIMIT 1
+                       ), 'CAPTURED') AS active_review_state
+                FROM information_items i
+            )
+            SELECT i.*, a.active_review_state
             FROM information_items i
+            JOIN active_state a ON a.information_id = i.information_id
             WHERE i.available_at_utc <= ?
               AND i.received_at_utc <= ?
             """
+            # As-of review eligibility keyed on TRUSTED receipt time (falling back to
+            # created_at for pre-migration rows). Caller-declared event timestamps are
+            # display metadata, never the historical-evidence key.
             params: List[Any] = [cutoff_iso, cutoff_iso, cutoff_iso]
 
             if evidence_class:
                 query += " AND i.evidence_class = ?"
                 params.append(evidence_class.upper())
+
+            if only_accepted:
+                if min_review_state:
+                    # Review-state hierarchy: negative states disqualify an item outright.
+                    # CAPTURED is the neutral floor; only ACCEPTED is a positive credential.
+                    state = min_review_state.upper()
+                    if state == "CAPTURED":
+                        query += " AND a.active_review_state = 'CAPTURED'"
+                    elif state == "ACCEPTED":
+                        query += " AND a.active_review_state = 'ACCEPTED'"
+                    else:
+                        raise ValueError(f"Invalid min_review_state '{min_review_state}'. Must be CAPTURED or ACCEPTED.")
+
+                else:
+                    query += " AND a.active_review_state = 'ACCEPTED'"
 
             query += " ORDER BY i.available_at_utc DESC LIMIT ?;"
             params.append(limit)
@@ -153,17 +180,6 @@ class CatalogRouter:
             results = []
             for r in cur.fetchall():
                 d = dict(r)
-                state = d["active_review_state"]
-                if only_accepted:
-                    if min_review_state:
-                        # Review-state hierarchy: negative states disqualify an item outright.
-                        # CAPTURED is the neutral floor; only ACCEPTED is a positive credential.
-                        hierarchy = {"REJECTED": -1, "QUARANTINED": -1, "CAPTURED": 0, "ACCEPTED": 1}
-                        if hierarchy.get(state, -2) < hierarchy.get(min_review_state.upper(), 1):
-                            continue
-                    else:
-                        if state != "ACCEPTED":
-                            continue
                 if d.get("structured_payload_json"):
                     d["structured_payload"] = json.loads(d["structured_payload_json"])
                 results.append(d)
@@ -179,18 +195,27 @@ class CatalogRouter:
         event_timestamp_utc: Optional[str] = None,
         db_path: Optional[Union[str, Path]] = None
     ) -> str:
-        """Appends an immutable transition event to information_item_review_events."""
+        """Appends an immutable transition event to information_item_review_events.
+
+        Temporal trust boundary:
+        - `received_at_utc` is set to the trusted server clock now(); it is the ONLY key
+          used for as-of historical eligibility, so a review performed today can never
+          create the appearance of having been accepted before a past cutoff.
+        - `event_timestamp_utc` (optional caller override) is the user-declared/effective
+          time; it is preserved for display and audit but has no as-of authority.
+        """
         event_id = str(uuid.uuid4())
-        now_iso = to_iso_utc(event_timestamp_utc) if event_timestamp_utc else now_iso_utc()
-        
+        declared_iso = to_iso_utc(event_timestamp_utc) if event_timestamp_utc else now_iso_utc()
+        trusted_recv = now_iso_utc()
+
         with get_db_connection(db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO information_item_review_events (
                     review_event_id, information_id, review_state,
-                    reviewer, review_notes, event_timestamp_utc
-                ) VALUES (?, ?, ?, ?, ?, ?);
+                    reviewer, review_notes, event_timestamp_utc, received_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?);
                 """,
-                (event_id, information_id, review_state.upper(), reviewer, review_notes, now_iso)
+                (event_id, information_id, review_state.upper(), reviewer, review_notes, declared_iso, trusted_recv)
             )
         return event_id

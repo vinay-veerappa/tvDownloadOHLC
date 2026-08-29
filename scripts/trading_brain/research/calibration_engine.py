@@ -97,19 +97,21 @@ class CalibrationEngine:
         """Computes the declared rolling-N recency-weighted-equivalent frequency baseline.
 
         For each session index i, returns the empirical class frequencies observed over the
-        trailing `window` sessions strictly BEFORE i. The first min_history sessions use the
-        unconditional prior (not enough rolling history yet) — a baseline without history is
-        the base rate, not a fabricated distribution.
+        trailing `window` sessions strictly BEFORE i — never any row at or after i, and
+        never the full-series frequency (the full series includes future outcomes, which
+        would leak during warm-up). The first min_history sessions use a UNIFORM prior
+        (1/5 each): with no usable history, the honest prior is uniform, not a
+        full-series frequency computed from data the baseline row must not see.
         """
         n = len(realized_outcomes)
         if n == 0:
             raise ValueError("Cannot compute rolling baseline over an empty outcome series.")
-        unconditional = cls.compute_unconditional_prior(realized_outcomes)
+        uniform_prior = {dt: 1.0 / len(DAY_TYPES) for dt in DAY_TYPES}
         baseline: List[Dict[str, float]] = []
         for i in range(n):
             window_outcomes = realized_outcomes[max(0, i - window):i]
             if len(window_outcomes) < min_history:
-                baseline.append(dict(unconditional))
+                baseline.append(dict(uniform_prior))
                 continue
             counts = {dt: 0 for dt in DAY_TYPES}
             for r in window_outcomes:
@@ -135,8 +137,10 @@ class CalibrationEngine:
         if champion_forecasts is not None and len(champion_forecasts) != n:
             raise ValueError(f"Champion series length ({len(champion_forecasts)}) must match model series length ({n})")
 
-        # Derive empirical prior from data if not provided
-        default_prior = prior_probs or cls.compute_unconditional_prior(realized_outcomes)
+        # Default prior: uniform. Deriving it from the FULL outcome series would hand the
+        # baseline knowledge of future class frequencies (leakage); a caller with a
+        # genuinely ex-ante prior (e.g. pre-registered base rates) may pass prior_probs.
+        default_prior = prior_probs or {dt: 1.0 / len(DAY_TYPES) for dt in DAY_TYPES}
         
         model_briers = []
         model_logs = []

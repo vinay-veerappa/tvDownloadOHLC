@@ -373,19 +373,28 @@ class DailyProcessDeltaReconciler:
                 else:
                     strat_respected = True
 
-                # Risk Budget Check: every executed opportunity's declared stop distance must be within
-                # 5% of the plan's max intended risk budget. The 5% tolerance accounts for rounding/entry
-                # variance but does NOT allow strategic stop widening.
+                # Risk Budget Check: executed opportunities' declared stop distances must be
+                # within 5% of the plan's risk budget. FAIL-CLOSED on unmatched discretionary
+                # fills: a discretionary execution carries no declared stop distance, so its
+                # risk compliance CANNOT be verified from the ledger — unverified is not
+                # compliant.
                 if total_execs > 0:
                     if plan_summary.max_intended_risk_bps is None or plan_summary.max_intended_risk_bps <= 0.0:
                         risk_respected = False
                     else:
                         risk_respected = True
+                        verified_via_opportunity = 0
                         for r in opp_rows:
                             if r["active_disposition"] == "EXECUTED":
+                                verified_via_opportunity += 1
                                 if r["stop_distance_bps"] > (plan_summary.max_intended_risk_bps * 1.05):
                                     risk_respected = False
                                     break
+                        # Every execution must be accounted for by a matched EXECUTED
+                        # opportunity (1:1 within latency tolerances). Executions beyond
+                        # the matched set are discretionary/unverifiable risk.
+                        if verified_via_opportunity < total_execs:
+                            risk_respected = False
                 else:
                     risk_respected = True
 

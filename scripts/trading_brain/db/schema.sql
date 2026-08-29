@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS information_item_review_events (
     review_state TEXT NOT NULL,                -- 'CAPTURED', 'ACCEPTED', 'REJECTED', 'QUARANTINED'
     reviewer TEXT NOT NULL,
     review_notes TEXT,
-    event_timestamp_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    event_timestamp_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),  -- user-declared/effective time (untrusted)
+    received_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),      -- trusted server receipt; as-of eligibility key
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (information_id) REFERENCES information_items(information_id)
 );
@@ -346,6 +347,9 @@ CREATE TABLE IF NOT EXISTS drill_sealed_answers (
     true_bias TEXT NOT NULL,
     true_setup TEXT NOT NULL,
     is_locked BOOLEAN NOT NULL DEFAULT FALSE,
+    drill_type TEXT NOT NULL DEFAULT 'RECOGNITION',
+    dataset_split TEXT NOT NULL DEFAULT 'TRAINING',
+    custody_token TEXT,
     created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 

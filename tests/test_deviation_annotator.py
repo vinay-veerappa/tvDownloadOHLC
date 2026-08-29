@@ -42,6 +42,8 @@ def test_deviation_annotator_contrary_bias_and_unpermitted_strat(temp_db):
         ),
         db_path=temp_db,
         received_at_utc="2026-08-28T12:30:00Z",
+        override_reason="test-fixture historical migration",
+        override_actor="TEST_FIXTURE",
     )
     
     # Execution 1: BUY order on STRAT_ALN_LPEU_V0_1 -> BOTH violations (Contrary Bias + Unpermitted Strategy)

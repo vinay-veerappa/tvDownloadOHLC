@@ -76,13 +76,45 @@ class ShadowGate:
         effect_size_d: float,
         alpha: float = 0.05
     ) -> float:
-        """Approximates statistical power for a one-tailed z-test."""
+        """Power for a one-sided z-test at the given standardized effect size.
+
+        `effect_size_d` is interpreted on the metric's own standardized scale. For
+        accuracy-like metrics (proportions), callers should pass Cohen's h (arcsine
+        effect): h = 2*asin(sqrt(p1)) - 2*asin(sqrt(p0)). Derived from holdout data,
+        NOT from the preregistered expectation, so the power statement reflects the
+        actually-observed effect.
+        """
         if sample_size <= 0 or effect_size_d <= 0:
             return 0.0
         z_alpha = 1.645
         z_score = effect_size_d * math.sqrt(sample_size) - z_alpha
         power = 0.5 * (1.0 + math.erf(z_score / math.sqrt(2.0)))
         return max(0.0, min(1.0, power))
+
+    @staticmethod
+    def _cohens_h_from_props(p1: float, p2: float) -> float:
+        """Cohen's h: arcsine-transformed difference between two proportions."""
+        h = 2.0 * math.asin(math.sqrt(min(max(p1, 0.0), 1.0))) - 2.0 * math.asin(math.sqrt(min(max(p2, 0.0), 1.0)))
+        return abs(h)
+
+    @staticmethod
+    def _min_improvement_for_effect(benchmark: float, expected_effect_h: float) -> float:
+        """Inverts Cohen's h at the preregistered benchmark to the minimum practical
+        improvement on the raw metric scale: find p1 > p2=benchmark such that
+        h(p1, benchmark) >= expected_effect_h. Binary-search on the raw scale."""
+        target = max(expected_effect_h, 0.0)
+        if target == 0.0:
+            return 0.0
+        a2 = math.asin(math.sqrt(min(max(benchmark, 0.0), 1.0)))
+        target_phase = a2 + target / 2.0
+        if target_phase >= math.pi / 2.0:
+            # Effect unattainable below p=1: require the largest attainable improvement.
+            p1 = 1.0
+        else:
+            p1 = math.sin(target_phase) ** 2
+        min_p1 = min(max(p1, 0.0), 1.0)
+        improvement = min_p1 - benchmark
+        return max(improvement, 0.0)
 
     @staticmethod
     def _compute_fdr_q_value(p_value: float, total_comparisons: int = 1) -> float:
@@ -92,14 +124,23 @@ class ShadowGate:
         return min(1.0, p_value * total_comparisons)
 
     @staticmethod
-    def _one_sided_p_value(observed_metric: float, benchmark: float, sample_size: int,
-                           effect_size_d: float) -> float:
-        """Approximate p-value for one-tailed z-test of metric > benchmark."""
-        if sample_size <= 0 or effect_size_d <= 0:
+    def _one_sided_p_value(observed_metric: float, benchmark: float, sample_size: int) -> float:
+        """One-sided z-test p-value that the observed proportion exceeds the benchmark.
+
+        Valid for accuracy-like metrics (proportions in [0,1]): SE is computed from the
+        OBSERVED proportion under the null (sqrt(p0*(1-p0)/n)), not from a preregistered
+        effect size. This is the metric-appropriate test.
+        """
+        if sample_size <= 0:
             return 1.0
-        se = 1.0 / (effect_size_d * math.sqrt(sample_size)) if effect_size_d > 0 else 1.0
-        z = (observed_metric - benchmark) / max(se, 1e-9)
-        return 1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+        p0 = min(max(benchmark, 0.0), 1.0)
+        se = math.sqrt(p0 * (1.0 - p0) / sample_size)
+        if se <= 0:
+            # Degenerate benchmark at 0 or 1: any observed excess is decisive.
+            return 0.0 if observed_metric > benchmark else 1.0
+        z = (observed_metric - benchmark) / se
+        p = 1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+        return min(max(p, 0.0), 1.0)
 
     @classmethod
     def preregister_candidate_finding(
@@ -229,25 +270,38 @@ class ShadowGate:
         else:
             raise ValueError(f"Unsupported metric_kind: {metric_kind}")
 
-        power = cls.calculate_statistical_power(n, sealed_effect_d)
-        p_value = cls._one_sided_p_value(realized_metric, sealed_benchmark, n, sealed_effect_d)
+        # Metric-valid inference: the p-value z-test uses SE from the observed proportion
+        # under the null (valid for accuracy-like proportions), and power uses Cohen's h
+        # computed from the OBSERVED holdout effect - never from the preregistered
+        # expectation (which would manufacture its own confirmation).
+        power = cls.calculate_statistical_power(
+            n, cls._cohens_h_from_props(realized_metric, sealed_benchmark)
+        )
+        p_value = cls._one_sided_p_value(realized_metric, sealed_benchmark, n)
         fdr_q_value = cls._compute_fdr_q_value(p_value)
         improvement = realized_metric - sealed_benchmark
+        # Preregistered MDE on the raw metric scale: promotion requires the observed
+        # improvement to at least meet the preregistered expected effect expressed via
+        # Cohen's h inverted back to the accuracy scale.
+        min_practical_improvement = cls._min_improvement_for_effect(sealed_benchmark, sealed_effect_d)
+        meets_mde = improvement >= min_practical_improvement
 
         if power < 0.80:
             stage = "INCONCLUSIVE_WAITING"
             notes = f"Insufficient statistical power ({power:.2f} < 0.80) at N={n}. Frozen awaiting unobserved samples."
-        elif fdr_q_value <= 0.05 and improvement > 0:
+        elif fdr_q_value <= 0.05 and improvement > 0 and meets_mde:
             stage = "PROMOTED"
             notes = (
                 f"Validated on sealed shadow data (Power={power:.2f}, FDR q={fdr_q_value:.4f}, "
-                f"Metric={realized_metric:.4f} > {sealed_benchmark:.4f})."
+                f"Metric={realized_metric:.4f} > {sealed_benchmark:.4f}, "
+                f"Improvement={improvement:.4f} >= MDE={min_practical_improvement:.4f})."
             )
         else:
             stage = "REJECTED"
             notes = (
                 f"Failed criteria on sealed shadow data (FDR q={fdr_q_value:.4f}, "
-                f"Metric={realized_metric:.4f} <= {sealed_benchmark:.4f})."
+                f"Metric={realized_metric:.4f}, Improvement={improvement:.4f} vs required MDE="
+                f"{min_practical_improvement:.4f})."
             )
 
         event_id = str(uuid.uuid4())
@@ -256,6 +310,8 @@ class ShadowGate:
             "realized_metric": realized_metric,
             "benchmark_metric": sealed_benchmark,
             "effect_size_d": sealed_effect_d,
+            "min_practical_improvement": round(min_practical_improvement, 6),
+            "meets_mde": meets_mde,
             "statistical_power": power,
             "fdr_q_value": fdr_q_value,
             "holdout_dataset_id": holdout_dataset_id,

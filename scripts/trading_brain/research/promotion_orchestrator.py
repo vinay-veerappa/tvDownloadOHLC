@@ -42,41 +42,67 @@ class PromotionOrchestrator:
     # Immutable ledger helpers
     # ---------------------------------------------------------------------------
     @classmethod
-    def _ensure_model_version_record(
+    def _require_model_version_record(
         cls,
         conn,
         model_version_id: str,
-        model_family: str = "PROFILER_DAY_TYPE",
-        version_tag: str = "1.0.0",
-        parameter_hash: str = "orchestrator_placeholder",
-        feature_manifest_json: str = "{}",
-        calibration_metrics_json: str = "{}",
-        status: str = "SHADOW",
-    ) -> None:
-        """Create an immutable model_version row if it does not already exist.
+        tier: int,
+        shadow_finding_id: Optional[str] = None,
+        expected_holdout_hash: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Fails closed unless the model record pre-exists AND the shadow gate cleared it.
 
-        The caller is responsible for opening a transaction/connection.
+        The orchestrator NEVER fabricates model records: a registry row created by the
+        orchestrator itself with placeholder parameters would be an auditable-forgery
+        magnet. Any promotion additionally requires a linked PROMOTED candidate_finding_events
+        event produced by the shadow gate, with a matching holdout hash when supplied.
         """
-        cur = conn.execute("SELECT 1 FROM model_versions WHERE model_version_id = ?;", (model_version_id,))
-        if cur.fetchone():
-            return
-        conn.execute(
-            """
-            INSERT INTO model_versions (
-                model_version_id, model_family, version_tag, parameter_hash,
-                feature_manifest_json, calibration_metrics_json, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?);
-            """,
-            (
-                model_version_id,
-                model_family,
-                version_tag,
-                parameter_hash,
-                feature_manifest_json,
-                calibration_metrics_json,
-                status,
-            ),
-        )
+        cur = conn.execute("SELECT * FROM model_versions WHERE model_version_id = ?;", (model_version_id,))
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(
+                f"model_version '{model_version_id}' does not exist in the immutable registry. "
+                "Promotion requires a pre-existing model record; the orchestrator refuses to "
+                "create placeholder records (audit-forgery prevention)."
+            )
+
+        prereq: Dict[str, Any] = {
+            "model_record_exists": True,
+            "parameter_hash": row["parameter_hash"],
+        }
+
+        if shadow_finding_id:
+            ev = conn.execute(
+                """
+                SELECT * FROM candidate_finding_events
+                WHERE finding_id = ? AND model_version_id = ? AND pipeline_stage = 'PROMOTED'
+                ORDER BY event_timestamp_utc DESC LIMIT 1;
+                """,
+                (shadow_finding_id, model_version_id),
+            ).fetchone()
+            if not ev:
+                raise ValueError(
+                    f"Tier {tier} promotion requires a completed PROMOTED shadow-gate event for "
+                    f"finding '{shadow_finding_id}' on model '{model_version_id}'."
+                )
+            prereq["shadow_event_id"] = ev["finding_event_id"]
+            prereq["shadow_stage"] = "PROMOTED"
+            if expected_holdout_hash:
+                eval_blob = json.loads(ev["evaluation_result_json"] or "{}")
+                holdout_hash = eval_blob.get("holdout_hash")
+                if holdout_hash and expected_holdout_hash and holdout_hash != expected_holdout_hash:
+                    raise ValueError(
+                        "Holdout hash mismatch between preregistration and shadow result: "
+                        f"{expected_holdout_hash} != {holdout_hash}"
+                    )
+                prereq["holdout_hash"] = holdout_hash
+        else:
+            raise ValueError(
+                f"Tier {tier} promotion requires shadow_finding_id linking a completed "
+                "shadow-gate PROMOTED event (verified-evidence chain requirement)."
+            )
+
+        return prereq
 
     @classmethod
     def _log_deployment_event(
@@ -88,8 +114,12 @@ class PromotionOrchestrator:
         metrics: Dict[str, Any],
         actor: str,
         reason: str,
+        prereq: Optional[Dict[str, Any]] = None,
     ) -> str:
         event_id = str(uuid.uuid4())
+        payload = dict(metrics)
+        if prereq:
+            payload["prerequisite_chain"] = prereq
         conn.execute(
             """
             INSERT INTO model_deployment_events (
@@ -102,7 +132,7 @@ class PromotionOrchestrator:
                 model_version_id,
                 tier,
                 deployment_status,
-                json.dumps(metrics),
+                json.dumps(payload),
                 actor,
                 reason,
                 now_iso_utc(),
@@ -139,11 +169,17 @@ class PromotionOrchestrator:
         brier_skill_score: float,
         ece: float,
         fdr_q_value: float,
-        model_family: str = "PROFILER_DAY_TYPE",
+        shadow_finding_id: str,
+        expected_holdout_hash: Optional[str] = None,
         actor: str = "ORCHESTRATOR",
         db_path: Optional[Union[str, Path]] = None
     ) -> TierPromotionResult:
-        """Tier 1: Forecast Model Promotion (Calibration & Discrimination)."""
+        """Tier 1: Forecast Model Promotion (Calibration & Discrimination).
+
+        Evidence chain required: pre-existing immutable model record + PROMOTED shadow-gate
+        event for this model with matching holdout hash. Raw caller metrics alone never
+        promote.
+        """
         metrics = {
             "brier_skill_score": brier_skill_score,
             "ece": ece,
@@ -155,20 +191,27 @@ class PromotionOrchestrator:
             reason = "One or more tier-1 metrics are non-finite; insufficient evidence for promotion decision"
         elif (brier_skill_score > 0.0) and (ece <= 0.08) and (fdr_q_value <= 0.05):
             status = "CHAMPION"
-            reason = "Passed BSS > 0, ECE <= 0.08, FDR q <= 0.05"
+            reason = "Passed BSS > 0, ECE <= 0.08, FDR q <= 0.05 with verified shadow evidence"
         else:
             status = "REJECTED"
             reason = "Failed calibration thresholds"
 
         with get_db_connection(db_path) as conn:
-            cls._ensure_model_version_record(
-                conn,
-                model_version_id,
-                model_family=model_family,
-                calibration_metrics_json=json.dumps(metrics),
-                status="SHADOW",
-            )
-            cls._log_deployment_event(conn, model_version_id, 1, status, metrics, actor, reason)
+            if status == "CHAMPION":
+                prereq = cls._require_model_version_record(
+                    conn, model_version_id, 1,
+                    shadow_finding_id=shadow_finding_id,
+                    expected_holdout_hash=expected_holdout_hash,
+                )
+            else:
+                cur = conn.execute("SELECT 1 FROM model_versions WHERE model_version_id = ?;", (model_version_id,))
+                if not cur.fetchone():
+                    raise ValueError(
+                        f"model_version '{model_version_id}' does not exist; the orchestrator "
+                        "refuses to create placeholder records."
+                    )
+                prereq = {"model_record_exists": True}
+            cls._log_deployment_event(conn, model_version_id, 1, status, metrics, actor, reason, prereq=prereq)
 
         return TierPromotionResult(
             tier=1,
@@ -187,11 +230,12 @@ class PromotionOrchestrator:
         expectancy_bps: float,
         win_rate: float,
         fdr_q_value: float,
-        model_family: str = "SIGNAL_MODEL",
+        shadow_finding_id: str,
+        expected_holdout_hash: Optional[str] = None,
         actor: str = "ORCHESTRATOR",
         db_path: Optional[Union[str, Path]] = None
     ) -> TierPromotionResult:
-        """Tier 2: Signal Model Promotion (Opportunity Expectancy)."""
+        """Tier 2: Signal Model Promotion (Opportunity Expectancy). Verified evidence chain required."""
         metrics = {
             "expectancy_bps": expectancy_bps,
             "win_rate": win_rate,
@@ -203,20 +247,27 @@ class PromotionOrchestrator:
             reason = "One or more tier-2 metrics are non-finite; insufficient evidence"
         elif (expectancy_bps >= 2.0) and (win_rate >= 0.50) and (fdr_q_value <= 0.05):
             status = "CHAMPION"
-            reason = "Expectancy >= 2 bps, Win Rate >= 50%, FDR q <= 0.05"
+            reason = "Expectancy >= 2 bps, Win Rate >= 50%, FDR q <= 0.05 with verified shadow evidence"
         else:
             status = "REJECTED"
             reason = "Sub-threshold signal expectancy"
 
         with get_db_connection(db_path) as conn:
-            cls._ensure_model_version_record(
-                conn,
-                model_version_id,
-                model_family=model_family,
-                calibration_metrics_json=json.dumps(metrics),
-                status="SHADOW",
-            )
-            cls._log_deployment_event(conn, model_version_id, 2, status, metrics, actor, reason)
+            if status == "CHAMPION":
+                prereq = cls._require_model_version_record(
+                    conn, model_version_id, 2,
+                    shadow_finding_id=shadow_finding_id,
+                    expected_holdout_hash=expected_holdout_hash,
+                )
+            else:
+                cur = conn.execute("SELECT 1 FROM model_versions WHERE model_version_id = ?;", (model_version_id,))
+                if not cur.fetchone():
+                    raise ValueError(
+                        f"model_version '{model_version_id}' does not exist; the orchestrator "
+                        "refuses to create placeholder records."
+                    )
+                prereq = {"model_record_exists": True}
+            cls._log_deployment_event(conn, model_version_id, 2, status, metrics, actor, reason, prereq=prereq)
 
         return TierPromotionResult(
             tier=2,
@@ -235,11 +286,12 @@ class PromotionOrchestrator:
         realized_ev_r: float,
         avg_slippage_bps: float,
         cost_ratio: float,
-        model_family: str = "EXECUTION_POLICY",
+        shadow_finding_id: str,
+        expected_holdout_hash: Optional[str] = None,
         actor: str = "ORCHESTRATOR",
         db_path: Optional[Union[str, Path]] = None
     ) -> TierPromotionResult:
-        """Tier 3: Execution Policy Promotion (Realized EV in R after costs)."""
+        """Tier 3: Execution Policy Promotion (Realized EV in R after costs). Verified evidence chain required."""
         metrics = {
             "realized_ev_r": realized_ev_r,
             "avg_slippage_bps": avg_slippage_bps,
@@ -251,20 +303,27 @@ class PromotionOrchestrator:
             reason = "One or more tier-3 metrics are non-finite; insufficient evidence"
         elif (realized_ev_r >= 0.30) and (avg_slippage_bps <= 2.0) and (cost_ratio <= 0.25):
             status = "CHAMPION"
-            reason = "EV >= 0.30 R, Slippage <= 2 bps, Cost ratio <= 25%"
+            reason = "EV >= 0.30 R, Slippage <= 2 bps, Cost ratio <= 25% with verified shadow evidence"
         else:
             status = "REJECTED"
             reason = "Execution friction degraded expectancy below threshold"
 
         with get_db_connection(db_path) as conn:
-            cls._ensure_model_version_record(
-                conn,
-                model_version_id,
-                model_family=model_family,
-                calibration_metrics_json=json.dumps(metrics),
-                status="SHADOW",
-            )
-            cls._log_deployment_event(conn, model_version_id, 3, status, metrics, actor, reason)
+            if status == "CHAMPION":
+                prereq = cls._require_model_version_record(
+                    conn, model_version_id, 3,
+                    shadow_finding_id=shadow_finding_id,
+                    expected_holdout_hash=expected_holdout_hash,
+                )
+            else:
+                cur = conn.execute("SELECT 1 FROM model_versions WHERE model_version_id = ?;", (model_version_id,))
+                if not cur.fetchone():
+                    raise ValueError(
+                        f"model_version '{model_version_id}' does not exist; the orchestrator "
+                        "refuses to create placeholder records."
+                    )
+                prereq = {"model_record_exists": True}
+            cls._log_deployment_event(conn, model_version_id, 3, status, metrics, actor, reason, prereq=prereq)
 
         return TierPromotionResult(
             tier=3,
@@ -283,11 +342,12 @@ class PromotionOrchestrator:
         max_drawdown_pct: float,
         daily_loss_limit_margin_pct: float,
         tail_var_99_bps: float,
-        model_family: str = "PORTFOLIO_ALLOCATION",
+        shadow_finding_id: str,
+        expected_holdout_hash: Optional[str] = None,
         actor: str = "ORCHESTRATOR",
         db_path: Optional[Union[str, Path]] = None
     ) -> TierPromotionResult:
-        """Tier 4: Portfolio Deployment Promotion (Drawdown, tail risk, and prop constraints)."""
+        """Tier 4: Portfolio Deployment Promotion (Drawdown, tail risk, and prop constraints). Verified evidence chain required."""
         metrics = {
             "max_drawdown_pct": max_drawdown_pct,
             "daily_loss_limit_margin_pct": daily_loss_limit_margin_pct,
@@ -299,20 +359,27 @@ class PromotionOrchestrator:
             reason = "One or more tier-4 metrics are non-finite; insufficient evidence"
         elif (max_drawdown_pct <= 5.0) and (daily_loss_limit_margin_pct >= 20.0) and (tail_var_99_bps <= 150.0):
             status = "CHAMPION"
-            reason = "Drawdown <= 5%, Prop margin >= 20%, Tail VaR 99% <= 150 bps"
+            reason = "Drawdown <= 5%, Prop margin >= 20%, Tail VaR 99% <= 150 bps with verified shadow evidence"
         else:
             status = "REJECTED"
             reason = "Portfolio risk exceeded safety thresholds"
 
         with get_db_connection(db_path) as conn:
-            cls._ensure_model_version_record(
-                conn,
-                model_version_id,
-                model_family=model_family,
-                calibration_metrics_json=json.dumps(metrics),
-                status="SHADOW",
-            )
-            cls._log_deployment_event(conn, model_version_id, 4, status, metrics, actor, reason)
+            if status == "CHAMPION":
+                prereq = cls._require_model_version_record(
+                    conn, model_version_id, 4,
+                    shadow_finding_id=shadow_finding_id,
+                    expected_holdout_hash=expected_holdout_hash,
+                )
+            else:
+                cur = conn.execute("SELECT 1 FROM model_versions WHERE model_version_id = ?;", (model_version_id,))
+                if not cur.fetchone():
+                    raise ValueError(
+                        f"model_version '{model_version_id}' does not exist; the orchestrator "
+                        "refuses to create placeholder records."
+                    )
+                prereq = {"model_record_exists": True}
+            cls._log_deployment_event(conn, model_version_id, 4, status, metrics, actor, reason, prereq=prereq)
 
         return TierPromotionResult(
             tier=4,
@@ -338,13 +405,13 @@ class PromotionOrchestrator:
         """Evaluate a sequence of tier requests for a single model_version_id.
 
         `tier_inputs` is a list of dicts with keys:
-            tier (int), and tier-specific metric keys.
+            tier (int), tier-specific metric keys, and shadow_finding_id linking a
+            completed PROMOTED shadow-gate event (required for any CHAMPION outcome).
         Example:
             [
-                {"tier": 1, "brier_skill_score": 0.05, "ece": 0.04, "fdr_q_value": 0.03},
-                {"tier": 2, "expectancy_bps": 3.0, "win_rate": 0.55, "fdr_q_value": 0.04},
-                {"tier": 3, "realized_ev_r": 0.35, "avg_slippage_bps": 1.5, "cost_ratio": 0.20},
-                {"tier": 4, "max_drawdown_pct": 4.0, "daily_loss_limit_margin_pct": 25.0, "tail_var_99_bps": 120.0},
+                {"tier": 1, "brier_skill_score": 0.05, "ece": 0.04, "fdr_q_value": 0.03,
+                 "shadow_finding_id": "SF-1"},
+                ...
             ]
         """
         dispatch = {

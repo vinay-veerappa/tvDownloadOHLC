@@ -72,56 +72,89 @@ class PlanAdapter:
         db_path: Optional[Union[str, Path]] = None,
         *,
         received_at_utc: Optional[Union[str, datetime]] = None,
+        override_reason: Optional[str] = None,
+        override_actor: Optional[str] = None,
     ) -> str:
+        """Persists a plan snapshot.
+
+        Trust boundary: `received_at_utc` is the actual database receipt time by default.
+        An override is a PRIVILEGED migration action: it requires both `override_reason`
+        and `override_actor`, and writes an auditable RECEIPT_OVERRIDE lifecycle event
+        recording the claimed historical receipt, the actor, and the reason. The claimed
+        receipt can award EX_ANTE_DECLARED only through this audited path.
+        """
+        if received_at_utc is not None and (not override_reason or not override_actor):
+            raise ValueError(
+                "received_at_utc override requires override_reason and override_actor "
+                "(privileged migration path). Unaudited caller-supplied receipt times can "
+                "forge ex-ante provenance."
+            )
         snapshot_id = plan.plan_snapshot_id or str(uuid.uuid4())
         plan_family_id = plan.plan_family_id or str(uuid.uuid4())
-        
+        is_receipt_override = received_at_utc is not None
+
         cal_cutoff = get_session_cutoff_utc(plan.session_date, "08:45:00")
         cal_cutoff_iso = to_iso_utc(cal_cutoff)
-        
+
+        # Ex-ante status is certified exclusively against the CALENDAR cutoff. A caller
+        # cutoff later than the calendar one never broadens the boundary (fail-closed):
+        # the earlier of the two governs, so a forged late-cutoff plan cannot win ex-ante.
         if plan.preparation_cutoff_utc:
             req_cutoff = parse_iso_utc(plan.preparation_cutoff_utc)
             cutoff_iso = cal_cutoff_iso if req_cutoff > cal_cutoff else to_iso_utc(req_cutoff)
         else:
             cutoff_iso = cal_cutoff_iso
-            
+
         prov = "EX_ANTE_DECLARED" if plan.provenance_class in ("EX_ANTE", "EX_ANTE_DECLARED") else "POST_HOC_RECONSTRUCTION"
 
-        # Trust boundary: received_at_utc must be the actual database receipt time unless an
-        # explicit (audited) override is supplied. Ex-ante certification is awarded only if
-        # the receipt is on or before the session cutoff; otherwise degrade honestly.
+        # Trust boundary: receipt must be on or before the session cutoff for ex-ante;
+        # otherwise degrade honestly.
         real_recv_iso = to_iso_utc(received_at_utc) if received_at_utc else now_iso_utc()
         if prov == "EX_ANTE_DECLARED" and parse_iso_utc(real_recv_iso) > parse_iso_utc(cutoff_iso):
             prov = "POST_HOC_RECONSTRUCTION"
         recv_iso = real_recv_iso
 
         with get_db_connection(db_path) as conn:
-            cur = conn.execute(
-                "SELECT IFNULL(MAX(revision_seq), 0) + 1 AS next_seq FROM plan_snapshots WHERE session_date = ? AND ticker = ?;",
-                (plan.session_date, plan.ticker)
-            )
-            rev_seq = cur.fetchone()["next_seq"]
-            
-            conn.execute(
-                """
-                INSERT INTO plan_snapshots (
-                    plan_snapshot_id, plan_family_id, revision_seq, session_date, ticker,
-                    preparation_cutoff_utc, source_system, source_plan_id, source_revision_hash,
-                    supersedes_plan_snapshot_id, primary_bias, wargamed_scenarios_json, invalidation_levels_json,
-                    max_intended_risk_bps, permitted_strategies_json, verbatim_plan_text, provenance_class,
-                    received_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                """,
-                (
-                    snapshot_id, plan_family_id, rev_seq, plan.session_date, plan.ticker,
-                    cutoff_iso, plan.source_system, plan.source_plan_id, plan.source_revision_hash,
-                    plan.supersedes_plan_snapshot_id, plan.primary_bias,
-                    json.dumps(plan.wargamed_scenarios), json.dumps(plan.invalidation_levels),
-                    plan.max_intended_risk_bps, json.dumps(plan.permitted_strategies),
-                    plan.verbatim_plan_text, prov, recv_iso
+            # Revision allocation is race-prone (MAX+1 before INSERT). Retry on the
+            # UNIQUE(plan_family_id, revision_seq) conflict; concurrent writers each get
+            # a bounded recompute instead of a hard failure.
+            last_err: Optional[Exception] = None
+            for attempt in range(5):
+                cur = conn.execute(
+                    "SELECT IFNULL(MAX(revision_seq), 0) + 1 AS next_seq FROM plan_snapshots WHERE session_date = ? AND ticker = ?;",
+                    (plan.session_date, plan.ticker)
                 )
-            )
-            
+                rev_seq = cur.fetchone()["next_seq"]
+
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO plan_snapshots (
+                            plan_snapshot_id, plan_family_id, revision_seq, session_date, ticker,
+                            preparation_cutoff_utc, source_system, source_plan_id, source_revision_hash,
+                            supersedes_plan_snapshot_id, primary_bias, wargamed_scenarios_json, invalidation_levels_json,
+                            max_intended_risk_bps, permitted_strategies_json, verbatim_plan_text, provenance_class,
+                            received_at_utc
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                        """,
+                        (
+                            snapshot_id, plan_family_id, rev_seq, plan.session_date, plan.ticker,
+                            cutoff_iso, plan.source_system, plan.source_plan_id, plan.source_revision_hash,
+                            plan.supersedes_plan_snapshot_id, plan.primary_bias,
+                            json.dumps(plan.wargamed_scenarios), json.dumps(plan.invalidation_levels),
+                            plan.max_intended_risk_bps, json.dumps(plan.permitted_strategies),
+                            plan.verbatim_plan_text, prov, recv_iso
+                        )
+                    )
+                    last_err = None
+                    break
+                except sqlite3.IntegrityError as exc:
+                    last_err = exc
+                    snapshot_id = plan.plan_snapshot_id or snapshot_id  # keep id; only revision retries
+                    continue
+            if last_err is not None:
+                raise last_err
+
             event_id = str(uuid.uuid4())
             conn.execute(
                 """
@@ -131,7 +164,24 @@ class PlanAdapter:
                 """,
                 (event_id, snapshot_id, now_iso_utc())
             )
-            
+
+            if is_receipt_override:
+                # Auditable privileged receipt override: records the claimed historical
+                # receipt, the actor, and the source/reason so ex-ante claims made through
+                # this path are always traceable.
+                override_event_id = str(uuid.uuid4())
+                conn.execute(
+                    """
+                    INSERT INTO plan_lifecycle_events (
+                        event_id, plan_snapshot_id, event_type, recorded_at_utc, reason
+                    ) VALUES (?, ?, 'RECEIPT_OVERRIDE', ?, ?);
+                    """,
+                    (
+                        override_event_id, snapshot_id, now_iso_utc(),
+                        f"actor={override_actor}; claimed_receipt={recv_iso}; reason={override_reason}"
+                    ),
+                )
+
             if plan.supersedes_plan_snapshot_id and prov == "EX_ANTE_DECLARED":
                 sup_event_id = str(uuid.uuid4())
                 conn.execute(

@@ -1,4 +1,4 @@
-"""Pytest suite for Daily Process Delta & 4-Way Institutional Reconciliation (Milestone 1.1)."""
+﻿"""Pytest suite for Daily Process Delta & 4-Way Institutional Reconciliation (Milestone 1.1)."""
 
 import sqlite3
 import tempfile
@@ -27,7 +27,9 @@ def test_4way_reconciler_live_production_and_replay_scoring(temp_db):
             invalidation_levels={}, max_intended_risk_bps=10.0, permitted_strategies=["STRAT_ALN_LPEU_V0_1"]
         ),
         db_path=temp_db,
-        received_at_utc="2026-08-28T12:30:00Z"
+        received_at_utc="2026-08-28T12:30:00Z",
+        override_reason="test-fixture historical migration",
+        override_actor="TEST_FIXTURE",
     )
     
     with sqlite3.connect(str(temp_db)) as conn:
@@ -109,3 +111,4 @@ def test_no_plan_executions_flagged_non_compliant(temp_db):
     scorecard = DailyProcessDeltaReconciler.reconcile_session(session_date, ticker, db_path=temp_db)
     assert scorecard.plan.plan_found is False
     assert scorecard.plan_compliant is False
+

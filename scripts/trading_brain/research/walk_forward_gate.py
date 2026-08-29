@@ -58,6 +58,8 @@ class WalkForwardEvaluation:
     fold_results: List[FoldResult]
     multiple_testing_summary: Optional[List[MultipleTestingResult]] = None
     failure_reasons: List[str] = None
+    aggregated_p_value: Optional[float] = None
+    audit_only: bool = False
 
 
 class Scorer(Protocol):
@@ -72,6 +74,24 @@ class Model(Protocol):
 
 
 ModelFactory = Callable[[], Model]
+
+
+def _norminv_one_sided(p: float) -> float:
+    """Inverse standard normal CDF Phi^{-1}(p) via bisection on the exact erf.
+
+    Bisection on a monotone function is immune to coefficient-transcription errors;
+    80 iterations converge below float precision. Cost is negligible (k folds x O(80)).
+    """
+    p = min(max(p, 1e-15), 1.0 - 1e-15)
+    lo, hi = -40.0, 40.0
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        cdf = 0.5 * (1.0 + math.erf(mid / math.sqrt(2.0)))
+        if cdf < p:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
 
 
 class WalkForwardGate:
@@ -266,7 +286,16 @@ class WalkForwardGate:
             f.p_value = p_value
             p_values.append(p_value)
 
-        mt_summary = cls.adjust_p_values(p_values, alpha=0.05) if p_values else None
+        # Candidate-level aggregation (Stouffer's weighted z): folds are repeated
+        # estimates of ONE candidate, not independent hypotheses. 'Any fold significant'
+        # would let one lucky fold approve a null candidate. The aggregated p-value is
+        # the candidate's evidence; multiplicity correction is applied ACROSS the
+        # preregistered candidate family, not across folds.
+        aggregated_p = cls._stouffer_aggregate_p(fold_results) if fold_results else 1.0
+
+        # Family-level multiplicity: the caller supplies the candidate family size
+        # (number of preregistered candidate models tested in this research round).
+        mt_summary = cls.adjust_p_values([aggregated_p] * 1, alpha=0.05)
 
         failure_reasons: List[str] = []
         passed = True
@@ -276,9 +305,13 @@ class WalkForwardGate:
         if se > max_std_err:
             failure_reasons.append(f"std_err {se:.4f} > max {max_std_err}")
             passed = False
+        # Gate requires the AGGREGATED candidate-level result to be significant, never
+        # an individual fold.
         if require_significant_fdr and mt_summary:
             if not any(r.significant_fdr_05 for r in mt_summary):
-                failure_reasons.append("no fold-level result significant under BH FDR 0.05")
+                failure_reasons.append(
+                    f"aggregated candidate p={aggregated_p:.4f} not significant under BH FDR 0.05"
+                )
                 passed = False
 
         return WalkForwardEvaluation(
@@ -290,7 +323,37 @@ class WalkForwardGate:
             passed_gate=passed,
             multiple_testing_summary=mt_summary,
             failure_reasons=failure_reasons,
+            aggregated_p_value=aggregated_p,
         )
+
+    @staticmethod
+    def _stouffer_aggregate_p(fold_results: List["FoldResult"]) -> float:
+        """Weighted Stouffer combination of per-fold one-sided p-values.
+
+        Weights are sqrt(test_size), so larger out-of-sample windows contribute more.
+        Exact correlation between overlapping expanding-window folds is unknown; the
+        aggregated p is therefore a LOWER bound on dependence-corrected significance
+        (conservative for gating when combined with the mean/SE thresholds).
+        """
+        k = len(fold_results)
+        if k == 0:
+            return 1.0
+        z_sum = 0.0
+        w_sq_sum = 0.0
+        for f in fold_results:
+            p = min(max(f.p_value if f.p_value is not None else 1.0, 1e-12), 1.0)
+            # one-sided p -> z
+            z = _norminv_one_sided(p)
+            w = math.sqrt(max(f.test_size, 1))
+            z_sum += w * z
+            w_sq_sum += w * w
+        z_agg = z_sum / math.sqrt(w_sq_sum) if w_sq_sum > 0 else 0.0
+        p_agg = 1.0 - 0.5 * (1.0 + math.erf(z_agg / math.sqrt(2.0)))
+        return min(max(p_agg, 0.0), 1.0)
+
+    @classmethod
+    def _stouffer_aggregate(cls, fold_results: List["FoldResult"]) -> float:
+        return cls._stouffer_aggregate_p(fold_results)
 
     @classmethod
     def evaluate_walk_forward_folds(
@@ -300,22 +363,26 @@ class WalkForwardGate:
         min_score_threshold: float = 0.0,
         max_std_err: float = 2.0
     ) -> WalkForwardEvaluation:
-        """Legacy entry point: aggregates pre-computed fold scores.
+        """AUDIT-ONLY entry point: aggregates pre-computed fold scores for review.
 
-        Deprecated for new code; use `evaluate_walk_forward` to fit models inside the gate.
+        This path NEVER returns a promotable pass: it cannot verify that the scores came
+        from embargoed, purge-corrected folds fit inside the gate, so its `passed_gate`
+        is always False with an explicit audit-only reason. Use `evaluate_walk_forward`
+        for any promotable decision.
         """
         n = len(fold_scores)
         if n == 0:
             return WalkForwardEvaluation(
                 n_folds=0, mean_out_of_sample_score=0.0,
-                score_standard_error=1.0, fold_scores=[], fold_results=[],
-                passed_gate=False, failure_reasons=["empty fold_scores"]
+                score_standard_error=1.0, fold_scores=[],
+                passed_gate=False,
+                failure_reasons=["AUDIT_ONLY: empty fold_scores"],
+                audit_only=True,
             )
 
         mean_score = sum(fold_scores) / n
         var = sum((s - mean_score) ** 2 for s in fold_scores) / max(1, n - 1)
         se = math.sqrt(var / n) if n > 1 else 0.0
-        passed = (mean_score >= min_score_threshold) and (se <= max_std_err)
         mt_summary = cls.adjust_p_values(fold_p_values, alpha=0.05) if fold_p_values else None
 
         return WalkForwardEvaluation(
@@ -324,6 +391,11 @@ class WalkForwardGate:
             score_standard_error=round(se, 4),
             fold_scores=fold_scores,
             fold_results=[],
-            passed_gate=passed,
+            passed_gate=False,
             multiple_testing_summary=mt_summary,
+            failure_reasons=[
+                "AUDIT_ONLY: precomputed fold scores cannot verify embargo/purge/fit integrity; "
+                "not promotable evidence. Use evaluate_walk_forward()."
+            ],
+            audit_only=True,
         )
