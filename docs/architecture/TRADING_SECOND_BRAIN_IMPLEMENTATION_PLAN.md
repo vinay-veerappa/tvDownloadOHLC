@@ -25,7 +25,7 @@
   ├── M0.6: Hardened NT8 Ingestion (Lossless fills via nt_fill_events + cursor resumption)           -> ✅ COMPLETED
   ├── M0.7: Measured Tape Actuals Extractor (Live 1m Parquet Resolver + 100% Day-Type Parity)        -> ✅ COMPLETED
   ├── M0.3b: Transactional Outbox Projector, Verified Rollback Fence & Canonical Writer Cutover      -> ✅ COMPLETED
-  └── M0.8: Operational Verification Gate (OPERATIONALLY_ACCEPTED_CAPTURE_V1 - 6 Scenarios)         -> ✅ COMPLETED
+  └── M0.8: Operational Verification Gate (FIXTURE_REPLAY_ACCEPTED - 6 Scenarios; live-soak ledger = separate workstream)  -> ✅ COMPLETED
 
   PHASE 1: DAILY PROCESS DELTA & POST-MORTEM ENGINE [STATUS: ✅ COMPLETE]
   ├── M1.1: 4-Way Mechanical Reconciler (daily_process_delta.py + Single-Session Proper Scores)       -> ✅ COMPLETED
@@ -58,13 +58,13 @@ Every completed milestone includes production-grade source implementations ancho
 ### Phase 0: Low-Manual-Input Capture Spine & ACID Database Foundation
 1. **Milestone 0.1: Canonical Relational Schema & Immutability Triggers**
    - **Implemented Files**: [`scripts/trading_brain/db/schema.sql`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/db/schema.sql), [`scripts/trading_brain/db/connection.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/db/connection.py), [`scripts/trading_brain/db/init_db.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/db/init_db.py).
-   - **Delivered Capabilities**: 22 tables (19 protected append-only tables, 3 operational state tables, 38 immutability triggers, 4 deterministic views). Enforces WAL journal mode, busy timeouts (60s), foreign key constraints, and monotonic timestamps.
+   - **Delivered Capabilities**: 22 tables (19 protected append-only tables, 3 operational state tables, 38 immutability triggers, 4 deterministic views) plus `curriculum_rule_approvals` (schema v5). Enforces WAL journal mode, busy timeouts (60s), foreign key constraints, and monotonic timestamps.
    - **Verification**: [`tests/test_trading_brain_db.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_trading_brain_db.py) (4 tests passing).
 
 2. **Milestone 0.2: Immutable Pre-Market Plan Snapshots & Authority Resolver**
-   - **Implemented Files**: [`scripts/trading_brain/plans/plan_adapter.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/plans/plan_adapter.py).
-   - **Delivered Capabilities**: Calendar-derived cutoff gate (08:45:00 ET $\rightarrow$ UTC), monotonic revision sequencing (`UNIQUE(session_date, ticker, revision_seq)`), intraday plan amendments, and deterministic `get_plan_as_of` query authority.
-   - **Verification**: [`tests/test_plan_adapter.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_plan_adapter.py) (4 tests passing).
+    - **Implemented Files**: [`scripts/trading_brain/plans/plan_adapter.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/plans/plan_adapter.py).
+    - **Delivered Capabilities**: Calendar-derived cutoff gate (08:45:00 ET $\rightarrow$ UTC), monotonic revision sequencing (`UNIQUE(session_date, ticker, revision_seq)`), intraday plan amendments (both `effective_at_utc <= as_of` AND `received_at_utc <= as_of`), and deterministic `get_plan_as_of` query authority. Receipt overrides are capability-gated (`TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1` + reason/actor) and stamped `HISTORICAL_SOURCE_ASSERTED` — no live authority until a capability-gated `verify_historical_snapshot()` records `HISTORICAL_VERIFIED` (optionally with evidenced `verified_effective_from_utc`); `knowledge_mode='AS_RECORDED'` never honors verification retroactively, `CURRENTLY_VERIFIED_HISTORY` is the explicit administrative view; provenance eligibility is resolved in SQL before ordering so unverified assertions cannot mask eligible ex-ante plans. Services call `assert_next_process_is_migration()` at startup (ADR-024 §1-2).
+    - **Verification**: [`tests/test_plan_adapter.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_plan_adapter.py) (8 tests passing).
 
 3. **Milestone 0.3a: Zero-Fabrication Shadow Legacy Importer**
    - **Implemented Files**: [`scripts/trading_brain/migrations/import_legacy_shadow.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/migrations/import_legacy_shadow.py).
@@ -97,9 +97,9 @@ Every completed milestone includes production-grade source implementations ancho
    - **Verification**: [`tests/test_live_storage_resolver.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_live_storage_resolver.py) & [`tests/test_tape_extractor.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_tape_extractor.py) (4 tests passing).
 
 9. **Milestone 0.8: Operational Verification Gate**
-   - **Implemented Files**: [`scripts/trading_brain/testing/operational_soak_gate.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/testing/operational_soak_gate.py).
-   - **Delivered Capabilities**: End-to-end multi-table lifecycle verification across 6 distinct operational scenarios. Certified `OPERATIONALLY_ACCEPTED_CAPTURE_V1`.
-   - **Verification**: [`tests/test_operational_soak.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_operational_soak.py) (1 test passing).
+    - **Implemented Files**: [`scripts/trading_brain/testing/operational_soak_gate.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/testing/operational_soak_gate.py).
+    - **Delivered Capabilities**: End-to-end multi-table lifecycle verification across 6 distinct operational scenarios (completeness, idempotency, natural-key duplicates, review queues, replay drift). Status `FIXTURE_REPLAY_ACCEPTED` is an honest fixture-completeness battery — NOT live operational acceptance (requires a persistent live-soak ledger + ten-session soak; see ADR-024 §6).
+    - **Verification**: [`tests/test_operational_soak.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_operational_soak.py) (1 test passing).
 
 ---
 
@@ -147,18 +147,18 @@ Every completed milestone includes production-grade source implementations ancho
 
 17. **Milestone 3.2: Multi-Fold Purged Walk-Forward Validator**
     - **Implemented Files**: [`scripts/trading_brain/research/walk_forward_gate.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/research/walk_forward_gate.py).
-    - **Delivered Capabilities**: Purged K-fold splits preventing lookahead leakage; multiple comparison corrections via Benjamini-Hochberg (BH) FDR, Benjamini-Yekutieli (BY) FDR, and Holm-Bonferroni FWER.
-    - **Verification**: [`tests/test_walk_forward_gate.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_walk_forward_gate.py) (2 tests passing).
+    - **Delivered Capabilities**: Purged K-fold splits preventing lookahead leakage; candidate-level aggregation via a centered circular block bootstrap over the chronological out-of-sample stream (dependence-aware; weighted Stouffer as cross-check); candidate-scoped family BH/BY/Holm corrections with strict identity binding (ID-keyed `family_results` + `current_candidate_id`, or positional index verified against the evaluated aggregate p — sibling-index borrowing refused); `evaluate_candidate_family()` one-shot family stage; `require_family_declaration=True` fails closed for promotion-capable rounds; precomputed `evaluate_walk_forward_folds` is AUDIT-ONLY.
+    - **Verification**: [`tests/test_walk_forward_gate.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_walk_forward_gate.py) (17 tests passing).
 
 18. **Milestone 3.3: Preregistered Shadow Validation Gate**
     - **Implemented Files**: [`scripts/trading_brain/research/shadow_gate.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/research/shadow_gate.py).
-    - **Delivered Capabilities**: Enforces mandatory discovery-time preregistration, statistical power $\ge 0.80$, sealed benchmark enforcement, and terminal-state locking (`ShadowGateLockedError`) to prevent $p$-hacking.
-    - **Verification**: [`tests/test_shadow_gate.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_shadow_gate.py) (3 tests passing).
+    - **Delivered Capabilities**: Discovery-time preregistration binds the executed predictor (module, qualname, source hash, closure, referenced globals, defaults — oracle-callback swaps refused with `ModelBindingMismatchError`); benchmark/MDE authority is the sealed holdout registry; prospective (preregistered-effect) design power gates `INCONCLUSIVE_WAITING`; promotion requires significance AND observed improvement >= preregistered MDE; sample-extension custody on resume (strictly larger N); terminal-state locking.
+    - **Verification**: [`tests/test_shadow_gate.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_shadow_gate.py) (10 tests passing). Known limit: registered-artifact isolated execution is the final certification boundary (ADR-024 §3).
 
 19. **Milestone 3.4: Decoupled 4-Tier Promotion Orchestrator**
     - **Implemented Files**: [`scripts/trading_brain/research/promotion_orchestrator.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_brain/research/promotion_orchestrator.py).
-    - **Delivered Capabilities**: Decoupled multi-tier promotion audits: Tier 1 (Forecast Model), Tier 2 (Signal Model), Tier 3 (Execution Policy), and Tier 4 (Portfolio Deployment).
-    - **Verification**: [`tests/test_promotion_orchestrator.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_promotion_orchestrator.py) (2 tests passing).
+    - **Delivered Capabilities**: Decoupled multi-tier promotion audits (Tier 1-4). Fails closed: requires a pre-existing immutable `model_versions` record and a linked PROMOTED shadow-gate event with matching holdout hash for any CHAMPION; champion activation atomically demotes prior same-family/same-tier champions; every event records `metric_provenance` (CALLER_ATTESTED until artifact-derived metrics exist — ADR-024 §6).
+    - **Verification**: [`tests/test_promotion_orchestrator.py`](file:///c:/Users/vinay/tvDownloadOHLC/tests/test_promotion_orchestrator.py) (8 tests passing).
 
 ---
 
@@ -281,4 +281,4 @@ python -m pytest \
   tests/test_prisma_plan_bridge.py -v
 ```
 
-*Expected Result*: **45 passed in ~7s** (100% passing).
+*Expected Result*: **674 passed in ~95s** (focused battery + full non-network suite, post six audit-remediation rounds; individual counts per milestone listed above). Trust-architecture decisions are recorded in [ADR-024](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ADR.md).

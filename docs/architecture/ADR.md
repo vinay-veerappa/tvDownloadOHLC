@@ -448,3 +448,93 @@ Arbitrary point-based stops and targets (e.g. 10/20 pts on NQ) degrade as asset 
    - Target 1 ("Cover The Queen"): +10.0 bps (0.10%) — 50% scale-out + lock BE.
    - Target 2 ("Runner Target"): +30.0 bps (0.30%) or trailing structural swing pivots.
 
+---
+
+## [ADR-024] Evidence-Chain Integrity Controls for the Trading Brain Ledger
+**Status:** Approved
+**Date:** 2026-08-29
+
+### Context
+Six external audit rounds against the Trading Brain evidence chain (`scripts/trading_brain/`)
+surfaced a recurring class of defect: governance controls that exist in code but can be
+circumvented through caller-supplied inputs — receipt timestamps that forge ex-ante
+provenance, predictor callbacks that return sealed labels, per-fold significance that
+masks a null candidate, sibling-index FDR borrowing, and calendar-date filtering that
+drops the prior-evening Globex leg from sealed manifests. Each remediation round
+hardened one boundary; this ADR records the final trust architecture so future
+changes do not silently regress it.
+
+### Decision
+1. **Receipt-time authority is capability-gated and never self-service.**
+   `received_at_utc` overrides on plans and intake items require override_reason +
+   override_actor AND the process capability `TRADING_BRAIN_ALLOW_RECEIPT_OVERRIDE=1`.
+   Override-path plans are stamped `HISTORICAL_SOURCE_ASSERTED` and carry NO live-plan
+   authority unless a capability-gated `verify_historical_snapshot()` records the
+   append-only `HISTORICAL_VERIFIED` lifecycle event (optionally with an evidenced
+   `verified_effective_from_utc`). Long-running services must call
+   `assert_next_process_is_migration()` at startup and refuse to boot with the flag set:
+   the capability exists only inside short-lived offline migration commands.
+2. **Historical queries never rewrite themselves.** `get_plan_as_of` defaults to
+   `knowledge_mode='AS_RECORDED'`: verification events authorize only from their own
+   receipt time (or an evidenced effective-from instant). The administrative
+   `CURRENTLY_VERIFIED_HISTORY` view is explicit by name, never a default. Provenance
+   eligibility is resolved in SQL BEFORE ordering/limit, so an unverified assertion can
+   never mask an eligible ex-ante plan. Amendments apply only when BOTH
+   `effective_at_utc <= as_of AND received_at_utc <= as_of`.
+3. **Shadow-gate evaluation executes a BOUND predictor, never a caller-chosen callback.**
+   `preregister_candidate_finding` binds the predictor by module, qualified name, source
+   hash, closure cell contents, referenced-globals subset, and defaults. Evaluation
+   refuses any mismatch BEFORE the terminal-stage lock. Benchmark/MDE authority is the
+   sealed holdout registry row, never a preceding event payload. Design power is frozen
+   from the PREREGISTERED effect (observed power is a diagnostic only); promotion
+   requires significance AND observed improvement >= preregistered MDE. Resumes require
+   strictly larger sample sizes (sample-extension custody). KNOWN LIMIT (separate
+   workstream): final certification requires executing a registered immutable model
+   artifact in an isolated process with no label-store access.
+4. **Walk-forward significance is candidate-scoped, dependence-aware, and
+   family-corrected.** Fold p-values are UPPER-tail and combine via a centered circular
+   block bootstrap over the full chronological out-of-sample stream (Stouffer retained as
+   cross-check). Multiplicity is applied at the FAMILY level with strict identity
+   binding: the preferred interface is ID-keyed (`family_results{ candidate_id: p }` +
+   `current_candidate_id`); positional `family_p_values[index]` is honored only when
+   `family_p_values[index] == aggregated_p` (else refused as identity borrowing;
+   duplicate equal values are ambiguous and refused). `evaluate_candidate_family()` is
+   the one-shot family correction stage. Promotion-capable rounds must set
+   `require_family_declaration=True` (FAMILY_UNDECLARED fails closed); the precomputed
+   `evaluate_walk_forward_folds` path is AUDIT-ONLY and never promotable.
+5. **Data scope in sealed manifests must match what the analysis consumed.**
+   Wargame manifests slice the LOGICAL CME futures session
+   (`get_futures_session_bounds`: prior business day 18:00 ET -> 17:00 ET, DST-aware),
+   never the civil ET calendar date; the prior-evening Globex leg (P12 window) is part
+   of the sealed input hash. Post-market ingest binds missing sessions from
+   `derive_futures_session_date(event_timestamp_utc)` and excludes cross-session/
+   cross-ticker records; executions beyond matched opportunities are
+   `RISK_UNASSESSABLE`, never compliant evidence.
+6. **Honest staging labels.** The operational gate's status remains
+   `FIXTURE_REPLAY_ACCEPTED` — a fixture completeness battery, NOT live operational
+   acceptance (which requires a persistent live-soak ledger and a ten-session soak).
+   Synthetic drills are "mechanics/UI practice only", never remediation evidence;
+   curricula attempt authentic weakness sessions first and disclose per-session
+   fallbacks. Promotion metrics are `CALLER_ATTESTED` until artifact-derived evaluation
+   exists (separate workstream).
+
+### Alternatives Considered
+* Caller-asserted receipt overrides with audit events only (rounds 2-3): rejected —
+  an audited forgery is still a forgery; capability gating + provenance downgrade is
+  the honest combination.
+* Positional-only family correction: rejected in round 6 — an index a caller chooses
+  can borrow a sibling's identity; ID-keyed families bind identity.
+* Observer-effect design power: rejected — an extreme realized result would manufacture
+  its own power; prospective power must be frozen pre-holdout.
+
+### Consequences
+* Normal application paths cannot fabricate ex-ante provenance, sealed evaluation
+  results, or candidate significance. Every escape hatch is capability-gated,
+  append-only, or explicitly named as administrative.
+* Tests that exercise migration semantics set the capability flag at module import and
+  use evidenced effective-from instants — a standing reminder that migration fixtures
+  simulate the privileged path, not a general API.
+* Remaining certification gaps are explicit workstreams: registered-artifact isolated
+  evaluation (F5), artifact-derived promotion metrics (F6), and the live-soak ledger
+  with ten-session certification (F7).
+
