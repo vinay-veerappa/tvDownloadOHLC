@@ -294,6 +294,8 @@ class WalkForwardGate:
         family_p_values: Optional[Sequence[float]] = None,
         current_candidate_family_index: Optional[int] = None,
         require_family_declaration: bool = False,
+        family_results: Optional[Dict[str, float]] = None,
+        current_candidate_id: Optional[str] = None,
         bootstrap_b: int = 2000,
         bootstrap_seed: int = 42,
     ) -> WalkForwardEvaluation:
@@ -309,19 +311,21 @@ class WalkForwardGate:
             max_std_err: maximum acceptable standard error of the mean score.
             require_significant_fdr: if True, gate requires the AGGREGATED
                 candidate-level p-value to survive BH FDR at 0.05.
-            family_p_values: optional list of the PREREGISTERED candidate family's
-                aggregate p-values (this candidate's INCLUDED). BH correction is then
-                applied across the whole family and the gate checks THIS candidate's
-                OWN corrected q (identify the current candidate with
-                current_candidate_family_index; without it, the candidate is located
-                by exact value match and ambiguity is refused). Omitting it treats
-                this as the only candidate (explicit family-of-one: isolated dev
-                tests only, not a promotion path).
+            family_p_values: positional family interface (raw p-values, this candidate
+                INCLUDED). Only usable together with current_candidate_family_index,
+                and only when that index declares THIS candidate's exact aggregate p -
+                a mismatched index is refused as identity borrowing (sixth-audit F1).
             current_candidate_family_index: this candidate's zero-based position in
-                family_p_values; avoids value-match ambiguity.
-            require_family_declaration: promotion-capable mode (F9): when True and
-                family_p_values is omitted, the gate FAILS CLOSED with a
-                FAMILY_UNDECLARED reason instead of the family-of-one fallback.
+                family_p_values; must satisfy family_p_values[index] == aggregate p.
+            require_family_declaration: promotion-capable mode (F9): when True and no
+                family is declared, the gate FAILS CLOSED with a FAMILY_UNDECLARED
+                reason instead of the family-of-one fallback.
+            family_results: PREFERRED ID-keyed family interface: mapping
+                {candidate_id: aggregate_p} covering the complete preregistered
+                family. Requires current_candidate_id; refused when the declared
+                value for the current candidate does not equal this evaluation's
+                aggregate p.
+            current_candidate_id: this candidate's ID within family_results.
             bootstrap_b: resamples for the dependence-aware block-bootstrap aggregate
                 over the chronological out-of-sample stream (0 disables bootstrap and
                 falls back to the Stouffer fold aggregate).
@@ -421,34 +425,75 @@ class WalkForwardGate:
 
         # Family-level multiplicity: BH correction runs across the PREREGISTERED
         # candidate family when the caller declares it. The gate checks THIS
-        # candidate's OWN corrected q-value (family_p_values carries ONLY raw p-values,
-        # so the candidate's position must be identified by value-index); any(row) would
-        # let a sibling's significant q approve THIS null candidate (fifth-audit F2).
+        # candidate's OWN corrected q-value (sixth-audit F1: an UNSUPPORTED index
+        # would let this null candidate borrow a significant sibling's identity, so
+        # the preferred interface is ID-keyed families - family_results mapping
+        # candidate_id -> aggregate p with current_candidate_id naming THIS candidate;
+        # the positional interface remains only with a strict value-match check).
         # Omitted family -> explicit family-of-one (suitable for isolated dev tests
         # only; promotion-capable rounds should pass the complete family or use
         # evaluate_candidate_family() as the separate correction stage).
         this_candidate_rank: Optional[int] = None
-        if family_p_values is not None and len(family_p_values) > 0:
-            family_list = list(family_p_values)
+        if family_results is not None and len(family_results) > 0:
+            if current_candidate_id is None:
+                raise ValueError(
+                    "family_results requires current_candidate_id: the gate evaluates "
+                    "the candidate NAMED in the ID-keyed family, not an index a caller "
+                    "can point at a sibling."
+                )
+            if current_candidate_id not in family_results:
+                raise ValueError(
+                    f"current_candidate_id '{current_candidate_id}' is not a member of the "
+                    "declared candidate family."
+                )
+            if float(family_results[current_candidate_id]) != float(aggregated_p):
+                raise ValueError(
+                    f"Family record for '{current_candidate_id}' declares aggregate p="
+                    f"{family_results[current_candidate_id]}, but this evaluation produced "
+                    f"p={aggregated_p}. The family declaration and the evaluated candidate "
+                    "disagree - refusing to borrow a sibling's identity."
+                )
+            # Materialize the BH over the ID-keyed family, preserving ID association.
+            mt_summary = cls.adjust_p_values(list(family_results.values()), alpha=0.05)
+            this_candidate_rank = list(family_results.keys()).index(current_candidate_id)
+        elif family_p_values is not None and len(family_p_values) > 0:
             if current_candidate_family_index is not None:
                 if not (0 <= current_candidate_family_index < len(family_p_values)):
                     raise ValueError(
                         f"current_candidate_family_index {current_candidate_family_index} out of "
                         f"range for family of {len(family_p_values)} candidates."
                     )
+                # STRICT value binding (sixth-audit F1 minimal fix): the declared index
+                # must actually point at THIS candidate's aggregate p. Pointing the
+                # index at a significant sibling is an identity theft, not a family
+                # membership.
+                declared = float(family_p_values[current_candidate_family_index])
+                if abs(declared - float(aggregated_p)) > 1e-12:
+                    raise ValueError(
+                        f"current_candidate_family_index {current_candidate_family_index} declares "
+                        f"family p={declared}, but this candidate's aggregate p={aggregated_p}. "
+                        "An index that does not match the evaluated candidate is identity "
+                        "borrowing, not membership."
+                    )
                 this_candidate_rank = current_candidate_family_index
             else:
-                # Fallback: identify by exact value match; a duplicate value keeps rank
-                # of ITS OWN first occurrence, which is BH-order-stable (equal p-values
-                # share rank semantics).
-                try:
-                    this_candidate_rank = family_p_values.index(aggregated_p)
-                except ValueError:
+                # Fallback: identify by exact value match; ambiguity (duplicate
+                # values) is refused because equal p-values cannot disambiguate
+                # which candidate is being certified.
+                matches = [i for i, p in enumerate(family_p_values) if abs(float(p) - float(aggregated_p)) <= 1e-12]
+                if len(matches) > 1:
+                    raise ValueError(
+                        "family_p_values contains duplicate values equal to this "
+                        "candidate's aggregate p; pass current_candidate_family_index "
+                        "(or use ID-keyed family_results)."
+                    )
+                if not matches:
                     raise ValueError(
                         "family_p_values declared but do not contain this candidate's "
                         "aggregate p; pass current_candidate_family_index explicitly."
                     )
-            mt_summary = cls.adjust_p_values(family_p_values, alpha=0.05)
+                this_candidate_rank = matches[0]
+            mt_summary = cls.adjust_p_values(list(family_p_values), alpha=0.05)
         else:
             mt_summary = cls.adjust_p_values([aggregated_p] * 1, alpha=0.05)
 
@@ -456,10 +501,14 @@ class WalkForwardGate:
         passed = True
         # F9 promotion-capable strictness: a family of one is a dev convenience, never
         # a certification basis. Strict mode requires the declared family up front.
-        if require_family_declaration and (family_p_values is None or len(family_p_values) == 0):
+        if require_family_declaration and not (
+            (family_results is not None and len(family_results) > 0)
+            or (family_p_values is not None and len(family_p_values) > 0)
+        ):
             failure_reasons.append(
                 "FAMILY_UNDECLARED: promotion-capable evaluation requires the complete "
-                "preregistered candidate family (family_p_values + member index); a "
+                "preregistered candidate family (ID-keyed family_results + "
+                "current_candidate_id, or family_p_values + member index); a "
                 "family-of-one fallback is not a certification basis."
             )
             passed = False

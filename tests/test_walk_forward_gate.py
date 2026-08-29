@@ -234,13 +234,82 @@ def test_promotion_capable_evaluation_requires_family_declaration():
     assert res.passed_gate is False
     assert any("FAMILY_UNDECLARED" in r for r in res.failure_reasons)
 
-    # With the family declared, the gate proceeds normally.
+    # With the family declared, the gate proceeds normally. The family values must
+    # include this candidate's own aggregate p, so reuse a value-match declaration:
+    # first compute the candidate's aggregate p, then place it in the family.
+    probe = WalkForwardGate.evaluate_walk_forward(
+        features, labels,
+        model_factory=_DummyClassifier,
+        require_significant_fdr=False,
+    )
+    p = probe.aggregated_p_value
     res2 = WalkForwardGate.evaluate_walk_forward(
+        features, labels,
+        model_factory=_DummyClassifier,
+        require_significant_fdr=False,   # value asserted below, significance not required here
+        require_family_declaration=True,
+        family_results={"cand_self": p},  # ID-keyed family: THIS candidate by identity
+        current_candidate_id="cand_self",
+    )
+    assert res2.passed_gate is not None
+
+
+def test_index_spoof_borrowing_sibling_identity_is_refused():
+    """Round-6 F1: the reviewer's repro - candidate p=0.9 declares the sibling's index
+    0 (p=0.001). The gate must refuse the identity mismatch outright."""
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="identity borrowing"):
+        WalkForwardGate.evaluate_walk_forward(
+            features=[[i] for i in range(50)], labels=[i % 2 for i in range(50)],
+            model_factory=_DummyClassifier,
+            require_significant_fdr=True,
+            family_p_values=[0.001, 0.9],
+            current_candidate_family_index=0,
+        )
+
+
+def test_id_keyed_family_binds_candidate_by_identity():
+    """Round-6 F1 preferred interface: ID-keyed family + current_candidate_id. The null
+    candidate cannot pass by naming a significant sibling."""
+    import pytest as _pytest
+    # Build a real evaluation to obtain this candidate's aggregate p.
+    features = [[i] for i in range(60)]
+    labels = [i % 4 % 2 for i in range(60)]
+    probe = WalkForwardGate.evaluate_walk_forward(features, labels, model_factory=_DummyClassifier)
+    my_p = probe.aggregated_p_value
+
+    # ID-keyed family: sibling is significant, THIS candidate is null.
+    family_results = {"candidate-a": 0.001, "candidate-b": my_p}
+    res = WalkForwardGate.evaluate_walk_forward(
         features, labels,
         model_factory=_DummyClassifier,
         require_significant_fdr=True,
         require_family_declaration=True,
-        family_p_values=[0.2, 0.9],
-        current_candidate_family_index=0,
+        family_results=family_results,
+        current_candidate_id="candidate-b",   # the null candidate, by ID
     )
-    assert res2.passed_gate is not None
+    assert res.passed_gate is False
+    assert any("not significant" in r for r in res.failure_reasons)
+
+    # Mismatch between declared family value and evaluated p is refused outright.
+    with _pytest.raises(ValueError, match="disagree"):
+        WalkForwardGate.evaluate_walk_forward(
+            features, labels,
+            model_factory=_DummyClassifier,
+            require_significant_fdr=True,
+            family_results={"candidate-a": 0.001, "candidate-b": 0.0001},  # != my_p
+            current_candidate_id="candidate-b",
+        )
+
+
+def test_id_keyed_family_requires_current_candidate_id():
+    """family_results without current_candidate_id is refused (no positional drift)."""
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="current_candidate_id"):
+        WalkForwardGate.evaluate_walk_forward(
+            features=[[i] for i in range(50)], labels=[i % 2 for i in range(50)],
+            model_factory=_DummyClassifier,
+            require_significant_fdr=True,
+            family_results={"a": 0.001, "b": 0.9},
+            current_candidate_id=None,
+        )
