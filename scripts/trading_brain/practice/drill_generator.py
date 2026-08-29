@@ -30,11 +30,15 @@ class TargetedDrillGenerator:
         ticker: str = "NQ1",
         db_path: Optional[Union[str, Path]] = None
     ) -> List[CurriculumSummary]:
-        """Identifies recurring intervention rules occurring >= min_recurrence times and creates a drill set."""
+        """Identifies recurring intervention rules occurring on >= min_recurrence independent sessions and creates a drill set.
+
+        Recurrence counts DISTINCT (session_date, ticker) incident sessions, not raw event rows,
+        so one deteriorating session emitting multiple events cannot manufacture a false pattern.
+        """
         with get_db_connection(db_path) as conn:
             cur = conn.execute(
                 """
-                SELECT rule_id, COUNT(*) AS recurrence_count
+                SELECT rule_id, COUNT(DISTINCT session_date || '|' || ticker) AS recurrence_count
                 FROM intervention_events
                 GROUP BY rule_id
                 HAVING recurrence_count >= ?
@@ -52,7 +56,7 @@ class TargetedDrillGenerator:
                 count = row["recurrence_count"]
                 
                 drills = []
-                for _ in range(3):
+                for i in range(3):
                     drill = BlindedDrillEngine.generate_blinded_drill(
                         drill_type="RECOGNITION",
                         dataset_split="TRAINING",
@@ -67,6 +71,9 @@ class TargetedDrillGenerator:
                     weakness_rule_id=rule_id,
                     recurrence_count=count,
                     recommended_drills=drills,
-                    curriculum_notes=f"Targeted curriculum addressing recurring deviation '{rule_id}' ({count} occurrences)."
+                    curriculum_notes=(
+                        f"Targeted curriculum addressing recurring deviation '{rule_id}' "
+                        f"({count} independent incident sessions)."
+                    )
                 ))
             return curricula

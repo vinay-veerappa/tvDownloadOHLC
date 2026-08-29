@@ -57,6 +57,21 @@ class _SealedGroundTruth:
 # In-memory sealed custody vault (keyed by opaque drill_id)
 _SEALED_DRILL_VAULT: Dict[str, _SealedGroundTruth] = {}
 
+# Session split-partition registry (anti-memorization): maps (session_date, ticker) -> set of splits
+_SESSION_SPLIT_REGISTRY: Dict[Tuple[str, str], set] = {}
+
+_VALID_SPLITS = ("TRAINING", "CALIBRATION", "ASSESSMENT")
+
+
+class SplitCustodyViolationError(Exception):
+    """Raised when a session is assigned to a conflicting dataset split.
+
+    Anti-memorization invariant: once a session appears in ASSESSMENT (or CALIBRATION),
+    it can never later appear in TRAINING or CALIBRATION (and vice versa), otherwise the
+    trainee can memorize assessment answers during training.
+    """
+    pass
+
 
 @dataclass
 class DrillDeclaration:
@@ -93,8 +108,34 @@ class BlindedDrillEngine:
         custom_data_dir: Optional[Union[str, Path]] = None,
         synthetic_mode: bool = False
     ) -> BlindedDrillContext:
-        """Generates a blinded drill context from authentic historical session bars with sealed custody."""
+        """Generates a blinded drill context from authentic historical session bars with sealed custody.
+
+        Enforces split-partition custody: a (session_date, ticker) session can never appear
+        in conflicting dataset splits. ASSESSMENT sessions are permanently segregated from
+        TRAINING/CALIBRATION sessions.
+        """
         drill_id = str(uuid.uuid4())
+        
+        split_upper = str(dataset_split).upper()
+        if split_upper not in _VALID_SPLITS:
+            raise ValueError(f"Invalid dataset_split '{dataset_split}'. Must be one of {_VALID_SPLITS}.")
+            
+        session_key = (str(session_date), str(ticker))
+        prior_splits = _SESSION_SPLIT_REGISTRY.get(session_key, set())
+        
+        assessment_splits = prior_splits & {"ASSESSMENT"}
+        training_splits = prior_splits & {"TRAINING", "CALIBRATION"}
+        if split_upper == "ASSESSMENT" and training_splits:
+            raise SplitCustodyViolationError(
+                f"Session {session_key} was previously used in {sorted(training_splits)}; "
+                f"it can never be used for ASSESSMENT (anti-memorization custody violation)."
+            )
+        if split_upper in ("TRAINING", "CALIBRATION") and assessment_splits:
+            raise SplitCustodyViolationError(
+                f"Session {session_key} is a sealed ASSESSMENT session and can never be reused "
+                f"for {split_upper} (anti-memorization custody violation)."
+            )
+        _SESSION_SPLIT_REGISTRY[session_key] = prior_splits | {split_upper}
         
         if synthetic_mode:
             blinded_bars = []

@@ -68,6 +68,57 @@ class CalibrationEngine:
                 counts[r] += 1
         return {dt: (counts[dt] / n) for dt in DAY_TYPES}
 
+    @staticmethod
+    def validate_forecast_probs(probs: Dict[str, float], index: Optional[int] = None) -> None:
+        """Validates one forecast probability vector: all 5 classes present, in [0,1], sums to 1.
+
+        Fails closed on malformed probability vectors so calibration metrics cannot be
+        silently computed over degenerate distributions.
+        """
+        idx_label = f" at index {index}" if index is not None else ""
+        missing = [dt for dt in DAY_TYPES if dt not in probs]
+        if missing:
+            raise ValueError(f"Forecast{idx_label} missing day types: {missing}")
+        for dt in DAY_TYPES:
+            p = probs[dt]
+            if not isinstance(p, (int, float)) or not (0.0 <= float(p) <= 1.0):
+                raise ValueError(f"Forecast{idx_label} probability for {dt} is out of [0,1]: {p}")
+        total = sum(float(probs[dt]) for dt in DAY_TYPES)
+        if abs(total - 1.0) > 1e-4:
+            raise ValueError(f"Forecast{idx_label} probabilities must sum to 1.0, got {total:.6f}")
+
+    @classmethod
+    def compute_rolling_frequency_baseline(
+        cls,
+        realized_outcomes: List[str],
+        window: int = 50,
+        min_history: int = 5
+    ) -> List[Dict[str, float]]:
+        """Computes the declared rolling-N recency-weighted-equivalent frequency baseline.
+
+        For each session index i, returns the empirical class frequencies observed over the
+        trailing `window` sessions strictly BEFORE i. The first min_history sessions use the
+        unconditional prior (not enough rolling history yet) — a baseline without history is
+        the base rate, not a fabricated distribution.
+        """
+        n = len(realized_outcomes)
+        if n == 0:
+            raise ValueError("Cannot compute rolling baseline over an empty outcome series.")
+        unconditional = cls.compute_unconditional_prior(realized_outcomes)
+        baseline: List[Dict[str, float]] = []
+        for i in range(n):
+            window_outcomes = realized_outcomes[max(0, i - window):i]
+            if len(window_outcomes) < min_history:
+                baseline.append(dict(unconditional))
+                continue
+            counts = {dt: 0 for dt in DAY_TYPES}
+            for r in window_outcomes:
+                if r in counts:
+                    counts[r] += 1
+            total = len(window_outcomes)
+            baseline.append({dt: counts[dt] / total for dt in DAY_TYPES})
+        return baseline
+
     @classmethod
     def evaluate_forecast_series(
         cls,
@@ -95,6 +146,10 @@ class CalibrationEngine:
         for i in range(n):
             f = forecasts[i]
             r = realized_outcomes[i]
+            
+            cls.validate_forecast_probs(f, index=i)
+            if r not in DAY_TYPES:
+                raise ValueError(f"Realized outcome {r!r} at index {i} is not a valid day type")
             
             model_briers.append(cls.compute_single_brier_score(f, r))
             model_logs.append(cls.compute_single_log_loss(f, r))

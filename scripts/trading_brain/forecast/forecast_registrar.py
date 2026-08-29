@@ -186,8 +186,6 @@ class ForecastRegistrar:
                 raise ForecastInputValidationError(f"5 MECE probabilities must sum to 1.0 +- 1e-4, got sum={prob_sum:.6f}")
 
         forecast_id = str(uuid.uuid4())
-        now_iso = now_iso_utc()
-        now_dt = datetime.now(timezone.utc)
         target_run_id = payload.get_run_id(run_id_param)
         
         with get_db_connection(db_path) as conn:
@@ -198,6 +196,12 @@ class ForecastRegistrar:
             if run_row["status"] == "COMMITTED":
                 raise ValueError(f"Forecast run {target_run_id} has already been committed.")
                 
+            # Capture the commit-authority clock AFTER connection acquisition and state reads.
+            # Capturing earlier would let lock contention backdate the persisted receipt time
+            # (a blocked commit that wrote after cutoff would have carried a pre-cutoff timestamp).
+            now_iso = now_iso_utc()
+            now_dt = datetime.now(timezone.utc)
+            
             cutoff_dt = parse_iso_utc(run_row["effective_cutoff_utc"])
             grace_dt = cutoff_dt + timedelta(seconds=grace_period_seconds)
             

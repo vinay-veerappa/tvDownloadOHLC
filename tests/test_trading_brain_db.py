@@ -61,3 +61,19 @@ def test_information_item_review_events_and_view(temp_db):
         row = cur.fetchone()
         assert row is not None
         assert row["active_review_state"] == "ACCEPTED"
+
+
+def test_schema_version_stamped_and_refuses_downgrade(temp_db):
+    """SCHEMA_VERSION must be stamped into PRAGMA user_version; newer DBs refuse downgrade."""
+    from scripts.trading_brain.db.connection import get_db_connection
+    from scripts.trading_brain.db import init_db as init_db_mod
+
+    with get_db_connection(temp_db) as conn:
+        stamped = int(conn.execute("PRAGMA user_version;").fetchone()[0])
+    assert stamped == init_db_mod.SCHEMA_VERSION >= 2
+
+    # Simulate a database migrated by NEWER code: init must refuse with a clear error
+    with get_db_connection(temp_db) as conn:
+        conn.execute(f"PRAGMA user_version = {init_db_mod.SCHEMA_VERSION + 1};")
+    with pytest.raises(ValueError, match="newer than this code expects"):
+        init_trading_brain_db(db_path=temp_db, verbose=False)

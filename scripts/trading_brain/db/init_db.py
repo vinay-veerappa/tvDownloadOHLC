@@ -51,6 +51,56 @@ EXPECTED_VIEWS = [
 PROTECTED_TABLES_COUNT = 19
 EXPECTED_TRIGGER_COUNT = PROTECTED_TABLES_COUNT * 2  # 38 triggers
 
+# Bump this constant with EVERY backward-incompatible schema change, and add the matching
+# migration step to _apply_schema_migrations. A database stamped newer than the code is
+# refused (downgrade risk); a database stamped older runs pending migrations before use.
+SCHEMA_VERSION = 2
+
+
+def _apply_schema_migrations(conn, from_version: int, messages: List[str], verbose: bool) -> None:
+    """Applies incremental migrations for databases initialized by older schema versions.
+
+    Each block upgrades exactly one version step. Blocks must remain in ascending order.
+    """
+    if from_version < 2:
+        # v1 -> v2: model_versions.status no longer carries mutable deployment state;
+        # deployment transitions moved to the append-only model_deployment_events ledger.
+        # Existing rows need no rewrite (status columns retained for audit reads).
+        messages.append("MIGRATED: schema v1 -> v2 (model_deployment_events ledger adopted).")
+        if verbose:
+            print("  -> migration v1 -> v2 applied (model_deployment_events ledger).")
+
+
+def _check_and_migrate_schema(conn, messages: List[str], verbose: bool) -> None:
+    """Verifies PRAGMA user_version against SCHEMA_VERSION, migrating up if required.
+
+    Fails closed: a database stamped NEWER than this code's SCHEMA_VERSION indicates a
+    downgrade (stale code against a migrated database) and the init refuses to proceed,
+    because executing an old schema against newer tables corrupts references.
+    """
+    cur = conn.execute("PRAGMA user_version;")
+    db_version = int(cur.fetchone()[0])
+    
+    if db_version == 0:
+        # Freshly initialized database: stamp current version.
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
+        messages.append(f"SUCCESS: schema stamped at version {SCHEMA_VERSION}.")
+    elif db_version > SCHEMA_VERSION:
+        msg = (
+            f"ERROR: database schema v{db_version} is newer than this code expects "
+            f"(v{SCHEMA_VERSION}). Refusing to initialize a downgrade."
+        )
+        messages.append(msg)
+        if verbose:
+            print(msg)
+        raise ValueError(msg)
+    elif db_version < SCHEMA_VERSION:
+        _apply_schema_migrations(conn, db_version, messages, verbose)
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
+        messages.append(f"SUCCESS: schema migrated to version {SCHEMA_VERSION}.")
+    else:
+        messages.append(f"SUCCESS: schema version {SCHEMA_VERSION} verified.")
+
 
 def init_trading_brain_db(
     db_path: Optional[Union[str, Path]] = None,
@@ -75,6 +125,9 @@ def init_trading_brain_db(
         
     with get_db_connection(target_db) as conn:
         conn.executescript(schema_sql)
+        
+        # 0. Verify schema version and apply pending migrations
+        _check_and_migrate_schema(conn, messages, verbose)
         
         # 1. Verify tables
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")
