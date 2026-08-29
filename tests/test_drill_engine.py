@@ -19,7 +19,7 @@ def temp_db():
 
 
 def test_blinded_drill_generation_and_evaluation(temp_db):
-    """Tests generating blinded drill, locking declaration, and scoring process adherence."""
+    """Tests generating blinded drill from real historical bars, locking declaration, and scoring process adherence."""
     drill_ctx = BlindedDrillEngine.generate_blinded_drill(
         drill_type="RECOGNITION",
         dataset_split="TRAINING",
@@ -27,18 +27,18 @@ def test_blinded_drill_generation_and_evaluation(temp_db):
         ticker="NQ1"
     )
     
-    assert len(drill_ctx.blinded_bars) == 30
-    assert drill_ctx.true_bias == "BULLISH"
-    assert drill_ctx.true_setup == "ALN_LPEU"
+    assert len(drill_ctx.blinded_bars) >= 30
+    assert drill_ctx.true_session_date == "2026-08-28"
+    assert drill_ctx.true_ticker == "NQ1"
     
-    # Perfect Declaration
+    # Perfect Declaration adhering to ground truth
     declaration = DrillDeclaration(
         drill_id=drill_ctx.drill_id,
-        declared_bias="BULLISH",
-        declared_setup="ALN_LPEU",
+        declared_bias=drill_ctx.true_bias,
+        declared_setup=drill_ctx.true_setup,
         declared_entry_price=10060.0,
-        declared_stop_bps=12.0,
-        declared_target_bps=10.0,
+        declared_stop_bps=drill_ctx.true_stop_bps,
+        declared_target_bps=drill_ctx.true_target_bps,
         latency_ms=1200
     )
     
@@ -53,4 +53,4 @@ def test_blinded_drill_generation_and_evaluation(temp_db):
         row = cur.fetchone()
         assert row is not None
         assert row["process_adherence_score"] == 100.0
-        assert row["declared_bias"] == "BULLISH"
+        assert row["declared_bias"] == drill_ctx.true_bias

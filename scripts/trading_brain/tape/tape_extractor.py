@@ -2,9 +2,10 @@
 
 Calculates:
 1. RTH & Session OHLC (Open @ 09:30 ET, High, Low, RTH Close @ 16:00 ET, Session Close @ 16:15 ET).
-2. Canonical Day Type Classification across 5 MECE classes (R1, R2, DNP, DWP, ROTATIONAL_CHOP).
+2. Canonical Day Type Classification across 5 MECE classes (R1, R2, DNP, DWP, ROTATIONAL_CHOP)
+   mirroring canonical scripts/derived/precompute_daily_classification.py & daily_classification_v2.pine.
 3. HOD / LOD timestamps in UTC and session range in basis points (bps).
-4. Bar completeness, tick quality state, and SHA-256 content hashes.
+4. Bar completeness, scheduled short session handling, and SHA-256 content hashes.
 5. Saves versioned, revisable records to session_tape_actuals.
 """
 
@@ -47,7 +48,7 @@ class TapeMetrics:
     expected_bar_count: int
     actual_bar_count: int
     content_hash: str
-    quality_state: str                         # 'CLEAN', 'SUSPECT_TICKS', 'INCOMPLETE_BARS', 'LEGACY_UNVERIFIED'
+    quality_state: str                         # 'CLEAN', 'SUSPECT_TICKS', 'INCOMPLETE_BARS', 'SCHEDULED_SHORT_SESSION', 'LEGACY_UNVERIFIED'
     supersedes_actual_id: Optional[str] = None
 
 
@@ -55,41 +56,141 @@ class TapeMetricsExtractor:
     """Extracts ground truth tape actuals from 1m live storage bars and registers them in database."""
 
     @staticmethod
+    def get_session_boxes(df_rth: pd.DataFrame) -> List[Dict[str, Any]]:
+        """Constructs canonical hourly session boxes mirroring PineScript v2 / precompute_daily_classification.py:
+        Box 0: 09:30 - 09:59
+        Box 1: 10:00 - 10:59
+        Box 2: 11:00 - 11:59
+        Box 3: 12:00 - 12:59
+        Box 4: 13:00 - 13:59
+        Box 5: 14:00 - 14:59
+        Box 6: 15:00 - 15:59
+        """
+        cols = {c.lower(): c for c in df_rth.columns}
+        h_col = cols.get("high", "high")
+        l_col = cols.get("low", "low")
+        
+        boxes = []
+        # Box 0: 09:30 to 09:59
+        b0 = df_rth[(df_rth["dt_et"].dt.time >= time(9, 30)) & (df_rth["dt_et"].dt.time <= time(9, 59))]
+        if not b0.empty:
+            boxes.append({"h": float(b0[h_col].max()), "l": float(b0[l_col].min()), "t": time(9, 30)})
+            
+        # Boxes 1-5: 10:00 to 14:59
+        for h in range(10, 15):
+            bh = df_rth[(df_rth["dt_et"].dt.time >= time(h, 0)) & (df_rth["dt_et"].dt.time <= time(h, 59))]
+            if not bh.empty:
+                boxes.append({"h": float(bh[h_col].max()), "l": float(bh[l_col].min()), "t": time(h, 0)})
+                
+        # Box 6: 15:00 to 15:59
+        b6 = df_rth[(df_rth["dt_et"].dt.time >= time(15, 0)) & (df_rth["dt_et"].dt.time <= time(15, 59))]
+        if not b6.empty:
+            boxes.append({"h": float(b6[h_col].max()), "l": float(b6[l_col].min()), "t": time(15, 0)})
+            
+        return boxes
+
+    @classmethod
     def classify_day_type(
-        rth_open: float,
-        rth_high: float,
-        rth_low: float,
-        rth_close: float,
-        ib_high: float,
-        ib_low: float,
-        range_bps: float
+        cls,
+        df_rth: pd.DataFrame,
+        ticker: str = "NQ1"
     ) -> str:
-        """Classifies session into canonical 5 MECE day types based on IB penetration and closing location."""
-        ib_range = ib_high - ib_low
-        if ib_range <= 0 or rth_open <= 0:
+        """Canonical Day Type Classification mirroring scripts/derived/precompute_daily_classification.py.
+        
+        Evaluates Opening Range (09:30 1m bar), Breaks, Touches, Returns (for R2), and Pullbacks (for DWP/DNP).
+        """
+        if df_rth.empty:
             return "ROTATIONAL_CHOP"
             
-        up_extension = (rth_high - ib_high) / ib_range
-        down_extension = (ib_low - rth_low) / ib_range
+        cols = {c.lower(): c for c in df_rth.columns}
+        h_col = cols.get("high", "high")
+        l_col = cols.get("low", "low")
         
-        # 1. Did Not Penetrate (DNP): inside morning initial balance
-        if up_extension < 0.15 and down_extension < 0.15:
-            return "DNP"
+        # 1. Opening Range (09:30 1m bar)
+        or_candle = df_rth[df_rth["dt_et"].dt.time == time(9, 30)]
+        if or_candle.empty:
+            or_candle = df_rth.iloc[[0]]
+        or_h = float(or_candle[h_col].iloc[0])
+        or_l = float(or_candle[l_col].iloc[0])
+        
+        # 2. Reconstruct Boxes
+        boxes = cls.get_session_boxes(df_rth)
+        if not boxes:
+            return "ROTATIONAL_CHOP"
             
-        # 2. Both sides penetrated (R2 Reversal / Outside Day)
-        if up_extension >= 0.50 and down_extension >= 0.50:
+        # Tick tolerance
+        tick_size = 0.01 if "CL" in ticker else (0.1 if ("GC" in ticker or "RTY" in ticker) else (1.0 if "YM" in ticker else 0.25))
+        tolerance = 2.0 * tick_size
+        min_touches_r1 = 4
+        min_sep_r2 = 1
+        r2_window_start_idx = 2  # 11:00 AM NY
+        
+        highs = [b["h"] for b in boxes]
+        lows = [b["l"] for b in boxes]
+        size = len(boxes)
+        
+        def touch_check(h, l): return h >= (or_l - tolerance) and l <= (or_h + tolerance)
+        def break_check(h, l): return l > (or_h + tolerance) or h < (or_l - tolerance)
+        
+        broke_or = False
+        broke_or_idx = -1
+        broke_up = False
+        touch_count = 0
+        returned = False
+        ret_idx = -1
+        
+        # Analysis Phase 1: Breaks & Touches
+        for i in range(size):
+            if break_check(highs[i], lows[i]):
+                if not broke_or:
+                    broke_or = True
+                    broke_or_idx = i
+                    broke_up = lows[i] > (or_h + tolerance)
+            else:
+                if touch_check(highs[i], lows[i]):
+                    touch_count += 1
+                    
+        # Analysis Phase 2: Returns (for R2)
+        if broke_or and broke_or_idx < size - 1:
+            for i in range(broke_or_idx + 1, size):
+                if touch_check(highs[i], lows[i]):
+                    returned = True
+                    ret_idx = i
+                    touch_count += 1
+                    break
+                    
+        # Analysis Phase 3: Pullbacks (for DWP/DNP)
+        has_pb = False
+        if broke_or and not returned:
+            pb_end = size - 2
+            if pb_end > broke_or_idx:
+                if broke_up:
+                    highest_low = lows[broke_or_idx]
+                    for i in range(broke_or_idx + 1, pb_end + 1):
+                        if lows[i] < highest_low:
+                            has_pb = True
+                            break
+                        highest_low = max(highest_low, lows[i])
+                else:
+                    lowest_high = highs[broke_or_idx]
+                    for i in range(broke_or_idx + 1, pb_end + 1):
+                        if highs[i] > lowest_high:
+                            has_pb = True
+                            break
+                        lowest_high = min(lowest_high, highs[i])
+                        
+        # Final Priority: R2 > R1 > DWP/DNP > ROTATIONAL_CHOP
+        is_r2 = broke_or and returned and ret_idx >= r2_window_start_idx and (ret_idx - broke_or_idx) >= min_sep_r2
+        is_r1 = touch_count >= min_touches_r1
+        
+        if is_r2:
             return "R2"
-            
-        # 3. One side penetrated decisively (R1 Trend Expansion)
-        if (up_extension >= 1.0 and down_extension < 0.25) or (down_extension >= 1.0 and up_extension < 0.25):
+        elif is_r1:
             return "R1"
-            
-        # 4. Directional drift without explosive extension (DWP)
-        if (up_extension >= 0.30 and rth_close > ib_high) or (down_extension >= 0.30 and rth_close < ib_low):
-            return "DWP"
-            
-        # 5. Otherwise Rotational Chop
-        return "ROTATIONAL_CHOP"
+        elif broke_or:
+            return "DWP" if has_pb else "DNP"
+        else:
+            return "ROTATIONAL_CHOP"
 
     @classmethod
     def extract_from_dataframe(
@@ -106,7 +207,6 @@ class TapeMetricsExtractor:
         if df.empty:
             raise ValueError(f"Cannot extract tape metrics: DataFrame for {ticker} on {session_date} is empty.")
             
-        # Normalize column names
         cols = {c.lower(): c for c in df.columns}
         o_col = cols.get("open", "open")
         h_col = cols.get("high", "high")
@@ -115,51 +215,36 @@ class TapeMetricsExtractor:
         
         # Filter for RTH (09:30 to 16:00 ET)
         df_rth = df[(df["dt_et"].dt.time >= time(9, 30)) & (df["dt_et"].dt.time <= time(16, 0))].copy()
-        
         if df_rth.empty:
-            # Fallback to entire available session
             df_rth = df.copy()
             
         session_open = float(df_rth[o_col].iloc[0])
         session_high = float(df_rth[h_col].max())
         session_low = float(df_rth[l_col].min())
         rth_close = float(df_rth[c_col].iloc[-1])
-        
-        # Session close at 16:15 ET if available, else rth_close
         session_close = float(df[c_col].iloc[-1]) if not df.empty else rth_close
         
-        # HOD / LOD timestamps
         hod_idx = df_rth[h_col].idxmax()
         lod_idx = df_rth[l_col].idxmin()
         hod_ts = to_iso_utc(df_rth.loc[hod_idx, "dt"])
         lod_ts = to_iso_utc(df_rth.loc[lod_idx, "dt"])
         
-        # Initial Balance (09:30 to 10:30 ET)
-        df_ib = df_rth[df_rth["dt_et"].dt.time <= time(10, 30)]
-        if not df_ib.empty:
-            ib_high = float(df_ib[h_col].max())
-            ib_low = float(df_ib[l_col].min())
-        else:
-            ib_high = session_high
-            ib_low = session_low
-            
         range_bps = ((session_high - session_low) / session_open) * 10000.0 if session_open > 0 else 0.0
         
-        day_type = cls.classify_day_type(
-            rth_open=session_open,
-            rth_high=session_high,
-            rth_low=session_low,
-            rth_close=rth_close,
-            ib_high=ib_high,
-            ib_low=ib_low,
-            range_bps=range_bps
-        )
+        day_type = cls.classify_day_type(df_rth, ticker=ticker)
         
-        expected_bars = 390
         actual_bars = len(df_rth)
-        quality = "CLEAN" if actual_bars >= 385 else "INCOMPLETE_BARS"
-        
-        # Hash computation
+        # Scheduled half-day handling (e.g. 210 bars 09:30 to 13:00)
+        if actual_bars >= 385:
+            quality = "CLEAN"
+            expected_bars = 390
+        elif 205 <= actual_bars <= 215:
+            quality = "SCHEDULED_SHORT_SESSION"
+            expected_bars = 210
+        else:
+            quality = "INCOMPLETE_BARS"
+            expected_bars = 390
+            
         hash_payload = {
             "session_date": session_date,
             "ticker": ticker,
@@ -189,7 +274,7 @@ class TapeMetricsExtractor:
             lod_timestamp_utc=lod_ts,
             session_range_bps=range_bps,
             day_type_classification=day_type,
-            eod_pattern_classification=f"{day_type}_STANDARD",
+            eod_pattern_classification=f"{day_type}_CANONICAL",
             expected_bar_count=expected_bars,
             actual_bar_count=actual_bars,
             content_hash=f"sha256:{content_hash}",
@@ -210,7 +295,6 @@ class TapeMetricsExtractor:
         df = load_session_bars(ticker, session_date, custom_dir=custom_data_dir)
         
         with get_db_connection(db_path) as conn:
-            # Determine next revision_seq
             cur = conn.execute(
                 "SELECT IFNULL(MAX(revision_seq), 0) + 1 AS next_seq FROM session_tape_actuals WHERE session_date = ? AND ticker = ?;",
                 (session_date, ticker)
@@ -247,5 +331,4 @@ class TapeMetricsExtractor:
                     metrics.supersedes_actual_id
                 )
             )
-            
         return metrics

@@ -89,3 +89,27 @@ def register_all_v0_strategies(
         registered.append(strat_id)
         
     return registered
+
+
+class StrategyRegistryV0:
+    """Helper namespace for accessing frozen strategy definitions."""
+
+    @staticmethod
+    def get_strategy(strat_id: str, artifacts_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+        """Retrieves a frozen strategy definition by ID."""
+        target_dir = artifacts_dir or ARTIFACTS_DIR
+        if not target_dir.is_absolute():
+            target_dir = REPO_ROOT / target_dir
+        for p in target_dir.glob("*.json"):
+            data = load_strategy_artifact(p)
+            if data["strategy_version_id"] == strat_id:
+                return data
+        return None
+
+
+def verify_strategy_hash(strat_id: str, content_hash: str, artifacts_dir: Optional[Path] = None) -> bool:
+    """Verifies that an artifact on disk matches a recorded content hash."""
+    strat = StrategyRegistryV0.get_strategy(strat_id, artifacts_dir=artifacts_dir)
+    if not strat:
+        return False
+    return strat["content_hash"] == content_hash

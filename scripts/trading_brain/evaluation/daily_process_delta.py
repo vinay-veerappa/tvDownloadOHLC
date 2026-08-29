@@ -2,11 +2,11 @@
 
 Reconciles the 4-way institutional quadrant for any session:
 1. Pre-Market Plan: get_plan_as_of (ex-ante) + post-hoc plan fallback @ 08:45 ET.
-2. Signal Opportunities: Eligible mechanical setups triggered on bar close.
+2. Signal Opportunities: Eligible mechanical setups triggered on bar close (using deduplicated latest disposition).
 3. Executions & Interventions: Actual fills, stops, and RiskGuard telemetry.
 4. Measured Tape Outcomes: Realized Day Type, HOD/LOD, MFE/MAE from session_tape_actuals.
 
-Computes event-first process metrics without composite Goodhart scores.
+Computes event-first process metrics and actual realized risk budget compliance.
 """
 
 import json
@@ -48,7 +48,7 @@ class ForecastDelta:
     prob_dnp: Optional[float] = None
     prob_dwp: Optional[float] = None
     prob_rotational_chop: Optional[float] = None
-    session_brier_loss: Optional[float] = None  # Single-session forecast loss
+    session_brier_loss: Optional[float] = None
     session_log_loss: Optional[float] = None
 
 
@@ -127,7 +127,7 @@ class DailyProcessDeltaReconciler:
         """Runs the 4-way reconciliation quadrant for the given session date and ticker."""
         eod_cutoff_utc = to_iso_utc(get_session_cutoff_utc(session_date, "16:15:00"))
         
-        # 1. Pre-Market Plan (First try ex-ante get_plan_as_of, fallback to post-hoc snapshot)
+        # 1. Pre-Market Plan
         plan_ctx = PlanAdapter.get_plan_as_of(session_date, ticker, eod_cutoff_utc, db_path=db_path)
         
         if plan_ctx:
@@ -142,7 +142,6 @@ class DailyProcessDeltaReconciler:
                 amendment_count=len(plan_ctx.amendments)
             )
         else:
-            # Fallback to query post-hoc reconstruction plan for diagnostic completeness
             with get_db_connection(db_path) as conn:
                 cur = conn.execute(
                     """
@@ -208,7 +207,6 @@ class DailyProcessDeltaReconciler:
                 brier_loss = None
                 log_loss = None
                 
-                # Compute single-session forecast loss against realized day type
                 if tape_delta.tape_found and tape_delta.realized_day_type and not fc_row["abstain_flag"]:
                     realized = tape_delta.realized_day_type.upper()
                     prob_map = {
@@ -218,14 +216,7 @@ class DailyProcessDeltaReconciler:
                         "DWP": fc_row["prob_dwp"] or 0.0,
                         "ROTATIONAL_CHOP": fc_row["prob_rotational_chop"] or 0.0
                     }
-                    
-                    # Brier score: sum((p_i - o_i)^2)
-                    brier_loss = sum(
-                        (p - (1.0 if k == realized else 0.0)) ** 2
-                        for k, p in prob_map.items()
-                    )
-                    
-                    # Log loss: -ln(max(p_realized, 1e-6))
+                    brier_loss = sum((p - (1.0 if k == realized else 0.0)) ** 2 for k, p in prob_map.items())
                     p_target = max(prob_map.get(realized, 0.0), 1e-6)
                     log_loss = -math.log(p_target)
                     
@@ -247,14 +238,17 @@ class DailyProcessDeltaReconciler:
             else:
                 forecast_delta = ForecastDelta(forecast_found=False)
 
-            # 4. Signal Opportunities & Dispositions
+            # 4. Signal Opportunities & Dispositions (deduplicated subquery prevents fan-out)
             disp_summary = OpportunityLogger.derive_dispositions(session_date, ticker, db_path=db_path)
             
             opp_cur = conn.execute(
                 """
                 SELECT o.*, d.disposition_state, d.matched_execution_id, d.latency_seconds
                 FROM signal_opportunities o
-                LEFT JOIN signal_disposition_events d ON o.opportunity_id = d.opportunity_id
+                LEFT JOIN signal_disposition_events d ON d.rowid = (
+                    SELECT MAX(d2.rowid) FROM signal_disposition_events d2
+                    WHERE d2.opportunity_id = o.opportunity_id
+                )
                 WHERE o.session_date = ? AND o.ticker = ?;
                 """,
                 (session_date, ticker)
@@ -331,6 +325,18 @@ class DailyProcessDeltaReconciler:
                     permitted_ok = False
                     break
 
+        # Genuine Risk Budget Respected Calculation
+        risk_ok = True
+        if plan_delta.plan_found and plan_delta.max_intended_risk_bps is not None and plan_delta.max_intended_risk_bps > 0:
+            max_budget = plan_delta.max_intended_risk_bps
+            # Check individual executed opportunities
+            for o in opportunity_delta.opportunities:
+                if o.get("disposition_state") == "EXECUTED":
+                    stop_bps = float(o.get("stop_distance_bps", 0.0))
+                    if stop_bps > (max_budget * 1.05):  # 5% margin
+                        risk_ok = False
+                        break
+
         return ProcessDeltaSummary(
             session_date=session_date,
             ticker=ticker,
@@ -341,7 +347,7 @@ class DailyProcessDeltaReconciler:
             executions=execution_delta,
             interventions=intervention_delta,
             tape=tape_delta,
-            risk_budget_respected=True,
+            risk_budget_respected=risk_ok,
             permitted_strategies_respected=permitted_ok,
             unmatched_execution_count=unmatched_count
         )

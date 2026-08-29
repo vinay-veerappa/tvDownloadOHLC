@@ -2,11 +2,12 @@
 
 Maps canonical futures & equity tickers to live storage parquet files in data/live/.
 Anchors all paths to REPO_ROOT.
+Includes mtime-aware in-memory caching for sub-millisecond repeated queries.
 """
 
 import os
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -56,6 +57,9 @@ TICKER_MAP: Dict[str, str] = {
     "VVIX": "live_storage_VVIX.parquet"
 }
 
+# Cache structure: path_str -> (mtime, df)
+_DF_CACHE: Dict[str, Tuple[float, pd.DataFrame]] = {}
+
 
 def get_live_storage_path(ticker: str, custom_dir: Optional[Union[str, Path]] = None) -> Path:
     """Resolves the absolute path to the live storage parquet file for a ticker."""
@@ -73,25 +77,31 @@ def load_session_bars(
     session_date: str,
     custom_dir: Optional[Union[str, Path]] = None
 ) -> pd.DataFrame:
-    """Loads 1-minute OHLCV bars for a ticker on a specific session date."""
+    """Loads 1-minute OHLCV bars for a ticker on a specific session date with mtime-aware caching."""
     parquet_path = get_live_storage_path(ticker, custom_dir=custom_dir)
     if not parquet_path.exists():
         raise FileNotFoundError(f"Live storage parquet file not found for ticker '{ticker}' at: {parquet_path}")
         
-    df = pd.read_parquet(parquet_path)
+    path_key = str(parquet_path.resolve())
+    current_mtime = parquet_path.stat().st_mtime
     
-    # Standardize timestamp index / column
-    ts_col = "timestamp" if "timestamp" in df.columns else ("time" if "time" in df.columns else "datetime")
-    if ts_col in df.columns:
-        df["dt"] = pd.to_datetime(df[ts_col], utc=True)
+    if path_key in _DF_CACHE and _DF_CACHE[path_key][0] == current_mtime:
+        df = _DF_CACHE[path_key][1]
     else:
-        df["dt"] = pd.to_datetime(df.index, utc=True)
+        df = pd.read_parquet(parquet_path)
+        # Standardize timestamp column
+        ts_col = "timestamp" if "timestamp" in df.columns else ("time" if "time" in df.columns else "datetime")
+        if ts_col in df.columns:
+            df["dt"] = pd.to_datetime(df[ts_col], utc=True)
+        else:
+            df["dt"] = pd.to_datetime(df.index, utc=True)
+            
+        df = df.sort_values("dt").reset_index(drop=True)
+        df["dt_et"] = df["dt"].dt.tz_convert("America/New_York")
+        df["session_date_str"] = df["dt_et"].dt.strftime("%Y-%m-%d")
+        _DF_CACHE[path_key] = (current_mtime, df)
         
-    df = df.sort_values("dt").reset_index(drop=True)
-    
-    # Filter for session date in Eastern Time (00:00 ET to 23:59 ET of session_date)
-    df["dt_et"] = df["dt"].dt.tz_convert("America/New_York")
     session_str = session_date.split("T")[0]
-    session_df = df[df["dt_et"].dt.strftime("%Y-%m-%d") == session_str].copy()
+    session_df = df[df["session_date_str"] == session_str].copy()
     
     return session_df

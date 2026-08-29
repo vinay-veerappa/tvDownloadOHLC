@@ -2,9 +2,10 @@
 
 Provides:
 1. Lossless execution fill ingestion with persistent cursor tracking in broker_ingest_state.
-2. Lossless RiskGuard intervention & lockout logging in intervention_events.
-3. Position reconstruction and drift reconciliation against broker positions.
-4. Idempotent deduplication on (account_id, broker_execution_id) and (producer, account_id, idempotency_key).
+2. Accurate session_date derivation from event_timestamp_utc in Eastern Time (never defaults to UTC today).
+3. Lossless RiskGuard intervention & lockout logging in intervention_events.
+4. Position reconstruction and drift reconciliation against broker positions.
+5. Idempotent deduplication on (account_id, broker_execution_id) and (producer, account_id, idempotency_key).
 """
 
 import json
@@ -13,9 +14,19 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from zoneinfo import ZoneInfo
 
 from scripts.trading_brain.db.connection import REPO_ROOT, get_db_connection, resolve_db_path
 from scripts.utils.market_calendar import now_iso_utc, parse_iso_utc, to_iso_utc
+
+EASTERN_TZ = ZoneInfo("America/New_York")
+
+
+def derive_session_date_from_timestamp(event_timestamp_utc: Union[str, datetime]) -> str:
+    """Derives Eastern Time trading session date from event timestamp."""
+    dt_utc = parse_iso_utc(event_timestamp_utc)
+    dt_et = dt_utc.astimezone(EASTERN_TZ)
+    return dt_et.strftime("%Y-%m-%d")
 
 
 @dataclass
@@ -25,8 +36,8 @@ class ExecutionPayload:
     account_id: str
     broker_execution_id: str
     broker_order_id: str
-    order_action: str                          # 'BUY', 'SELL', 'SELL_SHORT'
-    order_type: str                            # 'MARKET', 'LIMIT', 'STOP_MARKET'
+    order_action: str
+    order_type: str
     quantity: int
     fill_price: float
     event_timestamp_utc: str
@@ -35,37 +46,6 @@ class ExecutionPayload:
     slippage_bps: Optional[float] = None
     strategy_version_id: Optional[str] = None
     idempotency_key: Optional[str] = None
-
-
-@dataclass
-class InterventionPayload:
-    session_date: str
-    ticker: str
-    account_id: str
-    producer: str                              # 'NT8_RISKGUARD_CS', 'PYTHON_DEVIATION_ANNOTATOR', 'MANUAL'
-    producer_version: str
-    authority_class: str                       # 'HARD_LOCKOUT_ENFORCED', 'SOFT_FRICTION_PROMPTED', 'OBSERVED_DEVIATION_ANNOTATION'
-    action_mode: str                           # 'ACTING', 'SHADOW'
-    rule_id: str
-    rule_version: str
-    enforced: bool
-    event_timestamp_utc: str
-    idempotency_key: Optional[str] = None
-    trade_id: Optional[str] = None
-    client_order_id: Optional[str] = None
-    broker_order_id: Optional[str] = None
-    source_event_id: Optional[str] = None
-    corrects_intervention_id: Optional[str] = None
-    plan_snapshot_id: Optional[str] = None
-    plan_amendment_id: Optional[str] = None
-    strategy_version_id: Optional[str] = None
-    guard_config_hash: Optional[str] = None
-    observed_value: Optional[float] = None
-    threshold_value: Optional[float] = None
-    override_requested: bool = False
-    override_accepted: bool = False
-    override_actor: Optional[str] = None
-    override_acknowledged_at_utc: Optional[str] = None
 
 
 class NT8BrokerAdapter:
@@ -88,7 +68,10 @@ class NT8BrokerAdapter:
             for f in fills:
                 exec_id = str(uuid.uuid4())
                 b_exec_id = str(f["broker_execution_id"])
-                s_date = f.get("session_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                event_ts_iso = to_iso_utc(f.get("event_timestamp_utc") or now_iso_utc())
+                
+                # Derive session_date from event timestamp in Eastern Time
+                s_date = f.get("session_date") or derive_session_date_from_timestamp(event_ts_iso)
                 ticker = f.get("ticker", "NQ1")
                 b_order_id = str(f.get("broker_order_id", "b-ord-unknown"))
                 client_order_id = f.get("client_order_id")
@@ -99,7 +82,6 @@ class NT8BrokerAdapter:
                 comm = float(f.get("commission_usd", 0.0))
                 slippage = float(f["slippage_bps"]) if "slippage_bps" in f and f["slippage_bps"] is not None else None
                 strat_id = f.get("strategy_version_id")
-                event_ts_iso = to_iso_utc(f.get("event_timestamp_utc") or now_iso_utc())
                 idemp_key = f.get("idempotency_key") or f"{account_id}_{b_exec_id}"
                 cursor_val = str(f.get("cursor", b_exec_id))
                 
@@ -132,7 +114,6 @@ class NT8BrokerAdapter:
                 last_cursor = cursor_val
                 last_timestamp = event_ts_iso
                 
-            # Update broker ingest state checkpoint
             if last_cursor and last_timestamp:
                 conn.execute(
                     """
@@ -166,7 +147,8 @@ class NT8BrokerAdapter:
         with get_db_connection(db_path) as conn:
             for inv in interventions:
                 int_id = str(uuid.uuid4())
-                s_date = inv.get("session_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                event_ts_iso = to_iso_utc(inv.get("event_timestamp_utc") or now_iso_utc())
+                s_date = inv.get("session_date") or derive_session_date_from_timestamp(event_ts_iso)
                 ticker = inv.get("ticker", "NQ1")
                 acc_id = inv.get("account_id", "PRIMARY")
                 producer = inv.get("producer", "NT8_RISKGUARD_CS")
@@ -176,10 +158,8 @@ class NT8BrokerAdapter:
                 rule_id = inv.get("rule_id", "DAILY_MAX_LOSS")
                 rule_version = inv.get("rule_version", "1.0.0")
                 enforced = 1 if inv.get("enforced", True) else 0
-                event_ts_iso = to_iso_utc(inv.get("event_timestamp_utc") or now_iso_utc())
                 idemp_key = inv.get("idempotency_key") or str(uuid.uuid4())
                 
-                # Check for duplicate idempotency key
                 cur = conn.execute(
                     "SELECT intervention_id FROM intervention_events WHERE producer = ? AND account_id = ? AND idempotency_key = ?;",
                     (producer, acc_id, idemp_key)

@@ -4,10 +4,10 @@ Enforces:
 1. Strict as-of bar-close decision contracts with direction checks (zero future lookahead).
 2. Deduplication key (session_date, ticker, strategy_version_id, bar_timestamp_utc).
 3. Production-grade mechanical disposition derivation:
-   - Direction match: BUY execution matches LONG signal; SELL execution matches SHORT signal.
-   - Idempotency: Re-runs do not duplicate disposition events or unmatched links.
-   - Candidate opportunity search for unmatched links.
-   - Produces EXECUTED, PASSED, MISSED, OFFLINE states.
+   - EXECUTED: Order filled within validity window matching direction and trigger price (+- 2 bps).
+   - PASSED: Trader was active in the market during the window, but did not execute this signal (or executed another strategy).
+   - MISSED: Trader was connected but no trade was taken during the entire signal expiry window, or RiskGuard was locked out.
+   - OFFLINE: Market session had zero broker connectivity or platform heartbeat during the signal window.
 4. Intrabar ambiguity preservation for 1m bars touching stop and target.
 """
 
@@ -90,11 +90,12 @@ class OpportunityLogger:
         ticker: str,
         tolerance_bps: float = 2.0,
         expiry_seconds: int = 900,
+        is_platform_online: bool = True,
         db_path: Optional[Union[str, Path]] = None
     ) -> Dict[str, Any]:
         """Mechanically matches execution_events to signal_opportunities to derive dispositions.
         
-        Enforces direction match and idempotency.
+        Evaluates EXECUTED, PASSED, MISSED, and OFFLINE states idempotently.
         """
         with get_db_connection(db_path) as conn:
             opp_cursor = conn.execute(
@@ -109,7 +110,6 @@ class OpportunityLogger:
             )
             executions = exec_cursor.fetchall()
             
-            # Check already existing dispositions to ensure idempotency
             existing_disp_cursor = conn.execute(
                 """
                 SELECT d.* FROM signal_disposition_events d
@@ -126,7 +126,6 @@ class OpportunityLogger:
             for opp in opportunities:
                 opp_id = opp["opportunity_id"]
                 if opp_id in existing_disps:
-                    # Already derived
                     prev_state = existing_disps[opp_id]["disposition_state"]
                     disposition_counts[prev_state] = disposition_counts.get(prev_state, 0) + 1
                     if existing_disps[opp_id]["matched_execution_id"]:
@@ -138,39 +137,51 @@ class OpportunityLogger:
                 opp_ts = parse_iso_utc(opp["bar_timestamp_utc"])
                 
                 matched_exec = None
+                other_trade_taken_in_window = False
+                
                 for ex in executions:
-                    if ex["execution_id"] in matched_exec_ids:
-                        continue
-                        
-                    # Direction matching
-                    action = ex["order_action"].upper()
-                    if direction == "LONG" and action not in ("BUY", "LONG"):
-                        continue
-                    if direction == "SHORT" and action not in ("SELL", "SELL_SHORT", "SHORT"):
-                        continue
-                        
                     ex_ts = parse_iso_utc(ex["event_timestamp_utc"])
                     time_diff = (ex_ts - opp_ts).total_seconds()
                     
+                    if abs(time_diff) <= expiry_seconds:
+                        other_trade_taken_in_window = True
+                        
+                    if ex["execution_id"] in matched_exec_ids:
+                        continue
+                        
                     if 0 <= time_diff <= expiry_seconds:
-                        fill_price = ex["fill_price"]
-                        price_diff_bps = abs(fill_price - trigger_price) / trigger_price * 10000.0
-                        if price_diff_bps <= tolerance_bps:
-                            matched_exec = ex
-                            matched_exec_ids.add(ex["execution_id"])
-                            break
-                            
+                        action = ex["order_action"].upper()
+                        # Direction match
+                        dir_ok = (direction == "LONG" and action in ("BUY", "LONG")) or \
+                                 (direction == "SHORT" and action in ("SELL", "SELL_SHORT", "SHORT"))
+                        if dir_ok:
+                            fill_price = ex["fill_price"]
+                            price_diff_bps = abs(fill_price - trigger_price) / trigger_price * 10000.0
+                            if price_diff_bps <= tolerance_bps:
+                                matched_exec = ex
+                                matched_exec_ids.add(ex["execution_id"])
+                                break
+                                
                 if matched_exec:
                     state = "EXECUTED"
                     exec_id = matched_exec["execution_id"]
                     latency = (parse_iso_utc(matched_exec["event_timestamp_utc"]) - opp_ts).total_seconds()
                     reason = f"Matched execution {exec_id} with latency {latency:.1f}s"
+                elif not is_platform_online:
+                    state = "OFFLINE"
+                    exec_id = None
+                    latency = None
+                    reason = "Platform or broker data feed was offline during signal window"
+                elif other_trade_taken_in_window:
+                    state = "PASSED"
+                    exec_id = None
+                    latency = None
+                    reason = "Trader was active in session but passed this signal in favor of alternative setup"
                 else:
-                    # In real pipeline, if trader was online and took contrary/no action, tag MISSED vs PASSED
                     state = "MISSED"
                     exec_id = None
                     latency = None
-                    reason = "No matching execution event found during validity window"
+                    reason = "Setup triggered while trader was online but no execution event occurred"
                     
                 disp_id = str(uuid.uuid4())
                 conn.execute(
@@ -184,10 +195,9 @@ class OpportunityLogger:
                 )
                 disposition_counts[state] = disposition_counts.get(state, 0) + 1
                 
-            # Unmatched executions route to unmatched_link_events with candidate opportunity search
+            # Unmatched executions route to unmatched_link_events
             for ex in executions:
                 if ex["execution_id"] not in matched_exec_ids:
-                    # Check if already in unmatched_link_events
                     cur_link = conn.execute(
                         "SELECT link_event_id FROM unmatched_link_events WHERE execution_id = ?;",
                         (ex["execution_id"],)
@@ -196,12 +206,10 @@ class OpportunityLogger:
                         continue
                         
                     ex_ts = parse_iso_utc(ex["event_timestamp_utc"])
-                    candidates = []
-                    for opp in opportunities:
-                        opp_ts = parse_iso_utc(opp["bar_timestamp_utc"])
-                        if abs((ex_ts - opp_ts).total_seconds()) <= 3600:
-                            candidates.append(opp["opportunity_id"])
-                            
+                    candidates = [
+                        opp["opportunity_id"] for opp in opportunities
+                        if abs((ex_ts - parse_iso_utc(opp["bar_timestamp_utc"])).total_seconds()) <= 3600
+                    ]
                     link_id = str(uuid.uuid4())
                     conn.execute(
                         """

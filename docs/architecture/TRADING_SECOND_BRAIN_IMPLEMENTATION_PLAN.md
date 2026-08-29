@@ -79,6 +79,7 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 | Table Name | Schema Classification | Immutability Protection | Role & Description |
 | :--- | :--- | :---: | :--- |
 | **`information_items`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Universal typed intake catalog envelope. |
+| **`information_item_review_events`** | Transition Ledger | 2 Triggers (UP/DEL) | Append-only review state history for information catalog items. |
 | **`plan_snapshots`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Immutable pre-market trading plan declarations. |
 | **`plan_lifecycle_events`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Plan state transitions (`SUBMITTED`, `SUPERSEDED`, `CANCELLED`). |
 | **`plan_amendments`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Append-only plan adjustments with supersession links. |
@@ -100,8 +101,10 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 | **`legacy_projection_outbox`** | Operational Staging | State Machine | Transactional outbox for asynchronous projection to legacy DBs. |
 | **`broker_ingest_state`** | Operational State | Direct Schema | Cursor and pagination checkpoint state keyed by `(endpoint, account_id)`. |
 
-* **Immutability Protection Count**: Exactly **18 tables** are protected by paired `BEFORE UPDATE` and `BEFORE DELETE` triggers, totaling **36 triggers**.
+* **Immutability Protection Count**: Exactly **19 tables** are protected by paired `BEFORE UPDATE` and `BEFORE DELETE` triggers, totaling **38 triggers**.
 * **Review Queue Current-State Projections**:
+  * `v_information_items_active`: Evaluates latest review state for information intake items.
+  * `v_session_tape_actuals_current`: Resolves latest tape revision per `(session_date, ticker)`.
   * `v_unmatched_links_open`: Evaluates current unresolved state from `unmatched_link_events`.
   * `v_candidate_findings_staged`: Evaluates active hypothesis pipeline from `candidate_finding_events`.
 * **Trust Boundary & Clock Monotonicity**:
@@ -112,8 +115,8 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 * **Acceptance Gate**:
   * Command: `pytest tests/test_trading_brain_db.py`
   * Assertions:
-    - All 21 tables initialize cleanly with foreign keys enforced.
-    - All 36 triggers exist and raise immediate SQLite exceptions on `UPDATE` or `DELETE`.
+    - All 22 tables initialize cleanly with foreign keys enforced.
+    - All 38 triggers exist and raise immediate SQLite exceptions on `UPDATE` or `DELETE`.
     - Partial unique index strictly enforces at most one `LIVE_PRODUCTION` forecast per `(session_date, ticker)`:
       ```sql
       CREATE UNIQUE INDEX uq_live_forecast_per_session 
