@@ -6,18 +6,19 @@ Enforces:
    - <= cutoff -> LIVE_PRODUCTION
    - > cutoff and <= cutoff + grace -> FORECAST_LATE_RECEIVED (demoted)
    - > cutoff + grace -> REJECTED with ForecastCutoffExpiredError
-3. Strict database-enforced uniqueness: exactly 1 LIVE_PRODUCTION forecast per (session_date, ticker).
+3. Strict 5-class MECE probability validation (sum to 1.0 +- 1e-4 unless abstained).
+4. Strict database-enforced uniqueness: exactly 1 LIVE_PRODUCTION forecast per (session_date, ticker).
 """
 
 import json
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from scripts.trading_brain.db.connection import get_db_connection
-from scripts.utils.market_calendar import get_session_cutoff_utc
+from scripts.utils.market_calendar import get_session_cutoff_utc, now_iso_utc, parse_iso_utc, to_iso_utc
 
 
 class ForecastCutoffExpiredError(Exception):
@@ -26,7 +27,7 @@ class ForecastCutoffExpiredError(Exception):
 
 
 class ForecastInputValidationError(Exception):
-    """Raised when forecast inputs violate temporal cutoff or schema rules."""
+    """Raised when forecast inputs violate temporal cutoff or probability distribution rules."""
     pass
 
 
@@ -65,6 +66,35 @@ class ForecastSnapshotPayload:
     abstain_reason: Optional[str] = None
 
 
+def validate_probability_distribution(payload: ForecastSnapshotPayload) -> None:
+    """Validates that 5 MECE day-type probabilities are each in [0, 1] and sum to 1.0 +- 1e-4."""
+    if payload.abstain_flag:
+        return
+        
+    probs = [
+        payload.prob_r1,
+        payload.prob_r2,
+        payload.prob_dnp,
+        payload.prob_dwp,
+        payload.prob_rotational_chop
+    ]
+    
+    if any(p is None for p in probs):
+        raise ForecastInputValidationError(
+            f"All 5 day-type probabilities must be non-null when abstain_flag=False: probs={probs}"
+        )
+        
+    for p in probs:
+        if not (0.0 <= p <= 1.0):
+            raise ForecastInputValidationError(f"Probability value {p} is out of valid range [0.0, 1.0]")
+            
+    total = sum(probs)
+    if not (0.9999 <= total <= 1.0001):
+        raise ForecastInputValidationError(
+            f"5 MECE probabilities must sum to 1.0 +- 1e-4, got total = {total:.6f}"
+        )
+
+
 class ForecastRegistrar:
     """Service class for two-phase sealed forecast registration and cutoff enforcement."""
 
@@ -78,32 +108,27 @@ class ForecastRegistrar:
         cutoff_time_et: str = "08:45:00",
         db_path: Optional[Union[str, Path]] = None
     ) -> ForecastRun:
-        """Phase 1: Initiates a forecast run and seals input manifests before cutoff.
-        
-        Raises ForecastCutoffExpiredError if initiated after cutoff.
-        """
+        """Phase 1: Initiates a forecast run and seals input manifests before cutoff."""
         now_dt = datetime.now(timezone.utc)
         cutoff_dt = get_session_cutoff_utc(session_date, cutoff_time_et_str=cutoff_time_et)
         
-        # Enforce that run initiation occurs before cutoff
         if now_dt > cutoff_dt:
             raise ForecastCutoffExpiredError(
                 f"Cannot create live forecast run after session cutoff: now={now_dt.isoformat()} > cutoff={cutoff_dt.isoformat()}"
             )
             
-        # Verify that all input manifests precede or equal cutoff
         for inp in input_manifest:
             max_ts = inp.get("max_timestamp_utc")
             if max_ts:
-                inp_dt = datetime.fromisoformat(max_ts.replace("Z", "+00:00"))
+                inp_dt = parse_iso_utc(max_ts)
                 if inp_dt > cutoff_dt:
                     raise ForecastInputValidationError(
                         f"Input {inp.get('provider_name')} max timestamp {max_ts} exceeds cutoff {cutoff_dt.isoformat()}"
                     )
                     
         run_id = str(uuid.uuid4())
-        now_iso = now_dt.isoformat()
-        cutoff_iso = cutoff_dt.isoformat()
+        now_iso = now_iso_utc()
+        cutoff_iso = to_iso_utc(cutoff_dt)
         
         with get_db_connection(db_path) as conn:
             conn.execute(
@@ -117,7 +142,6 @@ class ForecastRegistrar:
                 (run_id, session_date, ticker, model_version_id, cutoff_iso, commit_grace_period_sec, now_iso, now_iso)
             )
             
-            # Seal input manifest
             for inp in input_manifest:
                 conn.execute(
                     """
@@ -131,7 +155,7 @@ class ForecastRegistrar:
                         run_id,
                         inp.get("provider_name", "UNKNOWN"),
                         inp.get("data_type", "BARS"),
-                        inp.get("max_timestamp_utc", now_iso),
+                        to_iso_utc(inp.get("max_timestamp_utc", now_iso)),
                         inp.get("content_hash", "hash")
                     )
                 )
@@ -154,17 +178,13 @@ class ForecastRegistrar:
         payload: ForecastSnapshotPayload,
         db_path: Optional[Union[str, Path]] = None
     ) -> Dict[str, Any]:
-        """Phase 2: Commits forecast predictions with asymmetric cutoff enforcement.
+        """Phase 2: Commits forecast predictions with probability validation and asymmetric cutoff enforcement."""
+        validate_probability_distribution(payload)
         
-        - <= cutoff -> LIVE_PRODUCTION
-        - <= cutoff + grace -> FORECAST_LATE_RECEIVED (demoted)
-        - > cutoff + grace -> Rejects and transitions run to EXPIRED.
-        """
         now_dt = datetime.now(timezone.utc)
         forecast_id = str(uuid.uuid4())
         
         with get_db_connection(db_path) as conn:
-            # Query run state
             cur = conn.execute("SELECT * FROM forecast_runs WHERE forecast_run_id = ?;", (forecast_run_id,))
             run_row = cur.fetchone()
             if not run_row:
@@ -173,16 +193,14 @@ class ForecastRegistrar:
             if run_row["status"] != "INPUTS_SEALED":
                 raise ValueError(f"Forecast run {forecast_run_id} is in status '{run_row['status']}', expected 'INPUTS_SEALED'.")
                 
-            cutoff_dt = datetime.fromisoformat(run_row["effective_cutoff_utc"].replace("Z", "+00:00"))
+            cutoff_dt = parse_iso_utc(run_row["effective_cutoff_utc"])
             grace_sec = run_row["commit_grace_period_sec"]
             
-            # Determine forecast_mode based on database clock
             if now_dt <= cutoff_dt:
                 forecast_mode = "LIVE_PRODUCTION"
             elif (now_dt - cutoff_dt).total_seconds() <= grace_sec:
                 forecast_mode = "FORECAST_LATE_RECEIVED"
             else:
-                # Mark run expired
                 conn.execute(
                     "UPDATE forecast_runs SET status = 'EXPIRED' WHERE forecast_run_id = ?;",
                     (forecast_run_id,)
@@ -191,7 +209,6 @@ class ForecastRegistrar:
                     f"Commit deadline expired for run {forecast_run_id}: committed at {now_dt.isoformat()} > deadline {cutoff_dt.isoformat()} + {grace_sec}s"
                 )
                 
-            # Insert immutable forecast snapshot (omitting received_at_utc & created_at_utc so SQLite generates them)
             conn.execute(
                 """
                 INSERT INTO forecast_snapshots (
@@ -231,13 +248,11 @@ class ForecastRegistrar:
                 )
             )
             
-            # Transition run to COMMITTED
             conn.execute(
                 "UPDATE forecast_runs SET status = 'COMMITTED', committed_at_utc = ? WHERE forecast_run_id = ?;",
-                (now_dt.isoformat(), forecast_run_id)
+                (now_iso_utc(), forecast_run_id)
             )
             
-            # Fetch server-generated receipt
             cur = conn.execute("SELECT received_at_utc FROM forecast_snapshots WHERE forecast_id = ?;", (forecast_id,))
             received_at = cur.fetchone()["received_at_utc"]
             
@@ -261,8 +276,9 @@ class ForecastRegistrar:
         db_path: Optional[Union[str, Path]] = None
     ) -> Dict[str, Any]:
         """Registers a historical replay audit forecast (mode = REPLAY_AUDIT)."""
+        validate_probability_distribution(payload)
         forecast_id = str(uuid.uuid4())
-        cutoff_iso = effective_cutoff_utc or get_session_cutoff_utc(session_date).isoformat()
+        cutoff_iso = to_iso_utc(effective_cutoff_utc) if effective_cutoff_utc else to_iso_utc(get_session_cutoff_utc(session_date))
         
         with get_db_connection(db_path) as conn:
             conn.execute(

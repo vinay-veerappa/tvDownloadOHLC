@@ -135,3 +135,28 @@ def test_replay_audit_registration(temp_db):
     
     assert res["forecast_mode"] == "REPLAY_AUDIT"
     assert res["forecast_id"] is not None
+
+
+def test_probability_distribution_sum_validation(temp_db):
+    """Tests that invalid probability distributions are rejected with ForecastInputValidationError."""
+    session_date = "2026-09-01"
+    run = ForecastRegistrar.create_forecast_run(
+        session_date=session_date,
+        ticker="NQ1",
+        model_version_id="MOD_V1",
+        input_manifest=[],
+        db_path=temp_db
+    )
+    
+    # Probabilities sum to 0.8 instead of 1.0 -> should fail
+    invalid_payload = ForecastSnapshotPayload(
+        prob_r1=0.20,
+        prob_r2=0.20,
+        prob_dnp=0.20,
+        prob_dwp=0.10,
+        prob_rotational_chop=0.10  # sum = 0.8
+    )
+    
+    with pytest.raises(ForecastInputValidationError) as excinfo:
+        ForecastRegistrar.commit_forecast_run(run.forecast_run_id, invalid_payload, db_path=temp_db)
+    assert "5 MECE probabilities must sum to 1.0" in str(excinfo.value)

@@ -18,9 +18,9 @@ CREATE TABLE IF NOT EXISTS information_items (
     verbatim_text TEXT NOT NULL,
     structured_payload_json TEXT,              -- Parsed metadata, levels, tags
     available_at_utc TIMESTAMP NOT NULL,       -- Temporal availability boundary
-    received_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    received_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     review_state TEXT NOT NULL DEFAULT 'CAPTURED', -- 'CAPTURED', 'ACCEPTED', 'REJECTED'
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- ----------------------------------------------------------------------------
@@ -42,13 +42,13 @@ CREATE TABLE IF NOT EXISTS plan_snapshots (
     primary_bias TEXT NOT NULL,                -- 'BULLISH', 'BEARISH', 'NEUTRAL', 'NO_TRADE'
     wargamed_scenarios_json TEXT NOT NULL,     -- Structured scenarios and expected branches
     invalidation_levels_json TEXT NOT NULL,    -- Explicit price invalidation boundaries
-    max_intended_risk_bps REAL NOT NULL,      -- Risk budget declaration
+    max_intended_risk_bps REAL NOT NULL,       -- Risk budget declaration
     permitted_strategies_json TEXT NOT NULL,   -- Active strategy IDs for the session
     
     -- Provenance Timestamps
-    received_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    received_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     provenance_class TEXT NOT NULL,            -- 'EX_ANTE_DECLARED' or 'POST_HOC_RECONSTRUCTION'
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (supersedes_plan_snapshot_id) REFERENCES plan_snapshots(plan_snapshot_id),
     CONSTRAINT ck_no_self_supersession CHECK (supersedes_plan_snapshot_id <> plan_snapshot_id),
     UNIQUE(plan_family_id, revision_seq)
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS plan_lifecycle_events (
     event_id TEXT PRIMARY KEY,
     plan_snapshot_id TEXT NOT NULL,
     event_type TEXT NOT NULL,                  -- 'SUBMITTED', 'SUPERSEDED', 'CANCELLED'
-    recorded_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     reason TEXT,
     FOREIGN KEY (plan_snapshot_id) REFERENCES plan_snapshots(plan_snapshot_id)
 );
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS plan_amendments (
     supersedes_amendment_id TEXT,
     amendment_seq INTEGER NOT NULL,
     effective_at_utc TIMESTAMP NOT NULL,       -- User-declared intended start
-    received_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Trusted server receipt
+    received_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), -- Trusted server receipt
     reason_code TEXT NOT NULL,                 -- 'MACRO_NEWS', 'REGIME_CHANGE', 'DISCIPLINE_PAUSE'
     amendment_text TEXT NOT NULL,
     amended_bias TEXT,
@@ -90,10 +90,10 @@ CREATE TABLE IF NOT EXISTS forecast_runs (
     effective_cutoff_utc TIMESTAMP NOT NULL,
     commit_grace_period_sec INTEGER NOT NULL,  -- Pinned from model contract at run creation
     status TEXT NOT NULL,                      -- 'CREATED', 'INPUTS_SEALED', 'COMMITTED', 'FAILED', 'EXPIRED'
-    started_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     inputs_sealed_at_utc TIMESTAMP,
     committed_at_utc TIMESTAMP,
-    created_at_utc TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at_utc TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS forecast_run_inputs (
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS forecast_run_inputs (
     data_type TEXT NOT NULL,
     max_timestamp_utc TIMESTAMP NOT NULL,
     content_hash TEXT NOT NULL,
-    created_at_utc TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at_utc TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (forecast_run_id) REFERENCES forecast_runs(forecast_run_id)
 );
 
@@ -138,8 +138,8 @@ CREATE TABLE IF NOT EXISTS forecast_snapshots (
     config_hash TEXT NOT NULL,
     abstain_flag BOOLEAN DEFAULT FALSE,
     abstain_reason TEXT,
-    received_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    received_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (forecast_run_id) REFERENCES forecast_runs(forecast_run_id)
 );
 
@@ -166,8 +166,8 @@ CREATE TABLE IF NOT EXISTS signal_opportunities (
     target_1_bps REAL NOT NULL,
     feature_manifest_json TEXT NOT NULL,
     evaluation_mode TEXT NOT NULL,             -- 'LIVE_CAPTURE', 'HISTORICAL_REPLAY'
-    received_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    received_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE(session_date, ticker, strategy_version_id, bar_timestamp_utc)
 );
 
@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS signal_disposition_events (
     latency_seconds REAL,
     disposition_reason TEXT,
     event_timestamp_utc TIMESTAMP NOT NULL,
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (opportunity_id) REFERENCES signal_opportunities(opportunity_id),
     FOREIGN KEY (corrects_disposition_id) REFERENCES signal_disposition_events(disposition_id)
 );
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS signal_outcomes (
     realized_mae_bps REAL NOT NULL,
     bars_held INTEGER NOT NULL,
     evaluated_at_utc TIMESTAMP NOT NULL,
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (opportunity_id) REFERENCES signal_opportunities(opportunity_id)
 );
 
@@ -230,8 +230,8 @@ CREATE TABLE IF NOT EXISTS session_tape_actuals (
     content_hash TEXT NOT NULL,
     quality_state TEXT NOT NULL,               -- 'CLEAN', 'SUSPECT_TICKS', 'INCOMPLETE_BARS'
     supersedes_actual_id TEXT,
-    received_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    received_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE(session_date, ticker)
 );
 
@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS execution_events (
     strategy_version_id TEXT,
     idempotency_key TEXT NOT NULL,
     event_timestamp_utc TIMESTAMP NOT NULL,
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE(account_id, broker_execution_id)
 );
 
@@ -288,7 +288,7 @@ CREATE TABLE IF NOT EXISTS intervention_events (
     override_acknowledged_at_utc TIMESTAMP,
     idempotency_key TEXT NOT NULL,
     event_timestamp_utc TIMESTAMP NOT NULL,
-    created_at_utc TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at_utc TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (plan_snapshot_id) REFERENCES plan_snapshots(plan_snapshot_id),
     FOREIGN KEY (plan_amendment_id) REFERENCES plan_amendments(amendment_id),
     UNIQUE(producer, account_id, idempotency_key)
@@ -316,7 +316,7 @@ CREATE TABLE IF NOT EXISTS drill_attempts (
     rule_match_flag BOOLEAN NOT NULL,
     latency_ms INTEGER NOT NULL,
     review_notes TEXT,
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS behavioral_declarations (
@@ -328,7 +328,7 @@ CREATE TABLE IF NOT EXISTS behavioral_declarations (
     emotional_state TEXT,
     reflection_notes TEXT NOT NULL,
     review_state TEXT NOT NULL DEFAULT 'USER_ENTERED',
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- ----------------------------------------------------------------------------
@@ -343,7 +343,7 @@ CREATE TABLE IF NOT EXISTS unmatched_link_events (
     resolution_notes TEXT,
     resolved_by TEXT,
     event_timestamp_utc TIMESTAMP NOT NULL,
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (execution_id) REFERENCES execution_events(execution_id)
 );
 
@@ -357,7 +357,7 @@ CREATE TABLE IF NOT EXISTS candidate_finding_events (
     fdr_q_value REAL,
     actor TEXT NOT NULL,
     event_timestamp_utc TIMESTAMP NOT NULL,
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- ----------------------------------------------------------------------------
@@ -371,7 +371,7 @@ CREATE TABLE IF NOT EXISTS strategy_versions (
     rules_doc_path TEXT NOT NULL,
     execution_policy_json TEXT NOT NULL,       -- Target brackets, stops, scale-out policy
     status TEXT NOT NULL,                      -- 'EXPERIMENTAL_CAPTURE_ONLY', 'PROMOTED', 'RETIRED'
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS model_versions (
@@ -382,7 +382,7 @@ CREATE TABLE IF NOT EXISTS model_versions (
     feature_manifest_json TEXT NOT NULL,
     calibration_metrics_json TEXT NOT NULL,
     status TEXT NOT NULL,                      -- 'SHADOW', 'CHAMPION', 'RETIRED'
-    created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at_utc TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- ----------------------------------------------------------------------------
@@ -400,7 +400,7 @@ CREATE TABLE IF NOT EXISTS legacy_projection_outbox (
     last_error TEXT,
     lease_token TEXT,
     lease_expires_at_utc TIMESTAMP,
-    created_at_utc TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at_utc TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     projected_at_utc TIMESTAMP
 );
 
@@ -409,7 +409,7 @@ CREATE TABLE IF NOT EXISTS broker_ingest_state (
     account_id TEXT NOT NULL,
     last_cursor TEXT NOT NULL,
     last_event_timestamp_utc TIMESTAMP NOT NULL,
-    updated_at_utc TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at_utc TIMESTAMP DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (endpoint_name, account_id)
 );
 

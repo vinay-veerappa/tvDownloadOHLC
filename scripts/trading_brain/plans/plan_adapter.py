@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from scripts.trading_brain.db.connection import get_db_connection
+from scripts.utils.market_calendar import now_iso_utc, parse_iso_utc, to_iso_utc
 
 
 @dataclass
@@ -55,19 +56,6 @@ class PlanContext:
     amendments: List[PlanAmendment] = field(default_factory=list)
 
 
-def parse_iso_utc(dt_val: Union[str, datetime]) -> datetime:
-    """Normalizes string or datetime into UTC datetime object."""
-    if isinstance(dt_val, str):
-        # Handle 'Z' suffix
-        cleaned = dt_val.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(cleaned)
-    else:
-        dt = dt_val
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
 class PlanAdapter:
     """Service class for managing immutable plan snapshots and resolving as-of authority."""
 
@@ -83,7 +71,8 @@ class PlanAdapter:
         snapshot_id = plan.plan_snapshot_id or str(uuid.uuid4())
         family_id = plan.plan_family_id or str(uuid.uuid4())
         
-        cutoff_dt = parse_iso_utc(plan.preparation_cutoff_utc)
+        cutoff_iso = to_iso_utc(plan.preparation_cutoff_utc)
+        cutoff_dt = parse_iso_utc(cutoff_iso)
         now_dt = datetime.now(timezone.utc)
         
         # Enforce provenance classification based on server clock
@@ -97,7 +86,7 @@ class PlanAdapter:
             )
             next_seq = cursor.fetchone()["next_seq"]
             
-            # Insert immutable snapshot (omitting received_at_utc and created_at_utc so SQLite CURRENT_TIMESTAMP applies)
+            # Insert immutable snapshot (omitting received_at_utc and created_at_utc so SQLite defaults apply)
             conn.execute(
                 """
                 INSERT INTO plan_snapshots (
@@ -113,7 +102,7 @@ class PlanAdapter:
                     next_seq,
                     plan.session_date,
                     plan.ticker,
-                    cutoff_dt.isoformat(),
+                    cutoff_iso,
                     plan.source_system,
                     plan.source_plan_id,
                     plan.supersedes_plan_snapshot_id,
@@ -188,7 +177,7 @@ class PlanAdapter:
         db_path: Optional[Union[str, Path]] = None
     ) -> PlanAmendment:
         """Appends an intraday amendment to plan_amendments."""
-        effective_dt = parse_iso_utc(effective_at_utc)
+        effective_iso = to_iso_utc(effective_at_utc)
         amendment_id = str(uuid.uuid4())
         
         with get_db_connection(db_path) as conn:
@@ -210,7 +199,7 @@ class PlanAdapter:
                     plan_snapshot_id,
                     supersedes_amendment_id,
                     next_seq,
-                    effective_dt.isoformat(),
+                    effective_iso,
                     reason_code,
                     amendment_text,
                     amended_bias,
@@ -225,7 +214,7 @@ class PlanAdapter:
             amendment_id=amendment_id,
             plan_snapshot_id=plan_snapshot_id,
             amendment_seq=next_seq,
-            effective_at_utc=effective_dt.isoformat(),
+            effective_at_utc=effective_iso,
             received_at_utc=received_at,
             reason_code=reason_code,
             amendment_text=amendment_text,
@@ -241,20 +230,10 @@ class PlanAdapter:
         decision_time_utc: Union[str, datetime],
         db_path: Optional[Union[str, Path]] = None
     ) -> Optional[PlanContext]:
-        """Deterministically resolves the authoritative plan as of a historical decision time.
-        
-        Invariants:
-        1. Only considers snapshots with received_at_utc <= decision_time_utc AND provenance_class = 'EX_ANTE_DECLARED'.
-        2. Filters out snapshots where a CANCELLED or SUPERSEDED event was recorded by decision_time_utc.
-        3. Filters out snapshots referenced as supersedes_plan_snapshot_id in newer eligible snapshots.
-        4. Resolves highest priority by (received_at_utc DESC, revision_seq DESC).
-        5. Attaches valid amendments where received_at_utc <= decision_time_utc AND effective_at_utc <= decision_time_utc.
-        """
-        decision_dt = parse_iso_utc(decision_time_utc)
-        decision_iso = decision_dt.isoformat()
+        """Deterministically resolves the authoritative plan as of a historical decision time."""
+        decision_iso = to_iso_utc(decision_time_utc)
         
         with get_db_connection(db_path) as conn:
-            # Query eligible ex-ante snapshots
             query = """
             SELECT p.*
             FROM plan_snapshots p
@@ -341,9 +320,8 @@ class PlanAdapter:
         db_path: Optional[Union[str, Path]] = None
     ) -> PlanContext:
         """Adapts a Prisma TradePlan dictionary into a canonical PlanContext and persists it."""
-        cutoff_iso = parse_iso_utc(preparation_cutoff_utc).isoformat()
+        cutoff_iso = to_iso_utc(preparation_cutoff_utc)
         
-        # Extract fields with sensible defaults if Prisma format varies
         session_date = prisma_plan.get("sessionDate") or prisma_plan.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         ticker = prisma_plan.get("symbol") or prisma_plan.get("ticker") or "NQ1"
         plan_text = prisma_plan.get("planText") or prisma_plan.get("content") or "Ex-ante trading plan"

@@ -4,6 +4,7 @@ Handles:
 - Eastern Time (America/New_York) with Daylight Saving Time (DST) awareness.
 - Session pre-market cutoff calculations (default 08:45:00 ET -> UTC).
 - Session open (09:30:00 ET) and close (16:00:00 ET / 16:15:00 ET).
+- Canonical ISO-8601 UTC string serialization (YYYY-MM-DDTHH:MM:SSZ).
 """
 
 from datetime import date, datetime, time, timezone
@@ -22,6 +23,29 @@ def parse_date(date_val: Union[str, date, datetime]) -> date:
     return date_val
 
 
+def parse_iso_utc(dt_val: Union[str, datetime]) -> datetime:
+    """Normalizes string or datetime into UTC datetime object."""
+    if isinstance(dt_val, str):
+        cleaned = dt_val.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(cleaned)
+    else:
+        dt = dt_val
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def to_iso_utc(dt_val: Union[str, datetime]) -> str:
+    """Serializes date/datetime into canonical ISO-8601 UTC string (YYYY-MM-DDTHH:MM:SSZ)."""
+    dt = parse_iso_utc(dt_val)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def now_iso_utc() -> str:
+    """Returns the current UTC timestamp formatted as canonical ISO-8601 string."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def get_session_cutoff_utc(
     session_date: Union[str, date, datetime],
     cutoff_time_et_str: str = "08:45:00"
@@ -29,13 +53,6 @@ def get_session_cutoff_utc(
     """Calculates the exact UTC timestamp for a session cutoff in Eastern Time.
     
     Correctly accounts for DST transitions (EDT UTC-4 vs EST UTC-5).
-    
-    Args:
-        session_date: Target session date (e.g. '2026-08-28')
-        cutoff_time_et_str: Cutoff time string in ET (default '08:45:00')
-        
-    Returns:
-        datetime: Timezone-aware UTC datetime.
     """
     d = parse_date(session_date)
     parts = [int(p) for p in cutoff_time_et_str.split(":")]
