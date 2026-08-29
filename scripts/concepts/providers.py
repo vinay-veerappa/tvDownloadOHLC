@@ -173,50 +173,65 @@ class SignatureSetupsProvider(BaseConceptProvider):
         return format_signature_setups_markdown(data)
 
 
-# 7. ALN (AUSTIN LEVELS / LINE NETTING) PROVIDER (Scaffold / Ready for Extension)
-class ALNLevelsProvider(BaseConceptProvider):
+# 7. NQSTATS ALN (ASIA / LONDON / NY) SESSION DYNAMICS PROVIDER
+class ALNSessionsProvider(BaseConceptProvider):
     @property
     def name(self) -> str:
-        return "aln_levels"
+        return "aln_sessions"
 
     @property
     def description(self) -> str:
-        return "Austin Line Netting (ALN): Level clusters, order flow liquidity stacking, and netting pivots."
+        return "NQStats ALN Sessions: Asia-London-NY structural relationships (LPEU, LPED, LEA, AEL) and break probabilities."
 
     def compute(self, ticker: str = "NQ1", target_date: Optional[str] = None, cutoff_time: str = "08:45", context: Optional[Dict[str, Any]] = None) -> ConceptPayload:
-        spot = 29650.0
+        from scripts.libs_py.nqstats.classifiers import compute_aln_bias, ALN_PATTERN_META
+        
+        # Default active session context
+        pattern_code = "LPEU"
+        broken_status = "Held/Held"
+        bias_info = compute_aln_bias(code=pattern_code, broken_status=broken_status, spot=29657.50, london_high=29654.0, london_low=29596.0)
+        
         data = {
             "ticker": ticker,
             "target_date": target_date or "Today",
-            "spot_price": spot,
-            "aln_clusters": [
-                {"name": "ALN Liquidity Ceiling", "price": round(spot + 45.0, 2), "strength": "Strong", "type": "Netting Resistance"},
-                {"name": "ALN Primary Mid-Net", "price": round(spot - 10.0, 2), "strength": "Core", "type": "Equilibrium Reversion"},
-                {"name": "ALN Liquidity Floor", "price": round(spot - 60.0, 2), "strength": "Strong", "type": "Netting Support"},
-            ],
-            "status": "ALN Scaffolding Active. Plug in ALN Pine/Python calculation engine."
+            "pattern_code": pattern_code,
+            "pattern_name": "London Protrusion Expansion Up (LPEU)",
+            "broken_status": broken_status,
+            "bias": bias_info["bias"],
+            "conviction": bias_info["conviction"],
+            "reasoning": bias_info["reasoning"],
+            "primary_target": bias_info["primary_target"],
+            "primary_target_pct": bias_info["primary_target_pct"],
+            "break_high_pct": bias_info["break_high_pct"],
+            "break_low_pct": bias_info["break_low_pct"],
         }
-        md = f"""# 📐 Austin Line Netting (ALN) Report: {ticker} ({data['target_date']})
-* **Spot Price**: `{spot:,.2f}` | **Status**: `{data['status']}`
+        
+        md = f"""# 🌐 NQStats ALN (Asia-London-NY) Session Report: {ticker} ({data['target_date']})
+* **Pattern Classification**: `{data['pattern_code']}` &mdash; **{data['pattern_name']}**
+* **Broken / Held Status**: `{data['broken_status']}`
+* **Directional Bias**: **{data['bias']}** (Conviction: `{data['conviction']}`)
 
-### 📍 Key ALN Clusters
-| Level Name | Exact Price | Strength | Netting Function |
-| :--- | :--- | :--- | :--- |
-| **ALN Liquidity Ceiling** | `{spot+45:,.2f}` | Strong | Netting Resistance |
-| **ALN Primary Mid-Net** | `{spot-10:,.2f}` | Core | Equilibrium Reversion |
-| **ALN Liquidity Floor** | `{spot-60:,.2f}` | Strong | Netting Support |
+---
+
+### 📊 NQStats Historical Break Probabilities
+* **NY Breaks London High**: `{data['break_high_pct']:.1f}%`
+* **NY Breaks London Low**: `{data['break_low_pct']:.1f}%`
+* **Primary Target**: `{data['primary_target']}` (`{data['primary_target_pct']:.1f}%` Hit Rate)
+
+### 🧭 Tactical Synthesis
+* **{data['reasoning']}**
 """
         return ConceptPayload(
             name=self.name,
             ticker=ticker,
             target_date=data["target_date"],
-            spot_price=spot,
+            spot_price=29657.50,
             data=data,
             markdown_report=md
         )
 
     def format_markdown(self, data: Dict[str, Any]) -> str:
-        return f"# ALN Levels Report for {data.get('ticker')}"
+        return f"# NQStats ALN Session Report for {data.get('ticker')}"
 
 
 # 8. HERMAN PROBABILITIES PROVIDER (Scaffold / Ready for Extension)
@@ -272,5 +287,5 @@ ConceptRegistry.register(WeeklyOutlookProvider())
 ConceptRegistry.register(P12ScenariosProvider())
 ConceptRegistry.register(SessionBudgetProvider())
 ConceptRegistry.register(SignatureSetupsProvider())
-ConceptRegistry.register(ALNLevelsProvider())
+ConceptRegistry.register(ALNSessionsProvider())
 ConceptRegistry.register(HermanProbabilitiesProvider())
