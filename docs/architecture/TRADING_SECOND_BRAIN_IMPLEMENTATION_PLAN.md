@@ -1,10 +1,10 @@
 # 🛠️ Trading Second Brain: Master Implementation Plan
 
-> **Document Version**: 4.0.0 (Execution-Hardened Specification & Preregistered Contract)  
+> **Document Version**: 5.0.0 (Execution-Certified Specification & Preregistered Contract)  
 > **Status**: Canonical Phased Engineering Roadmap & Review Document  
 > **Architecture Reference**: [`docs/architecture/TRADING_SECOND_BRAIN_MASTER_ARCHITECTURE.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/TRADING_SECOND_BRAIN_MASTER_ARCHITECTURE.md) (v4.3.0)  
 > **Location**: `docs/architecture/TRADING_SECOND_BRAIN_IMPLEMENTATION_PLAN.md`  
-> **Core Operating Principle**: *Construct the verified 18-table schema and immutable plan ledger first. Prove legacy reconciliation in shadow dual-write mode with rollback fences. Guarantee server-enforced cutoff gates, as-of decision time contracts, and under 5 minutes of daily operator review before enabling downstream evaluation or research gates.*
+> **Core Operating Principle**: *Construct the verified 18-table schema and immutable plan ledger first. Prove legacy reconciliation with transactional outbox replay and rollback fences. Guarantee server-enforced cutoff gates, as-of decision time contracts, and under 5 minutes of daily operator review before enabling downstream evaluation or research gates.*
 
 ---
 
@@ -18,14 +18,15 @@ The implementation is structured into **five sequential, independently testable 
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
   PHASE 0: LOW-MANUAL-INPUT CAPTURE SPINE & ACID DATABASE FOUNDATION [CANDIDATE SPINE]
-  • M0.1: Canonical SQLite Schema & 15-Trigger Immutability Matrix (`trading_brain.sqlite` - 18 tables)
-  • M0.2: Immutable Plan Snapshot, Lifecycle Events & `get_plan_as_of` Resolver (Prisma adapter)
-  • M0.3: Shadow Legacy Data Import, Dual-Hash Reconciliation & Dual-Write Rollback Fence
-  • M0.4: Server-Enforced Forecast Snapshot Registrar (Database-generated `received_at_utc`)
+  • M0.1: Canonical SQLite Schema & 30-Trigger Immutability Matrix (`trading_brain.sqlite` - 18 tables)
+  • M0.2: Immutable Plan Snapshots, Revisions & Deterministic `get_plan_as_of` Resolver (Prisma adapter)
+  • M0.3a: Shadow Legacy Data Import & Dual-Hash Checksum Verification
+  • M0.3b: Transactional Outbox Projector, Writer Cutover & Rollback Fence
+  • M0.4: Two-Phase Sealed Forecast Snapshot Registrar (Database-clock `received_at_utc`)
   • M0.5: As-Of Signal Opportunity Logger (Frozen `STRATEGY_REGISTRY_V0` + decision_time_utc)
-  • M0.6: Hardened NT8 Ingestion & Durable State Reconciliation (`broker_ingest_state`, cursor tailer)
+  • M0.6: Hardened NT8 Broker Ingestion (Lossless fills via `nt_fill_events` + durable interventions)
   • M0.7: Measured Tape Actuals Extractor (`live_storage_resolver.py` + explicit ingest manifest)
-  • M0.8: Operational Verification Gate -> `OPERATIONALLY_ACCEPTED_CAPTURE_V1` (6 scenarios + 10 soak)
+  • M0.8: Operational Verification Gate -> `OPERATIONALLY_ACCEPTED_CAPTURE_V1` (6 scenarios + soak)
   
                                   │ [Operational Gate: Scenario Suite Pass + 10 Live Sessions]
                                   ▼
@@ -40,7 +41,7 @@ The implementation is structured into **five sequential, independently testable 
   • M2.1: Python Post-Submission Deviation Annotator (`deviation_annotator.py`)
   • M2.2: Cross-Repository C# RiskGuard Plan-Friction Addon (`nt8-riskguard/addons/` milestone)
   • M2.3: Blinded Deliberate-Practice Replay Engine (Hidden dates/outcomes, locked commitments, split custody)
-  • M2.4: Recurring-Error Targeted Drill Generator
+  • M2.4: Recurring-Error Targeted Drill Generator (Automated practice curriculum from delta logs)
   
                                   │
                                   ▼
@@ -77,41 +78,45 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
 
 | Table Name | Schema Classification | Immutability Protection | Role & Description |
 | :--- | :--- | :---: | :--- |
-| **`information_items`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Universal typed intake catalog envelope. |
-| **`plan_snapshots`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Immutable pre-market trading plan declarations. |
-| **`plan_lifecycle_events`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Plan state transitions (`SUBMITTED`, `SUPERSEDED`, `CANCELLED`). |
-| **`plan_amendments`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Append-only plan adjustments with supersession links. |
-| **`forecast_snapshots`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Immutable pre-market quantitative predictions. |
-| **`signal_opportunities`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | As-of mechanically eligible setup triggers. |
-| **`signal_disposition_events`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | User/system disposition events (`EXECUTED`, `PASSED`, `MISSED`, `OFFLINE`). |
-| **`signal_outcomes`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Versioned theoretical MFE/MAE outcomes evaluated post-hoc. |
-| **`session_tape_actuals`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Measured tape actuals with vendor provenance and quality state. |
-| **`execution_events`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Monotonic broker event stream (orders, fills, partial exits, stop moves). |
-| **`intervention_events`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Disentangled guard lockouts, soft friction warnings, and annotations. |
-| **`drill_attempts`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Blinded deliberate practice attempts and locked user decisions. |
-| **`behavioral_declarations`** | Append-Only Evidence | `UPDATE/DELETE Triggers` | Subjective user reflections and habit declarations. |
-| **`unmatched_link_events`** | Transition Ledger | `UPDATE/DELETE Triggers` | Append-only review history for ambiguous opportunity links. |
-| **`candidate_finding_events`**| Transition Ledger | `UPDATE/DELETE Triggers` | Append-only review history for staged statistical hypotheses. |
-| **`strategies`** | Mutable Registry | Direct Schema | Strategy metadata, rules doc links, and risk constraints. |
-| **`model_registry`** | Mutable Registry | Direct Schema | Versioned model parameter hashes and champion/challenger state. |
+| **`information_items`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Universal typed intake catalog envelope. |
+| **`plan_snapshots`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Immutable pre-market trading plan declarations. |
+| **`plan_lifecycle_events`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Plan state transitions (`SUBMITTED`, `SUPERSEDED`, `CANCELLED`). |
+| **`plan_amendments`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Append-only plan adjustments with supersession links. |
+| **`forecast_snapshots`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Immutable pre-market quantitative predictions. |
+| **`signal_opportunities`** | Append-Only Evidence | 2 Triggers (UP/DEL) | As-of mechanically eligible setup triggers. |
+| **`signal_disposition_events`** | Append-Only Evidence | 2 Triggers (UP/DEL) | User/system disposition events (`EXECUTED`, `PASSED`, `MISSED`, `OFFLINE`). |
+| **`signal_outcomes`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Versioned theoretical MFE/MAE outcomes evaluated post-hoc. |
+| **`session_tape_actuals`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Measured tape actuals with vendor provenance and quality state. |
+| **`execution_events`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Monotonic broker event stream (fills, partial exits, execution prices). |
+| **`intervention_events`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Disentangled guard lockouts, soft friction warnings, and annotations. |
+| **`drill_attempts`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Blinded deliberate practice attempts and locked user decisions. |
+| **`behavioral_declarations`** | Append-Only Evidence | 2 Triggers (UP/DEL) | Subjective user reflections and habit declarations. |
+| **`unmatched_link_events`** | Transition Ledger | 2 Triggers (UP/DEL) | Append-only review history for ambiguous opportunity links. |
+| **`candidate_finding_events`**| Transition Ledger | 2 Triggers (UP/DEL) | Append-only review history for staged statistical hypotheses. |
+| **`strategy_versions`** | Immutable Version Registry | 2 Triggers (UP/DEL) | Frozen strategy rules, parameter hashes, and execution policies. |
+| **`model_versions`** | Immutable Version Registry | 2 Triggers (UP/DEL) | Frozen model weights, feature manifests, and calibration states. |
 | **`broker_ingest_state`** | Operational State | Direct Schema | Cursor and pagination checkpoint state for broker adapters. |
 
+* **Immutability Protection Count**: Exactly **15 tables** are protected by paired `BEFORE UPDATE` and `BEFORE DELETE` triggers, totaling **30 triggers**.
+* **Review Queue Current-State Projections**:
+  * `v_unmatched_links_open`: Evaluates current unresolved state from `unmatched_link_events`.
+  * `v_candidate_findings_staged`: Evaluates active hypothesis pipeline from `candidate_finding_events`.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_trading_brain_db.py`
   * Assertions:
     - All 18 tables initialize cleanly with foreign keys enforced.
-    - `UPDATE` and `DELETE` on all 15 append-only tables (13 evidence + 2 transition ledgers) raise immediate SQLite exceptions.
-    - Partial unique index permits exactly one `LIVE_PRODUCTION` forecast per `(session_date, ticker, effective_cutoff_utc)`.
-    - Partial unique index permits exactly one `EX_ANTE_DECLARED` plan snapshot per `(session_date, ticker, preparation_cutoff_utc)`.
+    - All 30 triggers exist and raise immediate SQLite exceptions on `UPDATE` or `DELETE`.
+    - Unique partial index permits exactly one `LIVE_PRODUCTION` forecast per `(session_date, ticker, effective_cutoff_utc)`.
 
 ---
 
-### Milestone 0.2: Immutable Pre-Market Plan Snapshot, Lifecycle Events & `get_plan_as_of` Resolver
+### Milestone 0.2: Immutable Pre-Market Plan Snapshots & Deterministic `get_plan_as_of` Resolver
 * **Target Path**: `scripts/trading_brain/plans/plan_adapter.py`
 * **Schema**:
   ```sql
   CREATE TABLE plan_snapshots (
       plan_snapshot_id TEXT PRIMARY KEY,        -- UUID v4
+      plan_family_id TEXT NOT NULL,             -- UUID grouping all revisions for (session_date, ticker)
       session_date DATE NOT NULL,
       ticker TEXT NOT NULL,
       preparation_cutoff_utc TIMESTAMP NOT NULL,
@@ -127,11 +132,12 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
       max_intended_risk_bps REAL NOT NULL,      -- Risk budget declaration
       permitted_strategies_json TEXT NOT NULL,  -- Active strategy IDs for the session
       
-      -- As-Of Provenance Timestamps (Server-Generated)
+      -- Provenance Timestamps
       received_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       provenance_class TEXT NOT NULL,           -- 'EX_ANTE_DECLARED' or 'POST_HOC_RECONSTRUCTION'
       created_at_utc TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (supersedes_plan_snapshot_id) REFERENCES plan_snapshots(plan_snapshot_id)
+      FOREIGN KEY (supersedes_plan_snapshot_id) REFERENCES plan_snapshots(plan_snapshot_id),
+      CONSTRAINT ck_no_self_supersession CHECK (supersedes_plan_snapshot_id <> plan_snapshot_id)
   );
 
   CREATE TABLE plan_lifecycle_events (
@@ -155,69 +161,101 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
       amended_bias TEXT,
       amended_risk_bps REAL,
       FOREIGN KEY (plan_snapshot_id) REFERENCES plan_snapshots(plan_snapshot_id),
-      FOREIGN KEY (supersedes_amendment_id) REFERENCES plan_amendments(amendment_id)
+      FOREIGN KEY (supersedes_amendment_id) REFERENCES plan_amendments(amendment_id),
+      UNIQUE(plan_snapshot_id, amendment_seq)
   );
   ```
-* **As-Of Plan Resolver (`get_plan_as_of`)**:
+* **Deterministic As-Of Authority Algorithm (`get_plan_as_of`)**:
   ```python
   def get_plan_as_of(session_date: str, ticker: str, decision_time_utc: datetime) -> Optional[PlanContext]:
-      # Deterministically resolves the authoritative plan as of a historical decision time.
-      # Invariants:
-      # 1. Considers only plan_snapshots where received_at_utc <= decision_time_utc AND provenance_class = 'EX_ANTE_DECLARED'.
-      # 2. Considers only plan_lifecycle_events where recorded_at_utc <= decision_time_utc.
-      # 3. Considers only plan_amendments where received_at_utc <= decision_time_utc AND effective_at_utc <= decision_time_utc.
-      # 4. Post-hoc reconstructions can NEVER supersede an ex-ante plan.
-      pass
+      """Deterministically resolves the authoritative plan as of a historical decision time.
+      
+      Algorithm:
+      1. Query plan_snapshots where session_date = :date AND ticker = :ticker 
+         AND received_at_utc <= :decision_time_utc AND provenance_class = 'EX_ANTE_DECLARED'.
+      2. Filter out snapshots where a 'CANCELLED' or 'SUPERSEDED' event exists in plan_lifecycle_events 
+         with recorded_at_utc <= :decision_time_utc.
+      3. Filter out snapshots whose ID is referenced as supersedes_plan_snapshot_id by any newer 
+         valid snapshot received by :decision_time_utc.
+      4. Deterministic tie-breaker for remaining eligible snapshots:
+         ORDER BY received_at_utc DESC, plan_snapshot_id DESC LIMIT 1.
+      5. Attach all plan_amendments for this snapshot where received_at_utc <= :decision_time_utc 
+         AND effective_at_utc <= :decision_time_utc ORDER BY amendment_seq ASC.
+      6. Invariant: Post-hoc reconstructions can NEVER supersede an ex-ante plan.
+      """
   ```
 * **Acceptance Gate**:
   * Command: `pytest tests/test_plan_adapter.py`
   * Assertions:
-    - Plans received after cutoff stamped `POST_HOC_RECONSTRUCTION`.
-    - `get_plan_as_of` at `08:44 ET` returns original plan even if cancelled or amended at `16:00 ET`.
-    - Post-hoc reconstruction does not supersede ex-ante plan in `get_plan_as_of`.
+    - Allows multiple ex-ante revisions before cutoff (e.g. 08:20 plan revised at 08:35).
+    - `get_plan_as_of` at `08:30 ET` returns the 08:20 plan; at `08:40 ET` returns the 08:35 plan.
+    - Post-hoc reconstruction received at 16:30 is tagged `POST_HOC_RECONSTRUCTION` and does not supersede the ex-ante plan.
 
 ---
 
-### Milestone 0.3: Shadow Legacy Data Import, Dual-Hash Reconciliation & Dual-Write Rollback Fence
-* **Target Paths**:
-  * `scripts/trading_brain/migrations/migrate_legacy_dbs.py`
-  * `scripts/trading_brain/db/wargame_db_bridge.py`
-* **Sequencing Contract & Rollback Specification**:
-  1. **Pre-Cutover Backup**: Creates online backup `data/wargaming/db/backups/pre_cutover_legacy_state.tar.gz`.
-  2. **Cursor Fence**: Records max timestamps and row counts from legacy SQLite files (`system_wargames.sqlite`, `market_actuals.sqlite`, `mickey_ground_truth.sqlite`).
-  3. **Shadow Staging Import**: Transforms records into canonical schema with dual-hash lineage:
+### Milestone 0.3a: Shadow Legacy Data Import & Dual-Hash Checksum Verification
+* **Target Path**: `scripts/trading_brain/migrations/import_legacy_shadow.py`
+* **Sequencing Contract**:
+  1. **SQLite Online Backup**: Creates verified backup of legacy databases via SQLite Online Backup API (`sqlite3_backup`) with `PRAGMA integrity_check`.
+  2. **Shadow Staging Import**: Reads records from `system_wargames.sqlite`, `market_actuals.sqlite`, and `mickey_ground_truth.sqlite` into a staging schema in `trading_brain.sqlite`.
+  3. **Three-Layer Validation**:
      - `legacy_source_hash`: SHA-256 of exact raw legacy row JSON (keys sorted).
      - `canonical_payload_hash`: SHA-256 of transformed canonical normalized JSON (keys sorted, ISO-8601 UTC strings).
      - Field-level numeric reconciliation: Floating-point tolerance $|a - b| \le 1\times 10^{-6}$ for probabilities; exact cents for price fields.
-  4. **Dual-Write Shadow Mode (Phase 0.3b)**: `wargame_db_bridge.py` writes canonically to `trading_brain.sqlite` AND synchronously copies rows to legacy DBs in shadow mode during the soak period.
-  5. **Rollback Command**: `python -m scripts.trading_brain.migrations.migrate_legacy_dbs --rollback` verifies cursor fence and restores primary write routing to legacy DBs in <10 seconds without lost writes.
-  6. **Legacy Retention**: Legacy files remain readable in place (no filesystem write locks that could disrupt background readers).
 * **Acceptance Gate**:
-  * Command: `python -m scripts.trading_brain.migrations.migrate_legacy_dbs --verify`
-  * Assertions: 100% record match across historical dates; dual-hash checks pass; rollback command tested with post-cutover shadow writes verified.
+  * Command: `python -m scripts.trading_brain.migrations.import_legacy_shadow --verify`
+  * Assertions: 100% record match across historical dates; dual-hash checks pass.
 
 ---
 
-### Milestone 0.4: Server-Enforced Pre-Market Forecast Snapshot Registrar
+### Milestone 0.3b: Transactional Outbox Projector, Writer Cutover & Rollback Fence
+* **Target Path**: `scripts/trading_brain/migrations/outbox_projector.py`
+* **Outbox Architecture for Rollback Guarantee**:
+  ```
+  Canonical Writer Transaction in trading_brain.sqlite:
+    1. INSERT into canonical table (e.g. forecast_snapshots)
+    2. INSERT into legacy_projection_outbox (outbox_id, destination_db, payload_json, status='PENDING')
+    3. COMMIT (Single-DB Atomic)
+  
+  Outbox Projector Daemon:
+    4. Reads PENDING rows from outbox
+    5. Writes row to legacy SQLite database
+    6. Updates outbox row to status='PROJECTED', projected_at_utc=CURRENT_TIMESTAMP
+  ```
+* **Rollback Protocol**:
+  1. Writers paused via application flag `WARGAME_DB_TARGET=PAUSED`.
+  2. Projector drains all `PENDING` outbox rows to legacy databases and verifies count.
+  3. Router switches primary writer to legacy DBs via `WARGAME_DB_TARGET=LEGACY`.
+  4. Result: Zero lost writes during the rollback window.
+* **Acceptance Gate**:
+  * Command: `pytest tests/test_outbox_rollback.py`
+  * Assertions: Simulates 10 post-cutover canonical writes; executes rollback command; verifies 100% of rows exist in legacy DBs.
+
+---
+
+### Milestone 0.4: Two-Phase Sealed Forecast Snapshot Registrar
 * **Target Path**: `scripts/trading_brain/forecast/forecast_registrar.py`
-* **Sealed Input & Temporal Gate**:
-  * The registrar enforces the complete 4-point temporal contract:
-    1. $\text{input\_manifest\_sealed\_at\_utc} \le \text{effective\_cutoff\_utc}$
-    2. $\text{every input.available\_at\_utc} \le \text{effective\_cutoff\_utc}$
-    3. $\text{forecast\_started\_at\_utc} \le \text{effective\_cutoff\_utc}$
-    4. $\text{received\_at\_utc} \le \text{effective\_cutoff\_utc} + \text{model\_input\_contract.commit\_grace\_period}$
-  * **Fail-Closed Rule**: If any of the 4 conditions fail, any submission tagged `LIVE_PRODUCTION` is **REJECTED** with `ForecastCutoffExpiredError` or forced to `REPLAY_AUDIT`. Post-hoc live backfilling is physically impossible.
-  * **Database-Generated Timestamp**: `received_at_utc` is generated strictly by SQLite database clock (`CURRENT_TIMESTAMP`).
+* **Two-Phase Registration Protocol**:
+  1. **Phase 1: Pre-Cutoff Run Initiation (`create_forecast_run`)**:
+     - Called before cutoff (`08:45 ET`).
+     - Registrar resolves and seals input bar manifests, computes input SHA-256 hashes, records `started_at_utc`, and stores state in database.
+     - Enforces: $\text{input\_manifest\_sealed\_at\_utc} \le \text{cutoff}$ and $\text{inputs.available\_at\_utc} \le \text{cutoff}$.
+     - Returns an unforgeable local `forecast_run_id`.
+  2. **Phase 2: Commit Completion (`commit_forecast_run`)**:
+     - Accepts prediction payload for `forecast_run_id`.
+     - Generates database clock timestamp `received_at_utc` (`CURRENT_TIMESTAMP`).
+     - Enforces: $\text{received\_at\_utc} \le \text{effective\_cutoff\_utc} + \text{model\_input\_contract.commit\_grace\_period}$.
+     - Late commits fail closed with `ForecastCutoffExpiredError` or convert to `REPLAY_AUDIT`.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_forecast_registrar.py`
-  * Assertions: Registration before deadline succeeds as `LIVE_PRODUCTION`; late job initiation or late input sealing fails closed; replay audits write `REPLAY_AUDIT` with `original_prediction_id`.
+  * Assertions: Two-phase registration succeeds before deadline; late job start or late commit fails closed.
 
 ---
 
 ### Milestone 0.5: As-Of Signal Opportunity Logger (`STRATEGY_REGISTRY_V0`)
 * **Target Paths**:
   * `scripts/trading_brain/signals/opportunity_logger.py`
-  * `scripts/trading_brain/strategies/registry_v0.py`
+  * `scripts/trading_brain/strategies/artifacts/` (Machine-readable JSON strategy definitions)
 * **Operating Scope**: Explicitly labeled `EXPERIMENTAL_CAPTURE_ONLY` (no live execution authority, no trade recommendations).
 * **Strict As-Of Decision Time Contract**:
   * Evaluates strategy rules on bar-close:
@@ -225,28 +263,26 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
     $$\text{bar\_available\_at\_utc} \le \text{decision\_time\_utc}$$
     $$\text{every feature\_input.available\_at\_utc} \le \text{decision\_time\_utc}$$
   * Zero future bar lookahead.
-  * Deduplication key: `(session_date, ticker, strategy_id, bar_timestamp_utc)`.
-  * For 1m bars where both stop and target are touched, writes `AMBIGUOUS_INTRABAR_ORDER` rather than guessing; backtest evaluates conservative stop-loss assumption.
-  * Theoretical outcomes written post-hoc to `signal_outcomes`, strictly separated from ex-ante `signal_opportunities`.
-* **Strategy V0 Deterministic Rule Definitions**:
-  1. `STRAT_ALN_LPEU_V0`: London Protrusion Expansion Up breakout pullback; requires clean Asia/London session data; fails closed on missing sessions.
-  2. `STRAT_FIRECRACKER_V0`: Overnight range compression (<35% DRO spent) opening drive.
-  3. `STRAT_GOALPOST_BB_V0`: Broken-Broken Asia/London sweep fade toward opposite extreme.
-  4. `STRAT_P12_MID_RETEST_V0`: P12 Midline equilibrium retest before 09:45 ET.
+  * Deduplication key: `(session_date, ticker, strategy_version_id, bar_timestamp_utc)`.
+  * **Intrabar Ambiguity Preservation**: For 1m bars touching both stop and target, records `observed_outcome = 'AMBIGUOUS_INTRABAR_ORDER'`. Evaluators compute both `pessimistic_bound` (loss) and `optimistic_bound` (win) without collapsing raw data.
+* **Strategy V0 Frozen Machine-Readable Definitions**:
+  1. `strat_aln_lpeu_v0.json`: London Protrusion Expansion Up breakout pullback; fails closed on missing sessions.
+  2. `strat_firecracker_v0.json`: Overnight range compression (<35% DRO spent) opening drive.
+  3. `strat_goalpost_bb_v0.json`: Broken-Broken Asia/London sweep fade toward opposite extreme.
+  4. `strat_p12_mid_retest_v0.json`: P12 Midline equilibrium retest before 09:45 ET.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_opportunity_logger.py`
-  * Golden Fixtures: Tested against 5 golden session datasets with independently verified expected-event ledgers (positive triggers, negative near-misses, duplicate suppression, and boundary bar-close cases).
+  * Golden Fixtures: Tested against 5 golden session datasets with verified expected-event ledgers.
 
 ---
 
 ### Milestone 0.6: Hardened NT8 Broker Ingestion & Durable State Reconciliation
 * **Target Path**: `scripts/trading_brain/ingest/nt8_broker_adapter.py`
-* **Authoritative Endpoints & Durable Ingestion**:
-  * Orders & Fills: `nt_orders` and `nt_fill_events` REST polling with persisted cursor checkpoints in `broker_ingest_state`.
-  * Interventions: Durable `interventions.jsonl` log file tailer + SSE for live event notification. On SSE disconnect, repairs gaps by polling `interventions.jsonl` from last persisted cursor.
-  * Position Snapshot Reconciliation: Reconciles live account position against reconstructed execution state at session boundary.
-  * **Unmatched Link Isolation**: Execution-to-opportunity matching uses deterministic criteria. If an execution cannot be matched unambiguously to a single `opportunity_id`, it is flagged `AMBIGUOUS_MATCH` and written to `unmatched_link_events` for review.
-* **Disentangled `intervention_events` Schema**:
+* **Durable Ingestion Channels**:
+  * **Fills & Executions (Lossless)**: Polled from `nt_fill_events` REST endpoint with persisted cursor checkpoints in `broker_ingest_state`. Ingests into `execution_events`.
+  * **Interventions & Lockouts (Lossless)**: Tailer for durable `interventions.jsonl` log file + SSE live notification with gap recovery.
+  * **Order & Position State (Periodic Snapshots)**: `nt_orders` and `nt_positions` polled at session boundaries to reconcile live account positions against reconstructed fills.
+* **Expanded `intervention_events` Audit Schema**:
   ```sql
   CREATE TABLE intervention_events (
       intervention_id TEXT PRIMARY KEY,
@@ -256,9 +292,11 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
       trade_id TEXT,
       client_order_id TEXT,
       broker_order_id TEXT,
+      source_event_id TEXT,
+      corrects_intervention_id TEXT,
       plan_snapshot_id TEXT,
-      strategy_id TEXT,
-      strategy_version TEXT,
+      plan_amendment_id TEXT,
+      strategy_version_id TEXT,
       guard_config_hash TEXT,
       producer TEXT NOT NULL,                  -- 'NT8_RISKGUARD_CS', 'PYTHON_DEVIATION_ANNOTATOR', 'MANUAL'
       producer_version TEXT NOT NULL,
@@ -271,49 +309,41 @@ Establish the canonical relational schema, immutable plan ledger, server-enforce
       enforced BOOLEAN NOT NULL,
       override_requested BOOLEAN DEFAULT FALSE,
       override_accepted BOOLEAN DEFAULT FALSE,
-      idempotency_key TEXT NOT NULL UNIQUE,
+      override_actor TEXT,
+      override_acknowledged_at_utc TIMESTAMP,
+      idempotency_key TEXT NOT NULL,
       event_timestamp_utc TIMESTAMP NOT NULL,
-      created_at_utc TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at_utc TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (plan_snapshot_id) REFERENCES plan_snapshots(plan_snapshot_id),
+      FOREIGN KEY (plan_amendment_id) REFERENCES plan_amendments(amendment_id),
+      UNIQUE(producer, account_id, idempotency_key)
   );
   ```
 * **Acceptance Gate**:
   * Command: `pytest tests/test_nt8_broker_adapter.py`
-  * Fixtures: Verified against synthetic streams + captured provider traces (`Sim101`, `Provider31`) covering reconnects, log rotation, out-of-order fills, null-order executions, stop modifications, partial fills, and ambiguous opportunity scenarios.
+  * Fixtures: Verified against synthetic streams + captured provider traces (`Sim101`, `Provider31`).
 
 ---
 
 ### Milestone 0.7: Measured Tape Actuals Extractor
-* **Target Path**: `scripts/trading_brain/tape/tape_extractor.py`
-* **Canonical Sources & Lineage**:
-  * Live Session Storage: Resolved via `scripts/utils/live_storage_resolver.py` (`data/live/live_storage_-NQ.parquet`, `data/live/live_storage_-ES.parquet`).
-  * Settlement & Close: Verified daily bar feed with settlement timestamp.
-  * Historical Backfills: Deep parquet archive via `load_fused_data(require_historical=True)`.
-* **Tape Row Schema & Lineage**:
-  Captures `ingest_id`, `source_system`, `expected_bar_count`, `actual_bar_count`, `content_hash`, `quality_state` (`CLEAN`, `SUSPECT_TICKS`, `INCOMPLETE_BARS`), and `supersedes_actual_id`.
-  Evaluates `LABEL_DAY_TYPE_V1` and `LABEL_EOD_CLASSIFICATION_V1`.
+* **Target Paths**:
+  * `scripts/utils/live_storage_resolver.py`: Resolves live storage paths (`NQ1` -> `data/live/live_storage_-NQ.parquet`, `ES1` -> `data/live/live_storage_-ES.parquet`, `YM1`, `RTY1`, `GC1`, `CL1`).
+  * `scripts/trading_brain/tape/tape_extractor.py`: Tape metrics extractor.
+* **Named Authorities**:
+  * RTH 16:00 Close: Last traded 1m bar close at 16:00:00 ET from live storage parquet.
+  * Daily Settlement: Official daily settlement from exchange settlement feed (`data/daily/{ticker}_daily.parquet`).
+* **Tape Row Schema**: Captures `ingest_id`, `source_system`, `expected_bar_count`, `actual_bar_count`, `content_hash`, `quality_state` (`CLEAN`, `SUSPECT_TICKS`, `INCOMPLETE_BARS`), `LABEL_DAY_TYPE_V1`, and `LABEL_EOD_CLASSIFICATION_V1`.
 * **Acceptance Gate**:
-  * Command: `pytest tests/test_tape_extractor.py`
-  * Fixtures: Verified against 5 benchmark tape sessions (normal, early close, DST transition, contract roll, and missing bar session).
+  * Command: `pytest tests/test_tape_extractor.py` + `pytest tests/test_live_storage_resolver.py`
 
 ---
 
 ### Milestone 0.8: Operational Verification Gate -> `OPERATIONALLY_ACCEPTED_CAPTURE_V1`
 * **Target Path**: `scripts/trading_brain/testing/operational_soak_gate.py`
-* **Operational Acceptance Suite**:
-  * Phase 0 achieves `OPERATIONALLY_ACCEPTED_CAPTURE_V1` certification only when it passes:
-    1. **Automated Scenario Test Suite**:
-       - *Scenario A*: No-trade session (zero signals, zero fills -> cleanly recorded).
-       - *Scenario B*: Early close session (holiday schedule correctly handled).
-       - *Scenario C*: DST transition session (UTC vs. ET window correctness).
-       - *Scenario D*: Contract roll date (continuous vs. actual contract mapping).
-       - *Scenario E*: Feed outage & broker reconnect (gap recovery and deduplication).
-       - *Scenario F*: Database crash & recovery (WAL rollback and PRAGMA integrity pass).
-    2. **Quantified Live Soak Metrics**:
-       - 10 consecutive live trading sessions captured.
-       - 0 unexplained data loss.
-       - 0 duplicate canonical events.
-       - 100% gap reconciliation or explicit quarantine in `unmatched_link_events`.
-       - Operator review time < 5 minutes on >= 90% of standard sessions.
+* **Operational Acceptance Criteria**:
+  * Phase 0 achieves `OPERATIONALLY_ACCEPTED_CAPTURE_V1` operational acceptance when it passes:
+    1. **Automated Scenario Suite**: 6 scenario tests (no-trade, early close, DST transition, contract roll, feed outage & reconnect, crash & recovery).
+    2. **Live Soak Metrics**: 10 consecutive live trading sessions captured with 0 unexplained data loss, 0 duplicate events, 100% gap reconciliation, and operator review time < 5 minutes on >= 90% of sessions.
 
 ---
 
@@ -339,38 +369,27 @@ Create a deterministic, event-first 4-way reconciliation engine that produces a 
 * **Metrics Computed (Event-First, Policy-Driven)**:
   1. **Session Forecast Loss**: Computes proper-score realized loss for the single session (labeled "session forecast loss", reserving calibration/skill claims for accumulated samples).
   2. **Opportunity Realization Table**: Explicit counts of eligible signals: N_total, N_executed, N_passed, N_missed.
-  3. **Execution Capture Delta**: Compares actual execution against the strategy's registered execution policy (e.g. registered scale-out targets from `strategies.execution_policy_json`).
+  3. **Execution Capture Delta**: Compares actual execution against registered execution policy in `strategy_versions.execution_policy_json`.
   4. **Intervention Telemetry**: Factual counts of hard locks, soft friction overrides, and plan deviations.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_daily_process_delta.py`
-  * Assertions: Correctly reconciles all 4 quadrants across synthetic and live sessions without crashing on missing quadrant inputs.
 
 ---
 
 ### Milestone 1.2: One-Page Event-First Process Delta Report
 * **Target Path**: `scripts/trading_brain/reports/render_process_delta.py`
 * **Format**: Markdown (`data/wargaming/reports/daily_process_delta_YYYY-MM-DD.md`) + Terminal output.
-* **Sections**:
-  1. **Session Identification & Data Quality**: Date, ticker, contract ID, data quality flags.
-  2. **Plan & Forecast vs. Realized Tape**: Predicted scenario vs. realized `LABEL_DAY_TYPE_V1` classification.
-  3. **Opportunity & Execution Ledger**: Tabular view of all eligible signals, actions taken, trigger vs fill prices, and slippage.
-  4. **RiskGuard & Intervention Log**: Factual record of guard events.
-  5. **Quarantined Reflection Space**: Form for user subjective reflections (saved to `behavioral_declarations` with review state `USER_ENTERED`).
+* **Sections**: Session Identification, Plan & Forecast vs Realized Tape, Opportunity & Execution Ledger, RiskGuard Intervention Log, Quarantined Reflection Space (`behavioral_declarations`).
 * **Acceptance Gate**:
-  * Command: `pytest tests/test_process_delta_report.py`
-  * Golden Assertions: Tested across 8 golden session archetypes (no-trade day, missing plan, abstained forecast, ambiguous execution link, RiskGuard event, incomplete tape, plan amendment, discretionary trade with no signal).
+  * Command: `pytest tests/test_process_delta_report.py` (Tested across 8 golden session archetypes).
 
 ---
 
 ### Milestone 1.3: Read-Only Memory Bridge (`agent_memory_bridge.py`)
 * **Target Path**: `scripts/trading_brain/bridges/agent_memory_bridge.py`
-* **Architectural Boundary Preserved**:
-  * `.agent/memory.db` remains the sole owner of development memories, user preferences, and agent skill proposals.
-  * `trading_brain.sqlite` remains the sole canonical ledger of trading executions and market outcomes.
-  * `agent_memory_bridge.py` provides a **read-only typed interface**: when an agent skill proposal queries historical trading statistics, it queries `trading_brain.sqlite` via the bridge without coupling schemas or mixing outcome types.
+* **Boundary Preserved**: `.agent/memory.db` owns development memories and skill proposals; `trading_brain.sqlite` is the sole trading ledger. Bridge provides a typed read-only interface.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_agent_memory_bridge.py`
-  * Assertions: Queries return verified trading statistics from `trading_brain.sqlite`; zero writes or schema mutations to `.agent/memory.db`.
 
 ---
 
@@ -383,50 +402,50 @@ Bridge the gap between pre-market analysis and live execution through real-time 
 
 ### Milestone 2.1: Python Post-Submission Deviation Annotator
 * **Target Path**: `scripts/trading_brain/guard/deviation_annotator.py`
-* **Functionality**:
-  * Asynchronously consumes the execution stream via MCP post-submission.
-  * Compares executed orders against the active plan in `get_plan_as_of`.
-  * Flags observable deviations (e.g. unapproved strategy, trading outside permitted window), logs an event in `intervention_events` with `authority_class = 'OBSERVED_DEVIATION_ANNOTATION'`, and emits visual/audio coaching alerts.
+* **Functionality**: Consumes execution stream post-submission, compares against `get_plan_as_of`, logs `OBSERVED_DEVIATION_ANNOTATION` events in `intervention_events`.
 * **Acceptance Gate**:
-  * Command: `pytest tests/test_deviation_annotator.py`
-  * Assertions: Accurately flags deviations; zero false positives on plan-compliant orders.
+  * Command: `pytest tests/test_deviation_annotator.py` (Tested against 10 golden compliant and deviant execution traces).
 
 ---
 
 ### Milestone 2.2: Cross-Repository C# RiskGuard Plan-Friction Addon
 * **Target Path**: `C:\Users\vinay\nt8-riskguard\addons\PlanFrictionRule.cs` (in `nt8-riskguard` repo).
-* **Governance & Compilation Contract**:
-  * Managed as a dedicated cross-repository milestone with its own isolated test suite.
-  * Test command in `nt8-riskguard`:
+* **Plan Distribution Protocol**:
+  * Python pushes plan constraints via MCP `nt_riskguard_config` at 08:45 ET (includes `plan_hash`, active strategy whitelist, max risk budget bps, and expiration timestamp).
+  * Addon validates freshness; if bridge is down or plan is stale, plan friction **defaults to disabled/shadow** and **NEVER blocks trades**.
+  * **Exit Preservation**: Plan friction **NEVER intercepts or delays risk-reducing or protective exit orders**.
+* **Acceptance Gate in `nt8-riskguard`**:
+  * Commands:
     ```powershell
     dotnet build tests/RiskGuardTests.csproj
     dotnet run --project tests/RiskGuardTests.csproj --no-build
     python tools/check_no_stray_copies.py
+    python tools/check_ci_runs_every_battery.py
     ```
-  * Deployed and compiled via `nt_compile`.
-* **Safety Contract**:
-  * Synchronous pre-order evaluation in NinjaTrader 8.
-  * Reads daily plan constraints pushed from Python at 08:45 ET.
-  * **Fail-Safe Invariant**: If Python bridge is offline or plan context is missing, plan friction **defaults to disabled/shadow** and **NEVER blocks trades**.
-  * **Exit Preservation**: Plan friction **NEVER intercepts or delays risk-reducing or protective exit orders**.
-* **Acceptance Gate**:
-  * Command: `dotnet test tests/RiskGuardTests.csproj` + `nt_compile`
-  * Assertions: Proves risk-reducing exit orders are never delayed; missing plan context defaults to shadow mode.
+  * Verification: `nt_compile` compiles cleanly; test suite proves protective exits are never delayed.
 
 ---
 
 ### Milestone 2.3: Blinded Deliberate-Practice Replay Engine
 * **Target Path**: `scripts/trading_brain/practice/drill_engine.py`
 * **Split Custody & Anti-Memorization Invariants**:
-  * Assessment session IDs are strictly held out and cannot overlap training/calibration sets.
+  * Assessment session IDs cannot overlap training/calibration sets.
   * Dates, symbols, future bars, and original plans are blinded before answer lock.
-  * **Answer Lock**: User commits to Bias (`BULLISH`, `BEARISH`, `NEUTRAL`), Setup / `NO_TRADE`, Invalidation Level, Entry Price, Stop (bps), and Target (bps). Lock timestamp is immutable.
-  * Reveals subsequent bars and grades process adherence against the versioned strategy rule (not replay PnL).
-  * Assessment sessions retire permanently once results influence drill selection.
-  * Records the attempt in `drill_attempts`.
+  * User commits to Bias, Setup, Invalidation, Entry, Stop, and Target before bars are revealed.
+  * Answer lock is immutable; assessment sessions retire after use.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_drill_engine.py`
-  * Assertions: Hidden dates/outcomes cannot be accessed before lock; answer lock is immutable; process score correctly evaluates strategy rules.
+
+---
+
+### Milestone 2.4: Recurring-Error Targeted Drill Generator
+* **Target Path**: `scripts/trading_brain/practice/drill_generator.py`
+* **Functionality**:
+  * Scans `intervention_events` and `daily_process_delta` logs for recurring deviations (e.g. repeated chases past +15 bps, missed stops).
+  * Automatically schedules targeted practice drills from historical market replay library addressing the specific weakness.
+  * Drills are tagged `PRACTICE_DRILL` and strictly quarantined from live statistical evidence.
+* **Acceptance Gate**:
+  * Command: `pytest tests/test_drill_generator.py`
 
 ---
 
@@ -439,55 +458,37 @@ Provide statistical machinery for discovering, testing, and promoting decision r
 
 ### Milestone 3.1: Multiclass Proper-Score Loss Engine
 * **Target Path**: `scripts/trading_brain/research/calibration_engine.py`
-* **Functionality**:
-  * Computes Multiclass Brier Score and Log Loss across all 5 day-type classes.
-  * Generates reliability diagrams across predicted probability buckets.
-  * Evaluates paired loss improvements over the 3 mandatory baselines (unconditional base rate, rolling 50-session frequency, incumbent model).
+* **Functionality**: Computes Multiclass Brier Score and Log Loss across all 5 classes vs 3 baselines (unconditional base rate, rolling 50-session frequency, incumbent champion).
 * **Acceptance Gate**:
-  * Command: `pytest tests/test_calibration_engine.py`
-  * Assertions: Verified against known mathematical array fixtures; baselines fitted inside each fold.
+  * Command: `pytest tests/test_calibration_engine.py` (Tested against mathematical array fixtures).
 
 ---
 
 ### Milestone 3.2: Multi-Fold Purged Walk-Forward Validator
 * **Target Path**: `scripts/trading_brain/research/walk_forward_gate.py`
-* **Multiplicity Procedure Specification**:
-  * Pre-specified multiplicity procedures:
-    - **Benjamini-Hochberg (BH)**: Selected under positive regression dependence.
-    - **Benjamini-Yekutieli (BY)**: Selected under arbitrary dependence.
-    - **Holm-Bonferroni**: Selected for strict family-wise error rate control.
-  * Enforces **Purged Folds & Embargoes** to prevent lookahead and autocorrelation leakage.
-  * Uses **Stationary Block Bootstrap** / Newey-West HAC standard errors for financial time-series dependence.
+* **Multiplicity Procedures**: Benjamini-Hochberg (BH) for positive dependence; Benjamini-Yekutieli (BY) for arbitrary dependence; Holm-Bonferroni for family-wise control. Purged folds & Stationary Block Bootstrap.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_walk_forward_gate.py`
-  * Assertions: Purge/embargo gaps verified; complete research family accounted for.
 
 ---
 
 ### Milestone 3.3: Preregistered Shadow Validation Gate
 * **Target Path**: `scripts/trading_brain/research/shadow_gate.py`
-* **Execution Contract**:
-  * Consumes a preregistered evaluation contract: primary proper score, prospective power (1 - beta >= 0.80), task-specific MDE, and economic threshold after costs.
-  * Evaluates 1-time sealed shadow data with dedicated custody manifest and access logging.
-  * **Terminal States**: `PROMOTED`, `REJECTED`, `INCONCLUSIVE_WAITING`, `INVALID_TEST`.
-  * **Fail-Closed Rule**: An inconclusive test is **NEVER** promoted. `INVALID_TEST` can never become `PROMOTED`.
+* **Execution Contract**: Task-specific MDE, power >= 0.80, 1-time sealed shadow data evaluation with custody access logging. Terminal states: `PROMOTED`, `REJECTED`, `INCONCLUSIVE_WAITING`, `INVALID_TEST`. Fail-closed policy (inconclusive is rejected).
 * **Acceptance Gate**:
   * Command: `pytest tests/test_shadow_gate.py`
-  * Assertions: Sealed holdout cannot be reopened after inspection; fail-closed behavior verified.
 
 ---
 
 ### Milestone 3.4: Decoupled Multi-Tier Promotion Engine
 * **Target Path**: `scripts/trading_brain/research/promotion_orchestrator.py`
 * **Four Independent Promotion Tiers**:
-  1. **Tier 1 (Forecast Model)**: Evaluated on proper-score calibration and discrimination.
-  2. **Tier 2 (Signal Model)**: Evaluated on opportunity expectancy and precision.
-  3. **Tier 3 (Execution Policy)**: Evaluated on realized EV in R after commissions and slippage.
-  4. **Tier 4 (Portfolio Deployment)**: Evaluated on portfolio drawdown, tail risk, turnover, capacity, and prop-firm constraints.
-  *(Certification cannot flow between tiers: a strategy never inherits certification simply because an upstream forecast improved).*
+  1. Tier 1 (Forecast Model): Calibration and discrimination.
+  2. Tier 2 (Signal Model): Opportunity expectancy and precision.
+  3. Tier 3 (Execution Policy): Realized EV in R after costs.
+  4. Tier 4 (Portfolio Deployment): Drawdown, tail risk, capacity, and prop constraints.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_promotion_orchestrator.py`
-  * Assertions: Tier independence verified; promotion requires explicit passing of tier-specific gate.
 
 ---
 
@@ -500,37 +501,37 @@ Provide a unified, human-native intake interface and interactive web dashboard f
 
 ### Milestone 4.1: Universal Typed Intake Catalog (`information_items`)
 * **Target Path**: `scripts/trading_brain/intake/catalog_router.py`
-* **Functionality**:
-  * Ingests the 9 information types with canonical envelope metadata (`information_id`, `evidence_class`, `time_orientation`, `available_at_utc`, `review_state`).
-  * **Consumer As-Of Enforcement**: Intake accepts and tags all valid items (including post-hoc journals and EOD charts). Decision retrieval and forecast reconstruction consumers enforce `available_at_utc <= decision_cutoff_utc` at query time.
+* **Functionality**: Ingests the 9 information types. Decision retrieval queries enforce `available_at_utc <= decision_cutoff_utc`.
 * **Acceptance Gate**:
   * Command: `pytest tests/test_catalog_router.py`
-  * Assertions: Correctly tags 9 information types; consumer queries filter post-hoc items from ex-ante windows.
 
 ---
 
 ### Milestone 4.2: Web Dashboard UI Integration
 * **Target Path**: `web/` (Next.js, Tailwind CSS, Shadcn/UI, Lightweight Charts)
-* **Features**:
-  1. **Pre-Market Wargame & Plan Builder**: Scenario cards and plan snapshot authoring.
-  2. **Daily Process Delta Scorecard**: Visual 4-way post-mortem comparison.
-  3. **Deliberate Practice Replay Station**: Browser-based blinded chart drill simulator.
-  4. **Model Governance & Promotion Dashboard**: Calibration curves, walk-forward folds, and shadow evaluation state.
+* **Features**: Pre-Market Wargame Builder, Daily Process Delta Scorecard, Deliberate Practice Station, Model Governance Dashboard.
 * **Acceptance Gate**:
-  * Command: `npm test` in `web/` + visual component smoke tests.
+  * Commands in `web/`:
+    ```bash
+    npm run test:contracts
+    npm run lint
+    npm run build
+    npx playwright test
+    ```
 
 ---
 
-## 7. Immediate Next Steps & Review Checkpoints
+## 7. Immediate Next Steps & Dependency Matrix
 
 | Milestone ID | Action Item | Target Delivery | Prerequisite / Dependency |
 | :---: | :--- | :--- | :--- |
-| **M0.1** | **Canonical SQLite Schema & 15-Trigger Immutability Matrix** (`schema.sql`, `test_trading_brain_db.py`) | Phase 0 Start | Implementation Plan Approved |
-| **M0.2** | **Plan Snapshot, Lifecycle Ledger & `get_plan_as_of`** (`plan_adapter.py`, `test_plan_adapter.py`) | Milestone 0.1 | M0.1 |
-| **M0.3** | **Shadow Legacy Import, Dual-Hash Check & Dual-Write Fence** (`migrate_legacy_dbs.py`) | Milestone 0.1 | M0.1 |
-| **M0.4** | **Server-Enforced Forecast Snapshot Registrar** (`forecast_registrar.py`, `test_forecast_registrar.py`) | Milestone 0.1 | M0.1 |
-| **M0.5** | **As-Of Signal Opportunity Logger** (`opportunity_logger.py` + `registry_v0.py`) | Milestone 0.1 | M0.1, Frozen Strategy V0 |
-| **M0.6** | **Hardened NT8 Broker Ingestion & Cursor Tailer** (`nt8_broker_adapter.py`, `test_nt8_broker_adapter.py`) | Milestone 0.1 | M0.1, Durable Ingest Surface |
-| **M0.7** | **Measured Tape Actuals Extractor** (`tape_extractor.py`, `test_tape_extractor.py`) | Milestone 0.1 | M0.1, `live_storage_resolver.py` |
-| **M0.8** | **Operational Verification Gate** (`OPERATIONALLY_ACCEPTED_CAPTURE_V1` - Scenario suite + soak) | Phase 0 Done | M0.1–M0.7, Tested Rollback |
+| **M0.1** | **Canonical SQLite Schema & 30-Trigger Matrix** (`schema.sql`, `test_trading_brain_db.py`) | Phase 0 Start | Implementation Plan Approved |
+| **M0.2** | **Plan Snapshot Ledger & `get_plan_as_of`** (`plan_adapter.py`, `test_plan_adapter.py`) | Milestone 0.1 | M0.1 |
+| **M0.3a**| **Shadow Legacy Import & Dual-Hash Check** (`import_legacy_shadow.py`) | Milestone 0.1 | M0.1 |
+| **M0.3b**| **Outbox Projector, Writer Cutover & Fence** (`outbox_projector.py`) | Milestone 0.3a | M0.1, M0.2, M0.3a |
+| **M0.4** | **Two-Phase Sealed Forecast Registrar** (`forecast_registrar.py`, `test_forecast_registrar.py`) | Milestone 0.1 | M0.1 |
+| **M0.5** | **As-Of Signal Opportunity Logger** (`opportunity_logger.py` + V0 JSON artifacts) | Milestone 0.1 | M0.1, Frozen Strategy V0 |
+| **M0.6** | **Hardened NT8 Ingestion & Cursor Tailer** (`nt8_broker_adapter.py`, `test_nt8_broker_adapter.py`) | Milestone 0.1 | M0.1, Durable Ingest Surface |
+| **M0.7** | **Tape Extractor & Live Storage Resolver** (`tape_extractor.py`, `live_storage_resolver.py`) | Milestone 0.1 | M0.1 |
+| **M0.8** | **Operational Verification Gate** (`OPERATIONALLY_ACCEPTED_CAPTURE_V1` - Scenario suite + soak) | Phase 0 Done | M0.1–M0.7, Outbox Rollback Tested |
 | **M1.0** | **Phase 1 Re-Approval Review** | Formal Sign-Off | M0.8 Passed |
