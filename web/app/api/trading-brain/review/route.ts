@@ -35,9 +35,18 @@ export async function POST(request: Request) {
           { status: 400 }
         );
       }
+      // candidate_event_id is optional; when present it must be a NON-EMPTY string -
+      // a bare `undefined` would otherwise travel as the literal string "undefined"
+      // into the bridge CLI and poison the ledger verification.
+      if (body.candidate_event_id !== undefined && body.candidate_event_id !== null && String(body.candidate_event_id).trim() === '') {
+        return NextResponse.json(
+          { error: 'candidate_event_id must be a non-empty string when provided' },
+          { status: 400 }
+        );
+      }
       const result = await runBridgeHandler('review_unmatched', {
         source_event_id: body.source_event_id,
-        candidate_event_id: body.candidate_event_id,
+        candidate_event_id: body.candidate_event_id != null && String(body.candidate_event_id).trim() !== '' ? String(body.candidate_event_id) : undefined,
         actor: body.actor,
         reason: body.reason,
       });

@@ -34,6 +34,7 @@ export async function GET(request: Request) {
       dataset_split: datasetSplit,
       session_date: sessionDate ?? new Date().toISOString().slice(0, 10),
       ticker,
+      synthetic, // bare store_true flag when true
     });
     if ('error' in result) return NextResponse.json(result, { status: 500 });
     return NextResponse.json(result);

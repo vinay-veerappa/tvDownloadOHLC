@@ -200,24 +200,6 @@ def handle_review(args: argparse.Namespace) -> Dict[str, Any]:
     return {"review_event_id": event_id, "information_id": args.information_id, "state": args.review_state}
 
 
-def handle_review_unmatched(args: argparse.Namespace) -> Dict[str, Any]:
-    """Resolves an unmatched link by appending a RESOLVED row (append-only ledger)."""
-    link_event_id = str(__import__("uuid").uuid4())
-    with get_db_connection(_db(args)) as conn:
-        conn.execute(
-            """
-            INSERT INTO unmatched_link_events (
-                link_event_id, source_event_type, source_event_id, session_date, ticker,
-                candidate_event_type, candidate_event_id, resolution_state, actor, reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'RESOLVED', ?, ?);
-            """,
-            (link_event_id, args.source_event_type, args.source_event_id,
-             args.session_date, args.ticker, args.candidate_event_type, args.candidate_event_id,
-             args.actor, args.reason or "Resolved via WS-4.5 review queue"),
-        )
-    return {"link_event_id": link_event_id, "status": "RESOLVED"}
-
-
 # ---------------------------------------------------------------------------
 # 4.3 Deliberate Practice Terminal
 # ---------------------------------------------------------------------------
@@ -237,7 +219,11 @@ def handle_drill_next(args: argparse.Namespace) -> Dict[str, Any]:
         "drill_type": drill.drill_type,
         "dataset_split": drill.dataset_split,
         "custody_mode": drill.custody_mode,
-        "custody_token": drill.custody_token,   # client echoes at submit; answers sealed server-side
+        # Custody token: HMAC over drill_id under the SERVER key - proof of minting,
+        # NOT derived from the sealed answers, so echoing it does not leak ground
+        # truth. The UI MUST relay it opaquely to drill_submit (ASSESSMENT paths
+        # fail closed without it). It is never an answer key.
+        "custody_token": drill.custody_token,
         "blinded_bars": drill.blinded_bars,
     }
 
@@ -253,6 +239,7 @@ def handle_drill_submit(args: argparse.Namespace) -> Dict[str, Any]:
         declared_stop_bps=float(args.declared_stop_bps),
         declared_target_bps=float(args.declared_target_bps),
         latency_ms=int(args.latency_ms) if args.latency_ms else None,
+        custody_token=getattr(args, "custody_token", None),
     )
     feedback = BlindedDrillEngine.submit_and_evaluate(declaration, db_path=_db(args))
     return {
@@ -364,9 +351,8 @@ def main() -> None:
     p.add_argument("--reviewer", required=True); p.add_argument("--review-notes", default=None); p.add_argument("--db", default=None)
 
     p = sub.add_parser("review_unmatched")
-    p.add_argument("--source-event-type", required=True); p.add_argument("--source-event-id", required=True)
-    p.add_argument("--session-date", required=True); p.add_argument("--ticker", required=True)
-    p.add_argument("--candidate-event-type", default=None); p.add_argument("--candidate-event-id", default=None)
+    p.add_argument("--source-event-id", required=True, help="execution_id, verified against execution_events")
+    p.add_argument("--candidate-event-id", default=None, help="opportunity_id, verified against signal_opportunities")
     p.add_argument("--actor", required=True); p.add_argument("--reason", default=None); p.add_argument("--db", default=None)
 
     p = sub.add_parser("drill_next")
@@ -378,7 +364,9 @@ def main() -> None:
     p.add_argument("--drill-id", required=True); p.add_argument("--declared-bias", required=True)
     p.add_argument("--declared-setup", required=True); p.add_argument("--declared-entry-price", type=float, required=True)
     p.add_argument("--declared-stop-bps", type=float, required=True); p.add_argument("--declared-target-bps", type=float, required=True)
-    p.add_argument("--latency-ms", type=int, default=None); p.add_argument("--db", default=None)
+    p.add_argument("--latency-ms", type=int, default=None)
+    p.add_argument("--custody-token", default=None, help="ASSESSMENT drills: the opaque token from drill_next (HMAC over drill_id; required fail-closed)")
+    p.add_argument("--db", default=None)
 
     p = sub.add_parser("governance"); p.add_argument("--db", default=None)
 

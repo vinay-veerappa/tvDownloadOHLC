@@ -18,13 +18,18 @@ const PYTHON = process.env.TRADING_BRAIN_PYTHON ?? path.join(REPO_ROOT, '.venv',
 
 export async function runBridgeHandler(
   handler: string,
-  args: Record<string, string | undefined>
+  args: Record<string, string | boolean | undefined | null>
 ): Promise<Record<string, unknown>> {
   const cliArgs = ['-m', 'scripts.trading_brain.web_bridge', handler];
   for (const [key, value] of Object.entries(args)) {
-    if (value === undefined || value === null) continue;
+    if (value === undefined || value === null || value === false) continue;
     const flag = key.replaceAll('_', '-');
-    cliArgs.push(`--${flag}`, String(value));
+    // true renders a bare store_true argparse flag (--synthetic); strings pair up.
+    if (value === true) {
+      cliArgs.push(`--${flag}`);
+    } else {
+      cliArgs.push(`--${flag}`, String(value));
+    }
   }
   try {
     const { stdout } = await execFileAsync(PYTHON, cliArgs, {
@@ -37,16 +42,23 @@ export async function runBridgeHandler(
     if (!trimmed) throw new Error(`bridge handler '${handler}' produced no output`);
     return JSON.parse(trimmed);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    // The bridge prints single-line JSON errors on failure; surface them.
-    const start = message.indexOf('{');
-    if (start >= 0) {
+    // execFile failures carry the child process's stdout/stderr on the error object.
+    // The bridge prints single-line JSON ({...}) to stdout even on failure; the
+    // err.message alone would only contain the command string and exit code, so the
+    // structured bridge error MUST be extracted from err.stdout first.
+    const execErr = err as { stdout?: string; stderr?: string; message?: string };
+    const candidates = [execErr.stdout, execErr.stderr, execErr.message];
+    for (const source of candidates) {
+      if (!source) continue;
+      const text = source.trim();
+      if (!text.startsWith('{')) continue;
       try {
-        return JSON.parse(message.slice(start));
+        const parsed = JSON.parse(text) as Record<string, unknown>;
+        if (parsed && typeof parsed === 'object' && 'error' in parsed) return parsed;
       } catch {
-        /* fall through */
+        /* try next source */
       }
     }
-    throw new Error(`web_bridge ${handler} failed: ${message}`);
+    throw new Error(`web_bridge ${handler} failed: ${execErr.message ?? String(err)}`);
   }
 }
