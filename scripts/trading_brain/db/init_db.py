@@ -193,6 +193,11 @@ def _apply_schema_migrations(conn, from_version: int, messages: List[str], verbo
         )
 
 
+def _column_missing(conn, table: str, column: str) -> bool:
+    cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table});")}
+    return column not in cols
+
+
 def _check_and_migrate_schema(conn, messages: List[str], verbose: bool) -> None:
     """Verifies PRAGMA user_version against SCHEMA_VERSION, migrating up if required.
 
@@ -202,9 +207,62 @@ def _check_and_migrate_schema(conn, messages: List[str], verbose: bool) -> None:
     """
     cur = conn.execute("PRAGMA user_version;")
     db_version = int(cur.fetchone()[0])
-    
+
     if db_version == 0:
-        # Freshly initialized database: stamp current version.
+        # user_version=0 is ambiguous: either a FRESH database (schema.sql just ran,
+        # all current tables/columns exist) or a LEGACY database created before
+        # version stamping existed. schema.sql's CREATE TABLE IF NOT EXISTS cannot
+        # upgrade PRE-EXISTING old-schema tables, so legacy column gaps survive the
+        # executescript. Evidence-based repair: after schema.sql, any expected table
+        # whose current-schema columns are absent is a legacy table -> apply the
+        # column migrations directly. This replaced the old behavior of silently
+        # stamping v5 over a pre-v4 schema (which left review events without their
+        # trusted receipt column).
+        repaired = False
+        if _column_missing(conn, "information_item_review_events", "received_at_utc"):
+            messages.append("NOTE: legacy review table missing received_at_utc - applying v4 repair.")
+            if verbose:
+                print("  -> legacy column repair: information_item_review_events.received_at_utc")
+            conn.execute("ALTER TABLE information_item_review_events ADD COLUMN received_at_utc TIMESTAMP;")
+            conn.execute(
+                """
+                UPDATE information_item_review_events
+                SET received_at_utc = created_at_utc
+                WHERE received_at_utc IS NULL AND created_at_utc IS NOT NULL;
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_review_events_default_received
+                AFTER INSERT ON information_item_review_events
+                WHEN NEW.received_at_utc IS NULL
+                BEGIN
+                    UPDATE information_item_review_events
+                    SET received_at_utc = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                    WHERE review_event_id = NEW.review_event_id;
+                END;
+                """
+            )
+            repaired = True
+        for legacy_col_ddl in [
+            ("drill_sealed_answers", "drill_type", "ALTER TABLE drill_sealed_answers ADD COLUMN drill_type TEXT NOT NULL DEFAULT 'RECOGNITION';"),
+            ("drill_sealed_answers", "dataset_split", "ALTER TABLE drill_sealed_answers ADD COLUMN dataset_split TEXT NOT NULL DEFAULT 'TRAINING';"),
+            ("drill_sealed_answers", "custody_token", "ALTER TABLE drill_sealed_answers ADD COLUMN custody_token TEXT;"),
+            ("plan_snapshots", "source_revision_hash", "ALTER TABLE plan_snapshots ADD COLUMN source_revision_hash TEXT;"),
+        ]:
+            table, column, ddl = legacy_col_ddl
+            if _column_missing(conn, table, column):
+                messages.append(f"NOTE: legacy {table} missing {column} - repair applied.")
+                if verbose:
+                    print(f"  -> legacy repair: {table}.{column}")
+                try:
+                    conn.execute(ddl)
+                    repaired = True
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" not in str(e):
+                        raise
+        if repaired and verbose:
+            print("  -> legacy column repairs complete.")
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
         messages.append(f"SUCCESS: schema stamped at version {SCHEMA_VERSION}.")
     elif db_version > SCHEMA_VERSION:
