@@ -137,3 +137,6 @@ scripts/trading_framework/research_optuna.db
 # negation (e.g. '!scripts/trading_brain/reports/**') that re-includes package dirs.
 **/__pycache__/
 *.py[cod]
+
+# single-source: junction to nt8-riskguard repo (strategies/Vinay) -- content lives there
+scripts/ninjatrader/strategies/base/
