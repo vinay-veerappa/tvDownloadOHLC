@@ -1,0 +1,456 @@
+// Expected Volatility — Percentile Ladder
+//
+// A successor to `expected_volatility_session.pine` (ShadowOfCrimson), rebuilt
+// from docs/indicators/ExpectedVolatility/RESEARCH_REPORT.md.
+//
+// Differences from the original, each measured rather than assumed:
+//
+//   1. ANCHOR AT THE SESSION OPEN. The original anchors on the prior close. The
+//      overnight gap alone clears the 0.25 rung on 49.1% of RTH sessions, so a
+//      prior-close ladder has spent its inner rungs before the bell.
+//
+//   2. RUNGS PLACED BY PROBABILITY. The original's 12 levels all reduce to
+//      S*(1 +/- c*a) for one constant c, and its 252/365 toggle is a
+//      multiplication by sqrt(252/365) = 0.8309. So there is one number, not
+//      twelve. Here it is set by inverting the empirical excursion CDF.
+//
+//   3. ASYMMETRIC, AND PER SESSION. Up and down quantiles are taken separately.
+//      RTH and overnight get SEPARATE fitted ladders — the overnight window is
+//      2.4x longer in clock time but carries far less variance per minute, so
+//      rescaling one from the other by sqrt(minutes) is wrong in both
+//      directions at once.
+//
+// THE VALIDATION TABLE IS THE POINT. It counts, on your chart, how often each
+// rung was actually touched, and scores the gap in STANDARD ERRORS — a 6pp miss
+// on 74 sessions is noise, the same miss on 900 is real drift, and a fixed
+// percentage-point threshold cannot tell those apart.
+//
+// ⚠ KNOWN BIAS, OVERNIGHT — AND IT IS ONE-SIDED. On ES the overnight UP rungs
+//   are touched more often than promised on 8 of 8 rungs, in both a 197-session
+//   holdout (mean +4.3pp) and the most recent 75 (mean +9.2pp). The DOWN side is
+//   clean in the recent window (4/8, all small). The magnitude is unstable
+//   between windows, so do not trust a fixed correction constant — widen the
+//   overnight UP side with its own multiplier and watch the z column.
+//   Likely mechanism: this ladder is DRIFTLESS. It places rungs from the
+//   excursion distribution alone, so a market trending up overnight will run
+//   through the upper rungs more often than a symmetric fit expects. That is a
+//   property of the model, not a bug, and it will invert in a downtrend.
+//   The RTH ladder shows no such pattern (6 up / 10 down, mixed).
+//
+//@version=6
+indicator("Expected Volatility — Percentile Ladder", "EV Ladder", overlay = true,
+     max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+
+// ─────────────────────────────────────────────────────────────── inputs
+grpS = "Sessions"
+useRTH = input.bool(true,  "RTH  09:30-16:00", group = grpS)
+useON  = input.bool(false, "Overnight  18:00-09:30", group = grpS,
+     tooltip = "Separate fitted ladder, not a rescale of the RTH one. Its UP " +
+     "side runs narrow on ES — see the header note and 'ON width x — up'.")
+rthSpec = input.session("0930-1600", "RTH spec", group = grpS)
+onSpec  = input.session("1800-0930", "Overnight spec", group = grpS)
+tzSpec  = input.string("America/New_York", "Timezone", group = grpS)
+
+grpL = "Ladder"
+anchorMode = input.string("Session open", "Anchor", options = ["Session open", "Prior close"],
+     group = grpL, tooltip = "Session open is the measured choice.")
+volMode = input.string("Prior close", "Vol read", options = ["Prior close", "Today's open"],
+     group = grpL)
+// Separate up/down multipliers, because the measured overnight bias is
+// one-sided: a single width control would have to widen the down side too,
+// which is already calibrated.
+evUpR = input.float(1.0, "RTH width x — up",   minval = 0.3, maxval = 3.0, step = 0.05, group = grpL)
+evDnR = input.float(1.0, "RTH width x — down", minval = 0.3, maxval = 3.0, step = 0.05, group = grpL)
+evUpN = input.float(1.0, "ON width x — up",    minval = 0.3, maxval = 3.0, step = 0.05, group = grpL,
+     tooltip = "The overnight UP side runs narrow on ES — 8/8 rungs, both windows. " +
+     "Try 1.15-1.30, then read the z column.")
+evDnN = input.float(1.0, "ON width x — down",  minval = 0.3, maxval = 3.0, step = 0.05, group = grpL)
+histSess = input.int(5, "Completed sessions to draw", minval = 0, maxval = 25, group = grpL)
+
+grpV = "Volatility index"
+volChoice = input.string("Auto (from symbol)", "Source", group = grpV,
+     options = ["Auto (from symbol)", "VIX (30d)", "VIX1D (0DTE)", "VIX9D",
+                "VOLI (NASDAQ)", "Custom"])
+volManual = input.symbol("CBOE:VIX", "Custom vol symbol", group = grpV)
+
+grpD = "Display"
+scheme    = input.string("Auto", "Colour scheme", options = ["Auto", "Dark", "Light"], group = grpD)
+lineWid   = input.int(2, "Line width", minval = 1, maxval = 4, group = grpD)
+opTouch   = input.int(0,  "Touched transparency",   minval = 0, maxval = 90, group = grpD)
+opUntouch = input.int(50, "Untouched transparency", minval = 0, maxval = 95, group = grpD)
+untMode   = input.string("Dim", "Untouched rungs", options = ["Dim", "Hide", "Same as touched"],
+     group = grpD)
+showBands = input.bool(true, "Shade between paired rungs", group = grpD)
+bandOp    = input.int(94, "Band transparency", minval = 70, maxval = 99, group = grpD)
+showAnchor = input.bool(true, "Draw anchor line", group = grpD)
+
+grpLb = "Labels"
+// "Most recent only" is the default because labelling every drawn session put
+// ~13 overlapping labels on each of 5 sessions, which is unreadable.
+labMode  = input.string("Most recent only", "Show labels on",
+     options = ["Most recent only", "All drawn sessions", "None"], group = grpLb)
+labPrice = input.bool(true, "Include price", group = grpLb)
+labSize  = input.string("Small", "Size", options = ["Tiny", "Small", "Normal"], group = grpLb)
+
+grpR = "Rungs"
+showP80 = input.bool(false, "80%  (noise)", group = grpR)
+showP65 = input.bool(true,  "65%", group = grpR)
+showP50 = input.bool(true,  "50%  (median)", group = grpR)
+showP35 = input.bool(true,  "35%", group = grpR)
+showP25 = input.bool(true,  "25%", group = grpR)
+showP15 = input.bool(true,  "15%", group = grpR)
+showP10 = input.bool(false, "10%", group = grpR)
+showP05 = input.bool(true,  "5%   (tail)", group = grpR)
+
+grpT = "Validation table"
+showTable = input.bool(true, "Show", group = grpT)
+tblSize   = input.string("Normal", "Text size", group = grpT,
+     options = ["Tiny", "Small", "Normal", "Large", "Huge"])
+tablePos  = input.string("Top right", "Position", group = grpT,
+     options = ["Top right", "Bottom right", "Top left", "Bottom left"])
+
+// ──────────────────────────── palette (VISUAL_SYSTEM §2.1/2.2), theme-aware
+bgLum = color.r(chart.bg_color) * 0.299 + color.g(chart.bg_color) * 0.587 +
+     color.b(chart.bg_color) * 0.114
+dark = scheme == "Auto" ? bgLum < 128 : scheme == "Dark"
+
+cBull    = dark ? #38BD8A : #007A5A
+cBear    = dark ? #F87171 : #B3261E
+cPivot   = dark ? #60A5FA : #2563EB
+cMedian  = dark ? #FACC15 : #B45309
+cOnUp    = dark ? #2DD4BF : #0D9488   // overnight uses the confirm/teal family
+cOnDn    = dark ? #FB923C : #C2410C   // so it never reads as an RTH rung
+cBgPri   = dark ? #0F172A : #F8FAFC
+cBgSec   = dark ? #1E293B : #FFFFFF
+cTextPri = dark ? #F1F5F9 : #0F172A
+cTextDim = dark ? #94A3B8 : #52525B
+cHeadBg  = dark ? #1E3A8A : #BFDBFE
+cHeadTx  = dark ? #E2E8F0 : #111827
+cOkBg    = dark ? #166534 : #DCFCE7
+cOkTx    = dark ? #DCFCE7 : #166534
+cWarnBg  = dark ? #92400E : #FEF3C7
+cWarnTx  = dark ? #FEF3C7 : #92400E
+cBadBg   = dark ? #7F1D1D : #FEE2E2
+cBadTx   = dark ? #FECACA : #991B1B
+
+labSz = labSize == "Tiny" ? size.tiny : labSize == "Normal" ? size.normal : size.small
+tblSz = tblSize == "Tiny" ? size.tiny : tblSize == "Small" ? size.small :
+     tblSize == "Large" ? size.large : tblSize == "Huge" ? size.huge : size.normal
+// The header sits one step up from the body so the table still reads as a unit
+// at any size.
+tblHdSz = tblSize == "Tiny" ? size.small : tblSize == "Small" ? size.normal :
+     tblSize == "Normal" ? size.large : size.huge
+
+// ────────────────────── fitted ladders — 887 train sessions each, open anchor
+// RTH from variants_ES1.json, overnight from overnight_ES1.json. Do not
+// hand-edit: rerun compare_variants.py / overnight.py --pine and re-copy.
+N = 8
+var pTarget = array.from(0.80, 0.65, 0.50, 0.35, 0.25, 0.15, 0.10, 0.05)
+var cUpR = array.from(0.1239, 0.2215, 0.3397, 0.4974, 0.5982, 0.7456, 0.8569, 1.0267)
+var cDnR = array.from(0.1029, 0.2108, 0.3267, 0.4787, 0.6258, 0.8245, 1.0191, 1.2564)
+var cUpN = array.from(0.0931, 0.1631, 0.2381, 0.3231, 0.3983, 0.5152, 0.6024, 0.7793)
+var cDnN = array.from(0.0766, 0.1434, 0.2259, 0.3269, 0.4317, 0.5757, 0.6843, 0.8768)
+var shown = array.from(showP80, showP65, showP50, showP35, showP25, showP15, showP10, showP05)
+
+// ─────────────────────────────────────────────────────────── vol source
+root = syminfo.root
+autoSym = root == "ES"  or root == "MES" or root == "SPX" or root == "SPY" ? "CBOE:VIX"   :
+     root == "NQ"  or root == "MNQ" or root == "NDX" or root == "QQQ" ? "CBOE:VXN"   :
+     root == "RTY" or root == "M2K" or root == "RUT" or root == "IWM" ? "CBOE:RVX"   :
+     root == "YM"  or root == "MYM" or root == "DJI" or root == "DIA" ? "CBOE:VXD"   :
+     root == "CL"  or root == "MCL" or root == "USO"                  ? "CBOE:OVX"   :
+     root == "GC"  or root == "MGC" or root == "GLD"                  ? "CBOE:GVZ"   :
+     root == "SI"  or root == "SIL" or root == "SLV"                  ? "CBOE:VXSLV" :
+     root == "6E"  or root == "M6E" or root == "FXE"                  ? "CBOE:EVZ"   :
+     root == "ZN"  or root == "ZB"  or root == "TLT"                  ? "CBOE:VXTLT" : ""
+mapped = autoSym != ""
+volSym = volChoice == "Auto (from symbol)" ? (mapped ? autoSym : volManual) :
+     volChoice == "VIX (30d)"     ? "CBOE:VIX"   :
+     volChoice == "VIX1D (0DTE)"  ? "CBOE:VIX1D" :
+     volChoice == "VIX9D"         ? "CBOE:VIX9D" :
+     volChoice == "VOLI (NASDAQ)" ? "NASDAQ:VOLI" : volManual
+
+volPrevClose = request.security(volSym, "1D", close[1], lookahead = barmerge.lookahead_off)
+volTodayOpen = request.security(volSym, "1D", open,     lookahead = barmerge.lookahead_off)
+pxPrevClose  = request.security(syminfo.tickerid, "1D", close[1], lookahead = barmerge.lookahead_off)
+volRead = volMode == "Prior close" ? volPrevClose : volTodayOpen
+
+// ───────────────────────────────────────────────────────── session state
+// One object per session so RTH and overnight cannot share a counter or an
+// anchor by accident. A Pine function cannot assign to a global, but it can
+// mutate the fields of an object handed to it, which is why this is a type.
+type Sess
+    string label
+    float  anchor  = na
+    float  ev      = na
+    float  hi      = na
+    float  lo      = na
+    int    bar     = na
+    int    n       = 0
+    array<int>   hitUp
+    array<int>   hitDn
+    array<float> cUp
+    array<float> cDn
+    color  cu
+    color  cd
+    float  sUp = 1.0
+    float  sDn = 1.0
+    int    lastX1 = na
+    int    lastX2 = na
+
+var rth = Sess.new("RTH", hitUp = array.new_int(N, 0), hitDn = array.new_int(N, 0),
+     cUp = cUpR, cDn = cDnR, cu = cBull, cd = cBear, sUp = evUpR, sDn = evDnR)
+var ovn = Sess.new("ON",  hitUp = array.new_int(N, 0), hitDn = array.new_int(N, 0),
+     cUp = cUpN, cDn = cDnN, cu = cOnUp, cd = cOnDn, sUp = evUpN, sDn = evDnN)
+
+var line[]  histLines = array.new_line()
+var label[] histLabs  = array.new_label()
+var box[]   histBoxes = array.new_box()
+var line[]  liveLines = array.new_line()
+var label[] liveLabs  = array.new_label()
+var box[]   liveBoxes = array.new_box()
+
+rungTxt(float p, bool up, float px) =>
+    (up ? "▲ " : "▼ ") + str.tostring(p * 100, "#") + "%" +
+     (labPrice ? "  " + str.tostring(px, format.mintick) : "")
+
+// Draw one session's ladder between two bar indices. Pushes into the arrays it
+// is given, so the caller decides whether these are the historical or live set.
+// `withGeom` draws lines and bands; `withLabels` draws text. They are separate
+// because the most recently COMPLETED session already has its geometry on the
+// chart from the historical pass — re-drawing it stacks a second translucent
+// band over the first and runs it past the session's real end.
+drawLadder(Sess s, int x1, int x2, bool withGeom, bool withLabels,
+     line[] lns, label[] lbs, box[] bxs) =>
+    if showAnchor and withGeom
+        array.push(lns, line.new(x1, s.anchor, x2, s.anchor, xloc = xloc.bar_index,
+             color = cPivot, width = lineWid + 1))
+    if showAnchor and withLabels
+        array.push(lbs, label.new(x2, s.anchor, "  " + s.label + " anchor" +
+             (labPrice ? "  " + str.tostring(s.anchor, format.mintick) : ""),
+             xloc = xloc.bar_index, style = label.style_label_left,
+             color = color.new(cBgPri, 100), textcolor = cPivot, size = labSz))
+    for i = 0 to N - 1
+        if array.get(shown, i)
+            p  = array.get(pTarget, i)
+            lu = s.anchor + s.ev * array.get(s.cUp, i) * s.sUp
+            ld = s.anchor - s.ev * array.get(s.cDn, i) * s.sDn
+            tu = s.hi >= lu
+            td = s.lo <= ld
+            bu = p == 0.50 ? cMedian : s.cu
+            bd = p == 0.50 ? cMedian : s.cd
+            trU = tu ? opTouch : (untMode == "Same as touched" ? opTouch : opUntouch)
+            trD = td ? opTouch : (untMode == "Same as touched" ? opTouch : opUntouch)
+            if showBands and withGeom
+                array.push(bxs, box.new(x1, lu, x2, ld,
+                     border_color = color.new(cPivot, 100),
+                     bgcolor = color.new(p == 0.50 ? cMedian : s.cu, bandOp)))
+            if (untMode != "Hide" or tu) and withGeom
+                array.push(lns, line.new(x1, lu, x2, lu, xloc = xloc.bar_index,
+                     color = color.new(bu, trU), width = lineWid,
+                     style = tu ? line.style_solid : line.style_dotted))
+            if (untMode != "Hide" or tu) and withLabels
+                array.push(lbs, label.new(x2, lu, rungTxt(p, true, lu) + (tu ? " ✓" : ""),
+                     xloc = xloc.bar_index, style = label.style_label_left,
+                     color = color.new(cBgPri, 100), textcolor = color.new(bu, trU),
+                     size = labSz))
+            if (untMode != "Hide" or td) and withGeom
+                array.push(lns, line.new(x1, ld, x2, ld, xloc = xloc.bar_index,
+                     color = color.new(bd, trD), width = lineWid,
+                     style = td ? line.style_solid : line.style_dotted))
+            if (untMode != "Hide" or td) and withLabels
+                array.push(lbs, label.new(x2, ld, rungTxt(p, false, ld) + (td ? " ✓" : ""),
+                     xloc = xloc.bar_index, style = label.style_label_left,
+                     color = color.new(cBgPri, 100), textcolor = color.new(bd, trD),
+                     size = labSz))
+
+tally(Sess s) =>
+    s.n += 1
+    for i = 0 to N - 1
+        if s.hi >= s.anchor + s.ev * array.get(s.cUp, i) * s.sUp
+            array.set(s.hitUp, i, array.get(s.hitUp, i) + 1)
+        if s.lo <= s.anchor - s.ev * array.get(s.cDn, i) * s.sDn
+            array.set(s.hitDn, i, array.get(s.hitDn, i) + 1)
+
+// ─────────────────────────────────────────────────── RTH session tracking
+inR = not na(time(timeframe.period, rthSpec, tzSpec))
+inN = not na(time(timeframe.period, onSpec, tzSpec))
+startR = inR and not inR[1]
+endR   = not inR and inR[1]
+startN = inN and not inN[1]
+endN   = not inN and inN[1]
+
+if startR and useRTH
+    rth.anchor := anchorMode == "Session open" ? open : pxPrevClose
+    rth.ev     := na(volRead) ? na : rth.anchor * volRead / math.sqrt(252) / 100
+    rth.hi     := high
+    rth.lo     := low
+    rth.bar    := bar_index
+else if inR and useRTH
+    rth.hi := math.max(nz(rth.hi, high), high)
+    rth.lo := math.min(nz(rth.lo, low), low)
+
+if startN and useON
+    ovn.anchor := anchorMode == "Session open" ? open : pxPrevClose
+    ovn.ev     := na(volRead) ? na : ovn.anchor * volRead / math.sqrt(252) / 100
+    ovn.hi     := high
+    ovn.lo     := low
+    ovn.bar    := bar_index
+else if inN and useON
+    ovn.hi := math.max(nz(ovn.hi, high), high)
+    ovn.lo := math.min(nz(ovn.lo, low), low)
+
+// Roll up AT SESSION END, not at the next session's start. Finalising on start
+// left the most recently completed session neither counted nor drawn until the
+// following one opened — which is why Friday's RTH was missing all weekend.
+if endR and useRTH and not na(rth.anchor) and not na(rth.ev) and rth.ev > 0
+    tally(rth)
+    rth.lastX1 := rth.bar
+    rth.lastX2 := bar_index - 1
+    if histSess > 0
+        drawLadder(rth, rth.bar, bar_index - 1, true,
+             labMode == "All drawn sessions", histLines, histLabs, histBoxes)
+if endN and useON and not na(ovn.anchor) and not na(ovn.ev) and ovn.ev > 0
+    tally(ovn)
+    ovn.lastX1 := ovn.bar
+    ovn.lastX2 := bar_index - 1
+    if histSess > 0
+        drawLadder(ovn, ovn.bar, bar_index - 1, true,
+             labMode == "All drawn sessions", histLines, histLabs, histBoxes)
+
+// FIFO caps. 17 lines and 17 labels per session per ladder at the extreme.
+if barstate.isconfirmed
+    cap = histSess * 17 * ((useRTH ? 1 : 0) + (useON ? 1 : 0))
+    while array.size(histLines) > cap
+        line.delete(array.shift(histLines))
+    while array.size(histLabs) > cap
+        label.delete(array.shift(histLabs))
+    while array.size(histBoxes) > cap
+        box.delete(array.shift(histBoxes))
+
+// ──────────────────────────────────────────────── live session, redrawn
+if barstate.islast
+    for ln in liveLines
+        line.delete(ln)
+    array.clear(liveLines)
+    for lb in liveLabs
+        label.delete(lb)
+    array.clear(liveLabs)
+    for bx in liveBoxes
+        box.delete(bx)
+    array.clear(liveBoxes)
+    lab = labMode != "None"
+    // Only a LIVE session draws geometry here. Drawing the completed one too was
+    // the Friday overlap: its band was already on the chart from the historical
+    // pass, so a second translucent copy stacked over it AND ran 14 bars past
+    // the session's real end, straight into the next session. Only the most
+    // recent session is ever eligible for that re-draw, which is why the fault
+    // looked specific to Friday.
+    bool liveDrawn = false
+    if useRTH and inR and not na(rth.ev) and rth.ev > 0
+        drawLadder(rth, rth.bar, bar_index + 14, true, lab,
+             liveLines, liveLabs, liveBoxes)
+        liveDrawn := true
+    if useON and inN and not na(ovn.ev) and ovn.ev > 0
+        drawLadder(ovn, ovn.bar, bar_index + 14, true, lab,
+             liveLines, liveLabs, liveBoxes)
+        liveDrawn := true
+    // Out of hours: label whichever session ended most recently, so a weekend
+    // chart is not blank. Labels only — the geometry is already on the chart.
+    if not liveDrawn and lab
+        rthOk = useRTH and not na(rth.lastX2) and not na(rth.ev) and rth.ev > 0
+        onOk  = useON  and not na(ovn.lastX2) and not na(ovn.ev) and ovn.ev > 0
+        if rthOk and (not onOk or rth.lastX2 >= ovn.lastX2)
+            drawLadder(rth, rth.lastX1, bar_index + 12, false, true,
+                 liveLines, liveLabs, liveBoxes)
+        else if onOk
+            drawLadder(ovn, ovn.lastX1, bar_index + 12, false, true,
+                 liveLines, liveLabs, liveBoxes)
+
+// ──────────────────────────────────────────────────── validation table
+// Scored in STANDARD ERRORS. Fixed percentage-point bands called a 6.1pp miss
+// at the 35% rung "drifting" on 74 sessions, where one SE is 5.5pp — that miss
+// was 1.1 SE, i.e. noise. A threshold that ignores the sample size cannot tell
+// noise from drift and will cry wolf on a short chart.
+posT = tablePos == "Top right" ? position.top_right :
+     tablePos == "Bottom right" ? position.bottom_right :
+     tablePos == "Top left" ? position.top_left : position.bottom_left
+
+nCols = 1 + (useRTH ? 3 : 0) + (useON ? 3 : 0)
+var table tbl = table.new(posT, 7, N + 4, border_width = 1)
+
+if showTable and barstate.islast
+    table.clear(tbl, 0, 0, 6, N + 3)
+    table.cell(tbl, 0, 0, "EV Ladder · " + (volSym == "" ? "no vol" : volSym),
+         text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblHdSz)
+    table.merge_cells(tbl, 0, 0, nCols - 1, 0)
+    table.cell(tbl, 0, 1, "rung", text_color = cHeadTx, bgcolor = cHeadBg,
+         text_size = tblSz)
+    c0 = 1
+    if useRTH
+        table.cell(tbl, c0, 1, "RTH ▲", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
+        table.cell(tbl, c0 + 1, 1, "RTH ▼", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
+        table.cell(tbl, c0 + 2, 1, "z", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
+        c0 += 3
+    if useON
+        table.cell(tbl, c0, 1, "ON ▲", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
+        table.cell(tbl, c0 + 1, 1, "ON ▼", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
+        table.cell(tbl, c0 + 2, 1, "z", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
+
+    float worstZ = 0.0
+    for i = 0 to N - 1
+        p = array.get(pTarget, i)
+        table.cell(tbl, 0, i + 2, str.tostring(p * 100, "#") + "%",
+             text_color = cTextPri, bgcolor = cBgSec, text_size = tblSz)
+        col = 1
+        if useRTH
+            ru = rth.n > 0 ? array.get(rth.hitUp, i) / rth.n : na
+            rd = rth.n > 0 ? array.get(rth.hitDn, i) / rth.n : na
+            se = rth.n > 0 ? math.sqrt(p * (1 - p) / rth.n) : na
+            e  = na(ru) ? na : (math.abs(ru - p) + math.abs(rd - p)) / 2
+            z  = na(e) or na(se) or se == 0 ? na : e / se
+            worstZ := na(z) ? worstZ : math.max(worstZ, z)
+            table.cell(tbl, col, i + 2, na(ru) ? "—" : str.tostring(ru * 100, "#.#"),
+                 text_color = cTextPri, bgcolor = cBgSec, text_size = tblSz)
+            table.cell(tbl, col + 1, i + 2, na(rd) ? "—" : str.tostring(rd * 100, "#.#"),
+                 text_color = cTextPri, bgcolor = cBgSec, text_size = tblSz)
+            table.cell(tbl, col + 2, i + 2, na(z) ? "—" : str.tostring(z, "#.#"),
+                 text_color = na(z) ? cTextPri : z <= 1.5 ? cOkTx : z <= 2.5 ? cWarnTx : cBadTx,
+                 bgcolor = na(z) ? cBgSec : z <= 1.5 ? cOkBg : z <= 2.5 ? cWarnBg : cBadBg,
+                 text_size = tblSz)
+            col += 3
+        if useON
+            // Distinct names: `ru`/`z` above are in the same scope, and Pine
+            // treats a second `ru =` here as a redeclaration, not a shadow.
+            ru2 = ovn.n > 0 ? array.get(ovn.hitUp, i) / ovn.n : na
+            rd2 = ovn.n > 0 ? array.get(ovn.hitDn, i) / ovn.n : na
+            se2 = ovn.n > 0 ? math.sqrt(p * (1 - p) / ovn.n) : na
+            e2  = na(ru2) ? na : (math.abs(ru2 - p) + math.abs(rd2 - p)) / 2
+            z2  = na(e2) or na(se2) or se2 == 0 ? na : e2 / se2
+            worstZ := na(z2) ? worstZ : math.max(worstZ, z2)
+            table.cell(tbl, col, i + 2, na(ru2) ? "—" : str.tostring(ru2 * 100, "#.#"),
+                 text_color = cTextPri, bgcolor = cBgSec, text_size = tblSz)
+            table.cell(tbl, col + 1, i + 2, na(rd2) ? "—" : str.tostring(rd2 * 100, "#.#"),
+                 text_color = cTextPri, bgcolor = cBgSec, text_size = tblSz)
+            table.cell(tbl, col + 2, i + 2, na(z2) ? "—" : str.tostring(z2, "#.#"),
+                 text_color = na(z2) ? cTextPri : z2 <= 1.5 ? cOkTx : z2 <= 2.5 ? cWarnTx : cBadTx,
+                 bgcolor = na(z2) ? cBgSec : z2 <= 1.5 ? cOkBg : z2 <= 2.5 ? cWarnBg : cBadBg,
+                 text_size = tblSz)
+
+    nMin = math.min(useRTH ? rth.n : 999999, useON ? ovn.n : 999999)
+    note = nMin < 40 ? "only " + str.tostring(nMin) + " sessions — load more history" :
+         worstZ <= 1.5 ? "calibrated: every rung within 1.5 SE" :
+         worstZ <= 2.5 ? "a rung is 1.5-2.5 SE out — watch it" :
+         "MISS > 2.5 SE — use the width multipliers"
+    table.cell(tbl, 0, N + 2, "RTH " + str.tostring(rth.n) + " · ON " +
+         str.tostring(ovn.n) + " sessions — " + note,
+         text_color = cTextDim, bgcolor = cBgPri, text_size = tblSz)
+    table.merge_cells(tbl, 0, N + 2, nCols - 1, N + 2)
+    warn = volChoice == "Auto (from symbol)" and not mapped ?
+         "⚠ no vol index mapped for " + root + " — using " + volManual :
+         useON and evUpN == 1.0 ?
+         "⚠ overnight UP side runs narrow on ES (8/8 rungs) — try ON width up 1.15-1.30" :
+         "z = |realised − promised| / SE"
+    table.cell(tbl, 0, N + 3, warn, text_color = cTextDim, bgcolor = cBgPri,
+         text_size = tblSz)
+    table.merge_cells(tbl, 0, N + 3, nCols - 1, N + 3)
