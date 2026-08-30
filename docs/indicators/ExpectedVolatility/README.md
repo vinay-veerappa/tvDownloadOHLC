@@ -106,8 +106,8 @@ Output columns of `scan_expected_volatility`:
 - Touch-rate sanity on 12 sessions: 0.25σ touched ~50–67%, 1.0σ+ rarely —
   matches expected box geometry.
 - **All three ES vol sources** (VIX / VOLI / VIX1D) validated Dec 2025:
-  20/21 sessions each; Dec-30 session values VIX 14.15 / VOLI 11.76 /
-  VIX1D 8.83 (expected ordering: 1-day CEBO < 30-day VIX < VOLI).
+  20/21 sessions each; Dec-30 session values **VIX 14.15 / VOLI 11.76 /
+  VIX1D 8.83** (ordering `VIX1D < VOLI < VIX`, as expected for 1d < Nasdaq < 30d vol).
 
 ## Critical Implementation Notes (do not regress)
 
