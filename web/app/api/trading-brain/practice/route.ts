@@ -63,6 +63,7 @@ export async function POST(request: Request) {
       declared_stop_bps: String(body.declared_stop_bps),
       declared_target_bps: String(body.declared_target_bps),
       latency_ms: body.latency_ms ? String(body.latency_ms) : undefined,
+      custody_token: body.custody_token ? String(body.custody_token) : undefined,
     });
     if ('error' in result) return NextResponse.json(result, { status: 500 });
     return NextResponse.json(result);

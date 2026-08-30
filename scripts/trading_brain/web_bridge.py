@@ -238,7 +238,7 @@ def handle_drill_submit(args: argparse.Namespace) -> Dict[str, Any]:
         declared_entry_price=float(args.declared_entry_price),
         declared_stop_bps=float(args.declared_stop_bps),
         declared_target_bps=float(args.declared_target_bps),
-        latency_ms=int(args.latency_ms) if args.latency_ms else None,
+        latency_ms=int(args.latency_ms) if args.latency_ms else 1500,  # schema: drill_attempts.latency_ms NOT NULL; engine default
         custody_token=getattr(args, "custody_token", None),
     )
     feedback = BlindedDrillEngine.submit_and_evaluate(declaration, db_path=_db(args))
