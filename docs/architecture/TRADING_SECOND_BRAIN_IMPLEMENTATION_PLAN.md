@@ -236,7 +236,7 @@ The remaining engineering backlog consists of **4 distinct workstreams**:
 | **P1** | **WS-1.2** | Post-Market Pipeline Runner (16:15 ET automated tape, fills, reconciliation, triage report) | `scripts/trading_brain/orchestration/pre_market_pipeline.py` (`run_post_market_pipeline`, CLI `--mode postmarket`) | ✅ COMPLETE |
 | **P2** | **WS-2.1** | Wire `generate_daily_wargame.py` to auto-register forecasts & plans | `generate_daily_wargame.py --register` (uses the pipeline mappers; fail-closed cutoff) | ✅ COMPLETE |
 | **P2** | **WS-2.2** | Wire Prisma TradePlan web submissions to `PlanAdapter` | `scripts/trading_brain/bridges/prisma_plan_bridge.py` (idempotent sync CLI `--dry-run`) | ✅ COMPLETE |
-| **P3** | **WS-4** | Interactive Next.js / Tailwind Web Workspace & Review Queues | `web/` | ⬜ PENDING |
+| **P3** | **WS-4** | Interactive Next.js / Tailwind Web Workspace & Review Queues | `web/` | ✅ COMPLETE (2026-08-30: 5 API routes + 4-panel dashboard, agent-loop reviewed, live smoke-tested) |
 | **HOLD**| **WS-3** | [ON HOLD] C# RiskGuard Pre-Trade Interceptor | `nt8-riskguard`, `nt8-mcp-bridge` | ⏸ DEFERRED (user verifying plan) |
 
 ### WS-1 / WS-2 Implementation Notes (2026-08-29)
