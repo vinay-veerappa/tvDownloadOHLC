@@ -39,12 +39,8 @@ OUT_DIR = DATA_DIR / "expected_volatility"
 # Continuous c sweep constants (§1.3) — all 12 levels collapsed to S*(1 ± c*a)
 # Derived: c = m * b/a for bottom, c = m * mid/a for mid, c = m for top
 # Ordered for readability: 0.25 ladder, 0.5 ladder, 1.0 ladder, 1.5 ladder
-C_VALUES = {
-    # 0.25 ladder: bottom(c=0.2077), mid(0.2289), top(0.25)
-    # 0.5 ladder: 0.4155, 0.4577, 0.5
-    # 1.0 ladder: 0.8309, 0.9155, 1.0
-    # 1.5 ladder: 1.2464, 1.3732, 1.5
-}
+# 0.25 ladder: bottom(c=0.2077), mid(0.2289), top(0.25) | 0.5: 0.4155, 0.4577, 0.5
+# 1.0 ladder: 0.8309, 0.9155, 1.0                        | 1.5: 1.2464, 1.3732, 1.5
 C_LIST = [0.2077274, 0.2288647, 0.25, 0.4154549, 0.4577295, 0.5, 0.8309097, 0.9154549, 1.0, 1.2463646, 1.3731823, 1.5]
 
 # Session catalog (tiled, §3.1)
@@ -59,6 +55,10 @@ SESSIONS = [
 ]
 SESSION_MINUTES = {s: m for s,_,_,m,_ in SESSIONS}
 TRADING_DAY_MINUTES = 1380  # 18:00->17:00 = 23h
+# Reversal threshold in BASIS POINTS, not points. A fixed 4-pt ES threshold is
+# not scale-free: it is 9 bps at ES 4400 and 6 bps at ES 6800, so the same
+# nominal rule tightens as the index rises (DATA_PLAN 10.6, ADR-002).
+REVERSAL_BPS = 10.0
 
 SQRT252 = math.sqrt(252)
 SQRT365 = math.sqrt(365)
@@ -215,8 +215,7 @@ def main():
     print(f"Intraday rows {len(intraday)} {intraday.index[0]} -> {intraday.index[-1]}")
 
     # Daily settlement series (as-of T-1)
-    daily_S = load_daily_settlement_series(args.ticker.replace("1",""))  # ES1 -> ES -> try ES_1d? Actually settlement is prior close <16:00, we need intraday-derived
-    # For ES settlement we use intraday 16:00 cutoff, not daily parquet
+    # Settlement is the intraday close <16:00 ET, never the daily parquet bar.
     from scripts.libs_py.expected_volatility.settlements import build_daily_settlements
     # Build settlement series from intraday (16:00 cutoff) — this is S_T
     S_series = build_daily_settlements(intraday, None, toggle=False)
@@ -260,12 +259,10 @@ def main():
     rv20_asof = rv20.shift(1)  # as-of T-1 for leakage-safe
 
     # Build sessions rows
-    scale_modes = {
-        "unscaled": 1.0,
-        "sqrt_sess_over_1380": None,  # per session
-        "sqrt_sess_over_390": None,
-        "sqrt_sess_over_1440": None,
-    }
+    # Session-length scalings. 1380 = CME trading day (18:00->17:00), 390 = RTH,
+    # 1440 = calendar 24h; the third arm is what DATA_PLAN 4.3 horse-races against.
+    SCALE_DENOMS = {"sqrt_sess_over_1380": 1380, "sqrt_sess_over_390": 390,
+                    "sqrt_sess_over_1440": 1440}
 
     rows = []
     # Iterate trading days
@@ -319,7 +316,11 @@ def main():
                 vx_basis = vx1 - vix if not pd.isna(vx1) else np.nan
                 vx_curve = vx2 - vx1 if not pd.isna(vx2) and not pd.isna(vx1) else np.nan
 
-                for scale_id, scale_val in [("unscaled",1.0),("sqrt_sess_over_1380", math.sqrt(SESSION_MINUTES[session_id]/1380)),("sqrt_sess_over_390", math.sqrt(SESSION_MINUTES[session_id]/390))]:
+                scale_arms = [("unscaled", 1.0)] + [
+                    (sid, math.sqrt(SESSION_MINUTES[session_id] / den))
+                    for sid, den in SCALE_DENOMS.items()
+                ]
+                for scale_id, scale_val in scale_arms:
                     ev_levels = compute_ev_levels(S, vix, scale_factor=scale_val)
                     # Hit stats per c level (continuous sweep)
                     # For each of the 12 c values, compute touched etc.
@@ -327,13 +328,21 @@ def main():
                     for c in C_LIST:
                         label = f"{c:.4f}".rstrip("0").rstrip(".")
                         for mode in ["arith","log"]:
-                            lvl_key = f"R_{mode}_{label}"
+                          for side in ["R","S"]:
+                            lvl_key = f"{side}_{mode}_{label}"
                             lvl = ev_levels.get(lvl_key)
                             if lvl is None or pd.isna(lvl):
                                 continue
-                            # Touch detection
-                            touched = (sess_high >= lvl >= sess_low) if "R_" in lvl_key else (sess_low <= lvl <= sess_high)
-                            # Actually R levels are above S, so high crosses; S levels low crosses — same logic
+                            is_up = side == "R"
+                            # REACHED, not CONTAINED. The old test was
+                            # `sess_high >= lvl >= sess_low`, i.e. the level lies
+                            # INSIDE the session range — which scores False when a
+                            # session opens entirely BEYOND the level. That is a
+                            # level exceeded, not a level unreached, and it marked
+                            # 8.8% of rows untouched (30 pts of P(touch) in
+                            # Settlement, 13 in NY_PM) because those sessions need
+                            # not straddle the prior close.
+                            touched = (sess_high >= lvl) if is_up else (sess_low <= lvl)
                             # First touch time
                             first_touch_min_session = None
                             first_touch_min_trading_day = None
@@ -342,7 +351,7 @@ def main():
                             close_beyond = False
                             if touched:
                                 # Find first bar where high >= lvl (R) or low <= lvl (S)
-                                if lvl > S:  # R
+                                if is_up:
                                     mask = sess_bars["high"] >= lvl
                                     pierce = (sess_bars["high"] - lvl).clip(lower=0).max()
                                 else:
@@ -355,22 +364,18 @@ def main():
                                     first_touch_min_trading_day = minutes_since_trading_day_open(first_idx)
                                     max_pierce = float(pierce)
                                     pierce_bars = int(mask.sum())
-                                    close_beyond = bool(sess_close >= lvl) if lvl > S else bool(sess_close <= lvl)
+                                    close_beyond = bool(sess_close >= lvl) if is_up else bool(sess_close <= lvl)
                             b5_sess, b15_sess = bucket_ids(first_touch_min_session)
                             b5_td, b15_td = bucket_ids(first_touch_min_trading_day)
                             # Reversal placeholder: max favorable move after touch within session
                             reversal_hit = None
+                            reversal_bps = None
                             if touched and first_touch_min_session is not None:
-                                # Bars after touch
                                 after = sess_bars[sess_bars.index > first_idx] if first_idx is not None else pd.DataFrame()
                                 if not after.empty:
-                                    if lvl > S:
-                                        # R touch: reversal is down move from lvl
-                                        rev = (lvl - after["low"].min())
-                                        reversal_hit = bool(rev >= 4)  # 4 pts ES threshold per plan §6.1; will be param
-                                    else:
-                                        rev = (after["high"].max() - lvl)
-                                        reversal_hit = bool(rev >= 4)
+                                    rev = (lvl - after["low"].min()) if is_up else (after["high"].max() - lvl)
+                                    reversal_bps = float(max(rev, 0.0) / lvl * 10_000)
+                                    reversal_hit = bool(reversal_bps >= REVERSAL_BPS)
 
                             rows.append({
                                 "trading_day": td,
@@ -388,6 +393,7 @@ def main():
                                 "session_range": sess_range,
                                 "c": c,
                                 "level_mode": mode,
+                                "side": side,
                                 "level_price": lvl,
                                 "touched": bool(touched),
                                 "first_touch_min_session": first_touch_min_session,
@@ -397,9 +403,11 @@ def main():
                                 "bucket_5m_trading_day": b5_td,
                                 "bucket_15m_trading_day": b15_td,
                                 "max_pierce_pts": max_pierce if touched else 0,
+                                "max_pierce_bps": (max_pierce / lvl * 10_000) if touched else 0.0,
                                 "pierce_bars": pierce_bars,
                                 "close_beyond": close_beyond,
                                 "reversal_hit": reversal_hit,
+                                "reversal_bps": reversal_bps,
                                 "vix_pctl_63d": pctl_63,
                                 "vix_pctl_252d": pctl_252,
                                 "vix_term_slope_1d_30d": term_1d_30d,
@@ -418,14 +426,25 @@ def main():
     if df.empty:
         print("No rows built — check date range and vol_source")
         return
-    # De-duplicate by key (trading_day, session_id, ticker, vol_source, scale_mode, c, level_mode)
-    df = df.sort_values(["trading_day","session_id","c","level_mode"])
+    # Upsert key. anchor_mode and side MUST be in it: the previous key omitted
+    # anchor_mode, so the moment a second anchor (RTH open) is emitted the
+    # close-anchor rows would be silently overwritten by drop_duplicates(keep=last).
+    KEY = ["trading_day","session_id","ticker","vol_source","anchor_mode",
+           "scale_mode","c","level_mode","side"]
+    df = df.sort_values(["trading_day","session_id","c","level_mode","side"])
     out_path = out_dir / "sessions.parquet"
     # Upsert: read existing, concat, deduplicate keep last
     if out_path.exists():
         existing = pd.read_parquet(out_path)
-        combined = pd.concat([existing, df], ignore_index=True).drop_duplicates(subset=["trading_day","session_id","ticker","vol_source","scale_mode","c","level_mode"], keep="last").sort_values(["trading_day","session_id","c"])
-        df = combined
+        missing = [k for k in KEY if k not in existing.columns]
+        if missing:
+            raise SystemExit(
+                f"{out_path} predates key columns {missing}; delete it and rebuild "
+                "- an upsert against the old schema would collapse rows."
+            )
+        combined = pd.concat([existing, df], ignore_index=True)
+        df = combined.drop_duplicates(subset=KEY, keep="last").sort_values(
+            ["trading_day","session_id","c","level_mode","side"])
     df.to_parquet(out_path)
     print(f"Wrote {out_path} rows {len(df)} trading_days {df['trading_day'].nunique()} sessions {df['session_id'].nunique()}")
 
@@ -461,9 +480,11 @@ def main():
             if pd.isna(S):
                 return np.nan
             # Use VIX as-of T-1 for the bar's trading_day, unscaled c=1.0
-            vix = vol_daily.get("VIX", pd.Series(dtype=float)).get(et_td, np.nan)
+            # as-of T-1, matching the sessions builder. vol_daily is UNSHIFTED and
+            # reading it here would let a bar see its own trading day's VIX close.
+            vix = vol_daily_asof.get("VIX", pd.Series(dtype=float)).get(et_td, np.nan)
             if pd.isna(vix):
-                vix = vol_daily.get(vol_sources[0], pd.Series(dtype=float)).get(et_td, np.nan)
+                vix = vol_daily_asof.get(vol_sources[0], pd.Series(dtype=float)).get(et_td, np.nan)
             if pd.isna(vix):
                 return np.nan
             a = vix / SQRT252 / 100
