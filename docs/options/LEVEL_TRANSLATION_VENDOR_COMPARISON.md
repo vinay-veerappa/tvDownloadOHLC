@@ -103,3 +103,60 @@ MenthorQ publishes level sets (walls, HVL, 0DTE) on TradingView; SpotGamma has a
 free daily SPX GEX chart. Both can be scraped/overlaid as an independent
 "vendor wall" source in the same backtest harness — the vendor level becomes one
 more `alignment_score` contributor rather than a separate evaluation track.
+
+### 6.1 CBOE vendor feed (ACTIVE 2026-08-30) — primary cross-validation source
+
+Unusual Whales Periscope was considered first: **not scrapable** (login-gated),
+and its API is paid. Instead we use **CBOE's free delayed-quotes option chains**
+(`https://cdn.cboe.com/api/global/delayed_quotes/options/{ROOT}.json`; index
+roots need the underscore prefix: `_SPX`, `_NDX`, `_RUT`, `_DJX`, `_VIX`).
+Full chain per root with per-contract **OI + IV + gamma** (verified working,
+refreshed continuously, delayed ~15 min). No futures options (CME is bot-blocked);
+CBOE covers the **cash universe only** — SPX/SPY/QQQ etc. For NQ/ES the vendor
+signal is *translated* (QQQ→NQ, SPY/SPX→ES), the same translation we score above.
+
+**Why it adds value beyond our existing stack** (dolt `post-no-preference/options`
+local DB, Schwab API, TOS RTD):
+- Dolt: EOD via `dolt pull`, **no per-contract OI** — cannot build gamma walls.
+- Schwab: futures options **monthly-only, zero IV**; cash path OK but slow.
+- RTD: real-time per-strike OI/IV but **COM topic budget caps strike count**
+  (root cause of the fake-OI/frozen-spot bugs fixed 2026-08-28).
+- CBOE: one HTTPS call = full chain (~28k SPX contracts), broker-independent,
+  CBOE-computed greeks — a **methodology-independent second opinion**.
+
+Different dealer-wall definition caveat: raw max-gamma walls land on far round
+strikes (SPX raw CW=8000 vs our CW 7725 on 2026-08-28). Near-spot band ranking
+(±2%) is the comparable defintion (see §7 first results). Both definitions are
+kept; the backtest decides which is predictive, not taste.
+
+### 6.2 Infrastructure (`scripts/options_research/cboe_vendor_fetch.py`)
+
+- **core**: every 15 min 09:33–15:48 ET Mon–Fri, roots `_SPX SPY _NDX QQQ _VIX`;
+  computes call/put wall (max |gamma×OI×100×S²×0.01| per side), gamma flip,
+  net/call/put GEX $mm, max pain, OI PCR → appends `data/options/vendors/cboe_walls.csv`.
+  Raw chains archived only at anchors 09:33/11:33/13:33/15:48 ET.
+- **weekly**: Saturday 11:00 ET — full root universe refresh from CBOE symbol CSV
+  (3,027 roots), every root fetched (2958 OK; **69 structurally 403** = adjusted/
+  unit/warrant symbols listed in `cboe_unservable_roots.txt`), one-week
+  `cboe_weekly_roots_YYYY-MM-DD.csv`. Self-discovers CBOE's **429 rate limit**:
+  3 req/s throttle + Retry-After backoff; abort if >25% failures.
+- Scheduled: Windows tasks `TVODL\CBOE_vendor_core` (every 15 min) and
+  `TVODL\CBOE_vendor_weekly` (Sat 11:00 ET). Both **self-guard** (ET window,
+  stale-chain check ⇒ closed market auto-skips). Chains auto-pruned after 30 d.
+- **Kill switch** when the experiment is judged valueless:
+  `Disable-ScheduledTask -TaskPath \TVODL\ -TaskName CBOE_vendor_core` (+ `_weekly`).
+
+### 6.3 First cross-validation result (2026-08-28 data, ran 2026-08-30)
+
+`scripts/options_research/cboe_validate_now.py --date 20260828 --snapshot 1615`:
+
+| Pair | Ours | CBOE raw | CBOE near-spot | Verdict |
+|---|---|---|---|---|
+| SPX CW | 7725 | 8000 (rank 7 of 62 in ±2% band) | 7700 | **disagree** |
+| SPY CW | 770 | 770 (rank 1) | 770 | **agree exactly** |
+| QQQ CW | 718 | 715 (rank 7/33) | 715 | near |
+
+Interpretation: definitions differ (raw global max-gamma vs near-spot
+concentration). This is exactly the signal the aligned-walls backtest needs —
+agreement/discordance becomes part of `alignment_score`. No remediation of
+either side before data says which definition wins.
