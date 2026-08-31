@@ -1,0 +1,304 @@
+// ─────────────────────────────────────────────────────────────────────
+//  EV Session Stack — probability·distance·time map (GENERATED)
+//  Source of truth: scripts/expected_volatility/ + RESEARCH_REPORT.md
+//  DO NOT hand-edit the data blocks — regenerate with gen_pine.py.
+//
+//  Validated (holdout): RTH MAE 1.45% | London 1.95% CAL | Asia NOMINAL |
+//  arrival 68/80 cells ±5pp | zones/die/back per §5.5 | ES1 artifacts.
+//  Historical probabilities — a description of past sessions, NOT a
+//  forecast, and NOT an entry signal (§3.1/§3.2).
+// ─────────────────────────────────────────────────────────────────────
+//@version=6
+indicator("EV Session Stack — ES", "EV-Stack", overlay = true,
+     max_lines_count = 500, max_labels_count = 500, max_boxes_count = 100)
+
+// ── inputs ──────────────────────────────────────────────────────────
+grpS = "Sessions"
+showRTH    = input.bool(true, "NY (RTH) — CALIBRATED",              group = grpS)
+showLondon = input.bool(true, "London 03:00-09:30 — CAL",   group = grpS)
+showAsia   = input.bool(false, "Asia 18:00-03:00 — NOMINAL",       group = grpS)
+grpL = "Rungs"
+showInner  = input.bool(false, "Inner rungs 80/65/50 (faint)",      group = grpL)
+showWork   = input.bool(true,  "Work rungs 35/25 (primary)",        group = grpL)
+showTails  = input.bool(true,  "Tail rungs 15/10/5 (dotted)",       group = grpL)
+dowAdjust  = input.bool(true,  "Weekday width adjustment (§4.9)",   group = grpL)
+grpT = "Table"
+showTable  = input.bool(true,  "Show dashboard",                     group = grpT)
+tblPos     = input.string("Top Right", "Position", options = ["Top Right","Top Left","Bottom Right","Bottom Left"], group = grpT)
+tblSizeIn  = input.string("Small", "Size", options = ["Tiny","Small","Normal"], group = grpT)
+grpV = "Vol input"
+volSym     = input.symbol("CBOE:VIX", "Vol index", group = grpV)
+grpZ = "Zones (behind 35% rung)"
+showZones  = input.bool(true, "Extension zones",                     group = grpZ)
+zoneLbls   = input.bool(true, "Zone labels",                         group = grpZ)
+
+// ── DATA — generated blocks; provenance in each header ──────────────
+// RTH ladder c_up/c_dn, train-fit on 887 sessions (paths.py parity)
+var array<float> cUpRTH = array.from(0.1239, 0.2215, 0.3397, 0.4974, 0.5982, 0.7456, 0.8569, 1.0267)
+var array<float> cDnRTH = array.from(0.1029, 0.2108, 0.3267, 0.4787, 0.6258, 0.8245, 1.0191, 1.2564)
+// Weekday multipliers Mon..Fri, shrunk 0.5 (seasonality.py, §4.9)
+var array<float> wUpDOW = array.from(0.9833, 0.9466, 1.0617, 0.9517, 1.0719)
+var array<float> wDnDOW = array.from(0.8661, 1.0335, 1.0519, 1.0882, 0.9902)
+// Session-stack ladders (sessions_stack.py: London CAL, Asia NOMINAL)
+var array<float> cUpLDN = array.from(0.0767, 0.1384, 0.1973, 0.2673, 0.3297, 0.4193, 0.4853, 0.6049)
+var array<float> cDnLDN = array.from(0.0653, 0.1163, 0.1795, 0.2565, 0.3329, 0.4493, 0.5267, 0.7142)
+var array<float> cUpASA = array.from(0.0499, 0.0878, 0.1308, 0.1775, 0.2233, 0.2974, 0.3398, 0.4308)
+var array<float> cDnASA = array.from(0.0507, 0.0845, 0.1231, 0.1824, 0.2409, 0.3170, 0.3776, 0.4851)
+// Arrival §5.4: median first-touch min + cum P(touch by t), TRAIN fold.
+// arrCum is flat: row-major [row*5 + milestone], milestones
+// 10:00/11:00/12:00/13:30/15:00. arrMed < 0 = too few hits.
+var array<int>   arrIdx   = array.from(3, 3, 4, 4, 5, 5, 6, 6, 7, 7)
+var array<string> arrSide  = array.from("up", "dn", "up", "dn", "up", "dn", "up", "dn", "up", "dn")
+var array<int>   arrMed   = array.from(167, 109, 209, 165, 270, 212, 280, 241, 257, 300)
+var array<float> arrCum   = array.from(1.9, 11.1, 15.9, 23.4, 30.6, 3.2, 14.5, 20.5, 26.1, 31.7, 0.8, 5.5, 8.5, 14.1, 21.2, 1.6, 7.8, 11.6, 17.9, 22.6, 0.1, 2.0, 3.4, 6.1, 11.1, 0.1, 3.7, 6.0, 9.2, 12.5, 0.1, 0.9, 2.1, 3.5, 6.7, 0.0, 1.3, 2.8, 4.9, 8.2, 0.0, 0.4, 1.2, 2.0, 3.2, 0.0, 0.1, 0.8, 2.0, 3.4)
+var array<string> arrRegime = array.from("broad", "am", "broad-close", "am", "close", "am", "close", "am", "close", "close")
+// Zones §5.5: ext p50/p75/p90 (EV past rung) + die%/back% — TRAIN fold,
+// n>=30. revExt/revRate flat: [row*3]/[row*2].
+var array<int>    revIdx  = array.from(3, 3, 4, 4, 5, 5, 6, 6)
+var array<string> revSide = array.from("up", "dn", "up", "dn", "up", "dn", "up", "dn")
+var array<float>  revExt  = array.from(0.199, 0.404, 0.593, 0.299, 0.577, 0.904, 0.208, 0.398, 0.660, 0.282, 0.526, 0.870, 0.195, 0.319, 0.668, 0.273, 0.550, 0.892, 0.171, 0.401, 0.634, 0.239, 0.477, 0.862)
+var array<float>  revRate = array.from(29.0, 19.5, 28.6, 25.7, 39.5, 11.5, 40.1, 14.4, 32.6, 5.3, 33.1, 6.0, 49.4, 4.5, 49.4, 1.1)
+
+// ── helpers ─────────────────────────────────────────────────────────
+NY_TZ = "America/New_York"
+// median first-touch minute from the 09:30 open -> ET wall clock.
+// NOTE: m is an INT here (callers pass arrMed, an array<int>); the
+// int cast keeps timestamp()+m*60000 a series int — str.format_time
+// requires int, and a float here is compile error CE10123.
+f_med2clock(int m) =>
+    m < 0 ? "—" : str.format_time(timestamp(NY_TZ, year(time, NY_TZ), month(time, NY_TZ), dayofmonth(time, NY_TZ), 9, 30) + m * 60000, "HH:mm", NY_TZ)
+
+f_pos(s) =>
+    s == "Top Left" ? position.top_left : s == "Bottom Right" ? position.bottom_right : s == "Bottom Left" ? position.bottom_left : position.top_right
+
+f_tsz(s) => s == "Tiny" ? size.tiny : s == "Normal" ? size.normal : size.small
+
+f_clearLn(arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            line.delete(array.get(arr, i))
+    array.clear(arr)
+
+f_clearLb(arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            label.delete(array.get(arr, i))
+    array.clear(arr)
+
+f_clearBx(arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            box.delete(array.get(arr, i))
+    array.clear(arr)
+
+// ── state ───────────────────────────────────────────────────────────
+var array<line>  lnRTH  = array.new<line>()
+var array<label> lbRTH  = array.new<label>()
+var array<box>   zbxRTH = array.new<box>()
+var array<label> zlbRTH = array.new<label>()
+var array<line>  lnLDN  = array.new<line>()
+var array<label> lbLDN  = array.new<label>()
+var array<line>  lnASA  = array.new<line>()
+var array<label> lbASA  = array.new<label>()
+var float rthOpen = na
+var float ldnOpen = na
+var float asiOpen = na
+var float rthEV   = na
+var float ldnEV   = na
+var float asiEV   = na
+var bool ldnDrawn = false
+var bool asiDrawn = false
+
+// ── runtime reads ───────────────────────────────────────────────────
+vixPrev = request.security(volSym, "1D", close[1], lookahead = barmerge.lookahead_off)
+int nyHour = hour(time, NY_TZ)
+int nyMin  = minute(time, NY_TZ)
+int nyDow  = dayofweek(time, NY_TZ)
+bool inRTH    = (nyHour == 9 and nyMin >= 30) or (nyHour >= 10 and nyHour < 16)
+bool inLondon = nyHour >= 3 and nyHour < 9
+bool inAsia   = nyHour >= 18 or nyHour < 3
+bool rthStart = inRTH and not inRTH[1]
+bool ldnStart = inLondon and not inLondon[1]
+bool asiStart = inAsia and not inAsia[1]
+
+// tEnd for the NY session (today 16:00 ET)
+f_tEndRTH() => timestamp(NY_TZ, year(time, NY_TZ), month(time, NY_TZ), dayofmonth(time, NY_TZ), 16, 0)
+
+// ── drawing primitives ──────────────────────────────────────────────
+// rung probabilities in TARGET_P order (index-matched to cUp/cDn arrays)
+var array<float> PROBS = array.from(0.80, 0.65, 0.50, 0.35, 0.25, 0.15, 0.10, 0.05)
+
+// one rung: line + probability label; returns the level
+f_rung(S, EV, c, pTxt, side, col, sty, wid, tEnd) =>
+    float lvl = side == "up" ? S + EV * c : S - EV * c
+    array.push(lnRTH, line.new(time, lvl, tEnd, lvl, xloc = xloc.bar_time, color = col, style = sty, width = wid))
+    array.push(lbRTH, label.new(tEnd, lvl, pTxt, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = col, size = size.tiny))
+    lvl
+
+// extension zones behind a rung (TYPICAL/DEEP/STRETCH), one side
+f_zone(S, EV, c, e50, e75, e90, isUp, tEnd) =>
+    float sgn  = isUp ? 1.0 : -1.0
+    float base = S + sgn * EV * c
+    float z1 = base + sgn * EV * e50
+    float z2 = base + sgn * EV * e75
+    float z3 = base + sgn * EV * e90
+    array.push(zbxRTH, box.new(time, math.max(base, z1), tEnd, math.min(base, z1), xloc = xloc.bar_time, bgcolor = color.new(#9e9e9e, 88), border_color = color.new(#9e9e9e, 55)))
+    array.push(zbxRTH, box.new(time, math.max(z1, z2), tEnd, math.min(z1, z2), xloc = xloc.bar_time, bgcolor = color.new(#2196f3, 88), border_color = color.new(#2196f3, 55)))
+    array.push(zbxRTH, box.new(time, math.max(z2, z3), tEnd, math.min(z2, z3), xloc = xloc.bar_time, bgcolor = color.new(#ff9800, 88), border_color = color.new(#ff9800, 55)))
+    if zoneLbls
+        array.push(zlbRTH, label.new(tEnd, (base + z1) / 2, "TYPICAL", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = #9e9e9e, size = size.tiny))
+        array.push(zlbRTH, label.new(tEnd, (z1 + z2) / 2, "DEEP",     xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = #2196f3, size = size.tiny))
+        array.push(zlbRTH, label.new(tEnd, (z2 + z3) / 2, "STRETCH",  xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = #ff9800, size = size.tiny))
+
+// label text: P(touch) · median arrival · cum by 15:00
+f_rungLbl(float p, int med, float cum15) =>
+    str.tostring(p * 100, "#") + "%" + (med >= 0 ? " · med " + f_med2clock(med) : "") + (cum15 >= 0 ? " · " + str.tostring(cum15, "#.#") + "% by 15:00" : "")
+
+// ── NY (RTH) session build ──────────────────────────────────────────
+if rthStart and showRTH
+    f_clearLn(lnRTH)
+    f_clearLb(lbRTH)
+    f_clearBx(zbxRTH)
+    f_clearLb(zlbRTH)
+    rthOpen := open
+    rthEV   := open * vixPrev / math.sqrt(252) / 100.0
+    if not na(rthEV) and rthEV > 0
+        int tEnd = f_tEndRTH()
+        int dIdx = nyDow == dayofweek.monday ? 0 : nyDow == dayofweek.tuesday ? 1 : nyDow == dayofweek.wednesday ? 2 : nyDow == dayofweek.thursday ? 3 : 4
+        float wU = dowAdjust ? array.get(wUpDOW, dIdx) : 1.0
+        float wD = dowAdjust ? array.get(wDnDOW, dIdx) : 1.0
+        // zones behind the 35% rung (j=3), both sides
+        if showZones and showWork
+            float c35u = array.get(cUpRTH, 3) * wU
+            float c35d = array.get(cDnRTH, 3) * wD
+            int zrU = -1
+            int zrD = -1
+            if array.size(revIdx) > 0
+                for ri = 0 to array.size(revIdx) - 1
+                    if array.get(revIdx, ri) == 3 and array.get(revSide, ri) == "up"
+                        zrU := ri
+                    if array.get(revIdx, ri) == 3 and array.get(revSide, ri) == "dn"
+                        zrD := ri
+            if zrU >= 0
+                f_zone(rthOpen, rthEV, c35u, array.get(revExt, zrU * 3), array.get(revExt, zrU * 3 + 1), array.get(revExt, zrU * 3 + 2), true, tEnd)
+            if zrD >= 0
+                f_zone(rthOpen, rthEV, c35d, array.get(revExt, zrD * 3), array.get(revExt, zrD * 3 + 1), array.get(revExt, zrD * 3 + 2), false, tEnd)
+        // rungs
+        for j = 0 to 7
+            bool inner = j <= 2
+            bool work = j == 3 or j == 4
+            bool tail = j >= 5
+            bool want = (inner and showInner) or (work and showWork) or (tail and showTails)
+            if want
+                float p = array.get(PROBS, j)
+                float cu = array.get(cUpRTH, j) * wU
+                float cd_ = array.get(cDnRTH, j) * wD
+                int medU = -1
+                int medD = -1
+                float cumU = -1.0
+                float cumD = -1.0
+                if array.size(arrIdx) > 0
+                    for ai = 0 to array.size(arrIdx) - 1
+                        if array.get(arrIdx, ai) == j and array.get(arrSide, ai) == "up"
+                            medU := array.get(arrMed, ai)
+                            cumU := array.get(arrCum, ai * 5 + 4)
+                        if array.get(arrIdx, ai) == j and array.get(arrSide, ai) == "dn"
+                            medD := array.get(arrMed, ai)
+                            cumD := array.get(arrCum, ai * 5 + 4)
+                color colU = inner ? color.new(#1b7f4b, 55) : work ? #1b7f4b : color.new(#1b7f4b, 30)
+                color colD = inner ? color.new(#b3341f, 55) : work ? #b3341f : color.new(#b3341f, 30)
+                int wid = work ? 2 : 1
+                string sty = inner or tail ? line.style_dotted : line.style_solid
+                f_rung(rthOpen, rthEV, cu, f_rungLbl(p, medU, cumU), "up", colU, sty, wid, tEnd)
+                f_rung(rthOpen, rthEV, cd_, f_rungLbl(p, medD, cumD), "dn", colD, sty, wid, tEnd)
+
+// ── London / Asia anchors ───────────────────────────────────────────
+if ldnStart
+    f_clearLn(lnLDN)
+    f_clearLb(lbLDN)
+    ldnDrawn := false
+    ldnOpen := open
+    ldnEV   := open * vixPrev / math.sqrt(252) / 100.0
+if asiStart
+    f_clearLn(lnASA)
+    f_clearLb(lbASA)
+    asiDrawn := false
+    asiOpen := open
+    asiEV   := open * vixPrev / math.sqrt(252) / 100.0
+
+// draw London 35/25 rungs ONCE per session (at the anchor bar)
+if showLondon and ldnStart and not na(ldnEV) and ldnEV > 0
+    int tEndL = timestamp(NY_TZ, year(time, NY_TZ), month(time, NY_TZ), dayofmonth(time, NY_TZ), 9, 30)
+    for j = 3 to 4
+        float p = array.get(PROBS, j)
+        float lvlU = ldnOpen + ldnEV * array.get(cUpLDN, j)
+        float lvlD = ldnOpen - ldnEV * array.get(cDnLDN, j)
+        array.push(lnLDN, line.new(time, lvlU, tEndL, lvlU, xloc = xloc.bar_time, color = color.new(#5d8aa8, 30), style = line.style_dashed))
+        array.push(lbLDN, label.new(tEndL, lvlU, "LDN " + str.tostring(p * 100, "#") + "%", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = #5d8aa8, size = size.tiny))
+        array.push(lnLDN, line.new(time, lvlD, tEndL, lvlD, xloc = xloc.bar_time, color = color.new(#5d8aa8, 30), style = line.style_dashed))
+        array.push(lbLDN, label.new(tEndL, lvlD, "LDN " + str.tostring(p * 100, "#") + "%", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = #5d8aa8, size = size.tiny))
+    ldnDrawn := true
+
+// draw Asia 35/25 rungs ONCE per session (NOMINAL — distance indicative).
+// Asia opens 18:00 ET and runs to 03:00 the NEXT calendar day; building
+// the end timestamp from (anchor date + 1 day) handles month rollovers.
+if showAsia and asiStart and not na(asiEV) and asiEV > 0
+    int tEndA = timestamp(NY_TZ, year(time, NY_TZ), month(time, NY_TZ), dayofmonth(time, NY_TZ), 18, 0) + 9 * 3600000
+    for j = 3 to 4
+        float p = array.get(PROBS, j)
+        float lvlU = asiOpen + asiEV * array.get(cUpASA, j)
+        float lvlD = asiOpen - asiEV * array.get(cDnASA, j)
+        array.push(lnASA, line.new(time, lvlU, tEndA, lvlU, xloc = xloc.bar_time, color = color.new(#cddc39, 45), style = line.style_dotted))
+        array.push(lbASA, label.new(tEndA, lvlU, "ASIA* " + str.tostring(p * 100, "#") + "%", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = #cddc39, size = size.tiny))
+        array.push(lnASA, line.new(time, lvlD, tEndA, lvlD, xloc = xloc.bar_time, color = color.new(#cddc39, 45), style = line.style_dotted))
+        array.push(lbASA, label.new(tEndA, lvlD, "ASIA* " + str.tostring(p * 100, "#") + "%", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = #cddc39, size = size.tiny))
+    asiDrawn := true
+
+// ── dashboard ────────────────────────────────────────────────────────
+var table tbl = na
+if showTable and barstate.islast
+    if not na(tbl)
+        table.delete(tbl)
+    tbl := table.new(f_pos(tblPos), 7, 20, bgcolor = color.new(color.black, 30), border_color = color.new(color.gray, 70), frame_color = color.new(color.gray, 50), frame_width = 1)
+    int row = 0
+    table.cell(tbl, 0, row, "EV STACK · " + syminfo.ticker + " · " + str.format_time(time, "EEE HH:mm", NY_TZ), text_color = color.white, text_size = f_tsz(tblSizeIn))
+    table.merge_cells(tbl, 0, row, 6, row)
+    row += 1
+    string evS = na(rthEV) or rthEV <= 0 ? "—" : str.tostring(rthEV, format.mintick)
+    table.cell(tbl, 0, row, "VIX " + (na(vixPrev) ? "—" : str.tostring(vixPrev, "#.##")) + " → EV " + evS + " pts" + (dowAdjust ? " · dow-adj" : ""), text_color = color.silver, text_size = f_tsz(tblSizeIn))
+    table.merge_cells(tbl, 0, row, 6, row)
+    row += 1
+    string[] hdr = array.from("rung", "med arr", "by 11", "by 13:30", "by 15", "die@", "back@")
+    for c = 0 to 6
+        table.cell(tbl, c, row, array.get(hdr, c), text_color = color.gray, text_size = f_tsz(tblSizeIn))
+    row += 1
+    if array.size(arrIdx) > 0
+        for ai = 0 to array.size(arrIdx) - 1
+            int j = array.get(arrIdx, ai)
+            float p = array.get(PROBS, j)
+            string side = array.get(arrSide, ai)
+            string medS = f_med2clock(array.get(arrMed, ai))
+            string c11 = str.tostring(array.get(arrCum, ai * 5 + 1), "#.#") + "%"
+            string c1330 = str.tostring(array.get(arrCum, ai * 5 + 3), "#.#") + "%"
+            string c15 = str.tostring(array.get(arrCum, ai * 5 + 4), "#.#") + "%"
+            string dieS = "—"
+            string backS = "—"
+            if array.size(revIdx) > 0
+                for ri = 0 to array.size(revIdx) - 1
+                    if array.get(revIdx, ri) == j and array.get(revSide, ri) == side
+                        dieS := str.tostring(array.get(revRate, ri * 2), "#") + "%"
+                        backS := str.tostring(array.get(revRate, ri * 2 + 1), "#") + "%"
+            color tc = side == "up" ? #26a69a : #ef5350
+            table.cell(tbl, 0, row, str.tostring(p * 100, "#") + "% " + (side == "up" ? "▲" : "▼"), text_color = tc, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 1, row, medS,  text_color = color.white, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 2, row, c11,   text_color = color.white, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 3, row, c1330, text_color = color.white, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 4, row, c15,   text_color = color.white, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 5, row, dieS, text_color = color.white, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 6, row, backS, text_color = color.white, text_size = f_tsz(tblSizeIn))
+            row += 1
+    table.cell(tbl, 0, row, "NY CAL · LONDON CAL · ASIA NOMINAL", text_color = color.silver, text_size = f_tsz(tblSizeIn))
+    table.merge_cells(tbl, 0, row, 6, row)
+    row += 1
+    table.cell(tbl, 0, row, "historical probabilities · not a signal", text_color = color.gray, text_size = f_tsz(tblSizeIn))
+    table.merge_cells(tbl, 0, row, 6, row)

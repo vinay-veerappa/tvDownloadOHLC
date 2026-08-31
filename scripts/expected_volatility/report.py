@@ -33,6 +33,17 @@ from .features import (
     SESSIONS, TARGET_P, TRADING_DAY_MINUTES, VOL_FOR_TICKER, build_sessions,
     folds, frame_for, percentile_ladder,
 )
+from .arrival import PRIORITY as ARR_P
+
+
+def _et_clock(min_from_open) -> str:
+    """Elapsed minutes from the 09:30 RTH open -> ET wall clock.
+
+    Rounds, matching `arrival._clock`, so the report and the module's own
+    console output can never disagree by a truncation minute.
+    """
+    m = int(round(9 * 60 + 30 + float(min_from_open)))
+    return f"{m // 60:02d}:{m % 60:02d}"
 
 B_OVER_A = math.sqrt(252.0 / 365.0)  # the Pine 252/365 toggle, exactly
 
@@ -170,6 +181,10 @@ def collect(ticker: str = "ES1") -> dict:
                 "n_hits": int((te[side] >= c).sum()), "n": len(te),
             })
     cal_err = float(np.mean([abs(r["holdout_p"] - r["target_p"]) for r in rungs]))
+    # The RTH drift, for the §2.3 comparison: same holdout, same anchor, so the
+    # ON drift can be shown to be window-specific rather than method-wide.
+    rth_pos = int(sum(1 for r in rungs if r["holdout_p"] > r["target_p"]))
+    rth_mx_ratio = float(te["mx"].mean() / tr["mx"].mean())
     cal_err_c = float(np.mean([
         abs(float((tec[s] >= float(ladc[col][i])).mean()) - p)
         for i, p in enumerate(TARGET_P) for s, col in (("up", "c_up"), ("dn", "c_dn"))
@@ -206,12 +221,14 @@ def collect(ticker: str = "ES1") -> dict:
         "first_day": str(f.index.min().date()), "last_day": str(f.index.max().date()),
         "ladder": lad.to_dict("records"), "ladder_close": ladc.to_dict("records"),
         "rungs": rungs, "cal_err": cal_err, "cal_err_close": cal_err_c,
+        "rth_pos": rth_pos, "rth_mx_ratio": rth_mx_ratio,
         "mean_mx": float(tr["mx"].mean()), "mean_mx_close": float(trc["mx"].mean()),
         "gap": gap, "repl": repl,
         "har_beta": [float(b) for b in ses.har_beta],
         "blend_beta": [float(b) for b in ses.blend_beta],
         "brk_rth": jload(f"bracket_{ticker}_RTH.json"),
         "brk_on": jload(f"bracket_{ticker}_ON.json"),
+        "overnight": jload(f"overnight_{ticker}.json"),
         "tim_rth": jload(f"timing_{ticker}_RTH.json"),
         "tim_on": jload(f"timing_{ticker}_ON.json"),
         "sea_rth": jload(f"seasonality_{ticker}_RTH.json"),
@@ -222,6 +239,10 @@ def collect(ticker: str = "ES1") -> dict:
         "cond": jload(f"conditioning_{ticker}_{ANCHOR}.json"),
         "play_close": jload(f"playbook_{ticker}.json"),
         "play_open": jload(f"playbook_{ticker}_rth_open.json"),
+        "chop": jload(f"chop_regime_{ticker}.json"),
+        "arr": jload(f"arrival_{ticker}_RTH.json"),
+        "rev": jload(f"reversal_{ticker}_RTH.json"),
+        "stack": jload(f"sessions_stack_{ticker}.json"),
         "long": collect_long(ticker),
     }
 
@@ -487,7 +508,137 @@ def build_markdown(d: dict) -> str:
       "sampling noise alone on 197 sessions is about 3.5 pp at a 50% rung, so "
       "**the ladder is calibrated to within its own measurement error.**")
     A("")
-    A("### 2.3 Was it one lucky stretch?")
+    on = d["overnight"]
+    if on:
+        signed = [r["err"] for r in on["rungs"]]
+        high = sum(err > 0 for err in signed)
+        sign_p = 2 * sum(math.comb(16, k) for k in range(max(high, 16 - high), 17)) / 2 ** 16
+        A("### 2.3 Overnight ladder: not calibrated yet")
+        A("")
+        A(f"The separately fitted overnight ladder was evaluated on the same "
+          f"{on['n_holdout']}-session holdout. Its mean absolute error is "
+          f"{on['cal_err']:.2%} — about twice the RTH ladder's — and the "
+          f"per-rung errors lean the same way: **{high}/16 positive**, i.e. "
+          f"the rungs were touched *more* often than promised.")
+        A("")
+        A(f"**It is not 16 independent mistakes, and it is not \"the same "
+          f"every day\".** The 16 rungs are 16 readoffs of **one** excursion "
+          f"distribution, so same-sign errors are one drift seen 16 times — "
+          f"the two-sided sign test `p = {sign_p:.2g}` treats them as "
+          f"independent and overstates the evidence. Individual days still "
+          f"scatter both ways; the statement is about the pooled holdout.")
+        A("")
+        A(f"**What the drift is.** The holdout window simply moved more than "
+          f"the train window did: mean `max(up,dn)/EV` went from "
+          f"{on.get('mx_train', on['mean_mx']):.3f} in train to "
+          f"{on.get('mx_holdout', 0):.3f} in holdout — a "
+          f"{(on.get('mx_ratio', 1) - 1) * 100:+.0f}% scale shift the "
+          f"train-fitted rungs cannot know about. For scale, the RTH ladder "
+          f"on the identical holdout drifts "
+          f"{(d['rth_mx_ratio'] - 1) * 100:+.0f}% with "
+          f"{d['rth_pos']}/16 rungs positive — essentially none — so this "
+          f"is a property of the overnight window in this stretch, not of "
+          f"the VIX-implied scale itself.")
+        A("")
+        if on.get("holdout_by_dow"):
+            A("It is not uniform across the week, either:")
+            A("")
+            A("| weekday (holdout) | n | mean signed error | rungs positive |")
+            A("|---|---|---|---|")
+            for b in on["holdout_by_dow"]:
+                A(f"| {b['day']} | {b['n']} | {b['mean_signed_err']:+.1%} | "
+                  f"{b['pos']}/{b['n_rungs']} |")
+            A("")
+            A("Mon and Thu/Fri carry the drift; Tue/Wed are flat. Note this "
+              "*contrasts* with §4.9's Monday RTH finding, which has the "
+              "opposite sign — Monday's day-session realises LESS than the "
+              "pooled fit expects (rungs too wide), while Monday's overnight "
+              "in this holdout ran HOT (rungs too narrow). Different "
+              "sessions, different directions: Monday behaves as one thing "
+              "in the day and another at night.")
+        A("")
+        mt = on.get("dow_multiplier_test")
+        if mt:
+            A(f"**The fix that does not work.** The obvious move — apply "
+              f"§4.9's weekday multipliers, which already ship for ON — was "
+              f"measured rather than assumed. They were fit on the same train "
+              f"fold as this ladder, so they cannot know about a post-train "
+              f"drift by construction; applied to this holdout, pooled signed "
+              f"error goes {mt['pooled_raw']:+.1%} -> "
+              f"{mt['pooled_dow_adj']:+.1%} (survives) and Monday "
+              f"{mt['mon_raw']:+.1%} -> {mt['mon_adj']:+.1%} (widens). "
+              f"**Weekday conditioning is the wrong tool for a drift** — the "
+              f"levels are drawn at the wrong scale, not the wrong day.")
+            A("")
+        A("**The fix that does.** A drift means the calibration is *stale*, "
+          "not mis-specified: refit the rungs on an expanding window and "
+          "revalidate — exactly the standing maintenance §7.1 prescribes. "
+          "The refit moves with the regime; conditioning on more catalysts "
+          "cannot.")
+        A("")
+        A("Do not treat the overnight Pine ladder as probability-calibrated "
+          "until it is refit on current data and revalidated.")
+        A("")
+
+    # ------------------------------------------------------------ 2.3b
+    sk = d.get("stack")
+    if sk:
+        lon = sk["sessions"].get("LONDON", {}).get("pooled", {})
+        asi = sk["sessions"].get("ASIA", {}).get("pooled", {})
+        asi_r = sk["sessions"].get("ASIA", {}).get("rolling", {})
+        A("### 2.3b The session stack: splitting the overnight answers it")
+        A("")
+        A(f"§2.3's overnight drift is not a property of \"the overnight\" as "
+          f"a whole — the ON window is two regimes glued together, and they "
+          f"calibrate differently. `sessions_stack.py` fits and validates "
+          f"each half separately, same fold split, same verdict rules "
+          f"(predeclared):")
+        A("")
+        A("| session | window | fit | holdout MAE | errors positive | "
+          "drift | verdict |")
+        A("|---|---|---|---|---|---|---|")
+        if lon.get("status") == "ok":
+            A(f"| **London** | 03:00-09:30 | full train "
+              f"({lon['n_train']}) | **{lon['cal_mae']:.2%}** | "
+              f"{lon['pos']}/{lon['n_rungs']} | "
+              f"{lon['mx_ratio']:.3f}x | **CALIBRATED** |")
+        if asi.get("status") == "ok":
+            A(f"| Asia | 18:00-03:00 | full train ({asi['n_train']}) | "
+              f"{asi['cal_mae']:.2%} | {asi['pos']}/{asi['n_rungs']} | "
+              f"{asi['mx_ratio']:.3f}x | NOMINAL |")
+        if asi_r.get("status") == "ok":
+            A(f"| Asia | 18:00-03:00 | rolling from {asi_r['fit_from']} "
+              f"({asi_r['n_train']}) | {asi_r['cal_mae']:.2%} | "
+              f"{asi_r['pos']}/{asi_r['n_rungs']} | "
+              f"{asi_r['mx_ratio']:.3f}x | NOMINAL |")
+        A("| *RTH (reference)* | 09:30-15:59 | full train (887) | *1.45%* | "
+          "*7/16* | *0.988x* | *CALIBRATED* |")
+        A("| *ON pooled (reference)* | 18:00-09:30 | full train (887) | "
+          "*3.52%* | *16/16* | *1.060x* | *REFIT* |")
+        A("")
+        A(f"**London calibrates at RTH grade** — holdout MAE "
+          f"{lon['cal_mae']:.2%} against RTH's 1.45%, errors scattered both "
+          f"ways, essentially no drift. **Asia does not**: one-sided at "
+          f"every fit window tried, including a §7.1-style rolling refit "
+          f"({asi_r['cal_mae']:.2%} MAE but still "
+          f"{asi_r['pos']}/{asi_r['n_rungs']} one-sided). The §2.3 drift "
+          f"therefore decomposes as: the *London half* of the overnight "
+          f"carries VIX's calibration; the *Asia half* does not. This is "
+          f"the expected structure — VIX prices US cash-session variance, "
+          f"and the Asia session trades regional information VIX does not "
+          f"see.")
+        A("")
+        A("**Shipping consequence.** The Pine session stack renders three "
+          "verdicts and never lets a session pretend to a calibration it "
+          "does not have: **NY (RTH) `CALIBRATED`, London `CALIBRATED`, "
+          "Asia `NOMINAL`** — a distance map whose touch probabilities "
+          "must be read as indicative, with constants regenerated on the "
+          "rolling refit each §7.1 cycle. The pooled ON ladder of §2.3 "
+          "should be retired in favour of the split: it averages a "
+          "calibrated session with an uncalibrated one and inherits both "
+          "problems.")
+        A("")
+    A("### 2.4 Was it one lucky stretch?")
     A("")
     A("A single holdout average can hide a ladder that was badly wrong for two "
       "months and badly wrong the other way for two more. Rolling the touch "
@@ -496,7 +647,7 @@ def build_markdown(d: dict) -> str:
     fig("Rolling 60-session realised touch rate against the promised level.",
         "fig_recent_calibration.png")
     A("")
-    A("### 2.4 The last nine sessions, drawn")
+    A("### 2.5 The last nine sessions, drawn")
     A("")
     A("These are holdout days. The rungs were placed without seeing them.")
     A("")
@@ -514,7 +665,7 @@ def build_markdown(d: dict) -> str:
       "to be reached about one day in twenty, and days like this are what that "
       "means. A ladder that was never fully run through would be too wide.")
     A("")
-    A("### 2.5 It replicates across instruments")
+    A("### 2.6 It replicates across instruments")
     A("")
     A("| instrument | vol index | n sessions | realised / implied | "
       "P(close within 1 EV) | dn/up skew |")
@@ -531,7 +682,7 @@ def build_markdown(d: dict) -> str:
       "session conventions to a contract that settles at 14:30 ET. Any number "
       "it produced would be a convention artifact.")
     A("")
-    A("### 2.6 What would falsify this")
+    A("### 2.7 What would falsify this")
     A("")
     A("- Realised touch rates drifting away from the diagonal on new data — "
       "the direct test, and the one the rolling chart is for.")
@@ -612,11 +763,14 @@ def build_markdown(d: dict) -> str:
           "both are touched. So the race was measured directly "
           "(`bracket.py`), over all 64 target/stop rung pairs, each side.")
         A("")
-        A("| session | geometry edge | drift | unresolved |")
+        A("| session | geometry edge | drift | unresolved (widest) |")
         A("|---|---|---|---|")
         for k, x in (("RTH", br), ("Overnight", bn)):
+            wide = max(1 - r["resolved"] for r in br["grids"]["long"])
+            wide_on = max(1 - r["resolved"] for r in bn["grids"]["long"])
             A(f"| {k} | **{x['geometry_edge_pp']:+.2f} pp** | "
-              f"{x['drift_pp']:+.2f} pp | — |")
+              f"{x['drift_pp']:+.2f} pp | "
+              f"{wide_on if k == 'Overnight' else wide:.1%} |")
         A("")
         A("*Geometry edge* is `P(target first | the race was decided)` minus "
           "the breakeven `b/(a+b)`, averaged over the mirrored long/short pair "
@@ -665,6 +819,13 @@ def build_markdown(d: dict) -> str:
           "much session remains to travel through it. This is the one "
           "conditional statement in the report that is both large and clean.")
         A("")
+        A("The overnight column carries §2.3's caveat with it: the ON rungs "
+          "it converts between are drifted (too narrow by ~6% in the "
+          "holdout), so both the touches and the conversions in that column "
+          "run slightly hot relative to what a refit ON ladder would show. "
+          "Read the RTH column as the calibrated one; the ON column as "
+          "directionally right, pending the ON refit.")
+        A("")
         A("The obvious companion measure — the move from the rung to the "
           "session close — is tabulated by `timing.py` but is **not** reported "
           "as an edge, for two reasons found by running it. Rungs are "
@@ -674,6 +835,39 @@ def build_markdown(d: dict) -> str:
           "late touches, because a rung first reached at 15:50 leaves no time "
           "to come back — the measure is weakest exactly where it looks "
           "strongest.")
+        A("")
+
+    # ------------------------------------------------------------ 3.6
+    ch = d.get("chop")
+    if ch:
+        A("### 3.6 VIX and VVIX cannot call chop before the open")
+        A("")
+        A(f"Chop was predeclared as a completed-session property: directional "
+          f"efficiency `|close-open|/(high-low) <= 0.25` **and** an RTH range "
+          f"<= 1 EV, prevalence {ch['models']['vix']['holdout_prevalence']:.0%} "
+          f"on the holdout. Three logistic models saw only pre-09:30 inputs "
+          f"and were scored out of sample:")
+        A("")
+        A("| model | inputs | n train / holdout | holdout AUC | Brier |")
+        A("|---|---|---|---|---|")
+        desc = {"vix": "VIX close, VIX percentile, abs gap",
+                "vix_vvix": "+ VVIX/VIX ratio",
+                "full_pack": "VIX pctl, VVIX/VIX, term slope, VX basis, VRP, gap"}
+        for k, m in ch["models"].items():
+            if m.get("status") != "ok":
+                continue
+            A(f"| `{k}` | {desc.get(k, '')} | {m['n_train']} / {m['n_holdout']} "
+              f"| **{m['holdout_auc']:.3f}** | {m['holdout_brier']:.3f} |")
+        A("")
+        A("An AUC of 0.5 is a coin; the full pack lands *below* it, on a "
+          "71-session holdout where VX-futures availability thins the sample. "
+          "The strongest single coefficient (`term_30d_90d`) does not survive "
+          "as ranking skill — the predicted-risk quintiles are flat against "
+          "realised chop. **There is no pre-open `CHOP LIKELY` badge to ship: "
+          "the pre-open VIX state does not separate chop days from trend days "
+          "at any usable accuracy.** Chop is knowable in hindsight, or as an "
+          "intraday state — §5.4's arrival curves are the honest version of "
+          "that question.")
         A("")
 
     # ------------------------------------------------------------ 4
@@ -1006,6 +1200,188 @@ def build_markdown(d: dict) -> str:
       "15 bps stop sits inside the noise and gets hit first on 40-68% of trades.")
     A("")
 
+    # ------------------------------------------------------------ 5.4
+    ar = d.get("arr")
+    if ar:
+        A("### 5.4 When is a level typically reached?")
+        A("")
+        A(f"§2 gives each rung a P(touch) by the close. A trader standing at "
+          f"11:00 with a rung untouched is asking a different question, and "
+          f"`arrival.py` measures it on the same 1-minute paths as a "
+          f"**5-minute first-touch histogram**: the share of hit sessions "
+          f"whose first touch lands in each 5-minute bucket, plus its median "
+          f"and modal bucket. Full sessions only — {ar['n_half_excluded']} "
+          f"half-days are excluded because a 13:00 close can only depress "
+          f"late-session arrival. Rungs are train-fitted. **These are "
+          f"historical frequencies — a description of past sessions, not a "
+          f"forecast of today's.**")
+        A("")
+        fig("5-minute first-touch histogram per rung and side, train fold. "
+            "Solid tick = modal bucket, dashed = median.",
+            "fig_arrival.png")
+        A("")
+        A("| rung | side | hits | median | mode | first 15% | middle 70% | "
+          "final 15% |")
+        A("|---|---|---|---|---|---|---|---|")
+        names = {"up": "above open", "dn": "below open"}
+        for g in ar["rungs"]:
+            if g["target_p"] not in ARR_P:
+                continue
+            f = g["train"]
+            if f["hits"] < 30:
+                continue
+            med = (_et_clock(f["hit_med_min"])
+                   if f["hit_med_min"] is not None else "—")
+            mode = (f"{f['mode_from']}-{f['mode_to']}"
+                    if f.get("mode_from") else "—")
+            A(f"| {g['target_p']:.0%} | {names[g['side']]} | {f['hits']} | "
+              f"{med} | {mode} | {f['share_first15']:.0%} | "
+              f"{f['share_mid']:.0%} | {f['share_last15']:.0%} |")
+        A("")
+        A("Read this as a histogram, not a schedule. The shape — not any "
+          "single number — is the finding, and it is **bimodal in a specific "
+          "way**:")
+        A("")
+        A("- **Downside rungs lean first-hour.** The 35%/25%/15%/10% "
+          "below-open rungs all have their modal bucket between 09:55 and "
+          "10:40 — the open-drive lower. By noon an untouched below-open "
+          "rung is past its most likely window, though the left@ series in "
+          "the artifact (8-16% for 35%/25% at 13:30) says it is not dead. "
+          "The 5% below-open rung is the exception — at n=43 its mode sits "
+          "at the close, where the rare deep-down day prints late.")
+        A("- **Upside tail rungs are a close phenomenon.** The 15%/10%/5% "
+          "above-open rungs have modal buckets at 15:10-15:55, with 26-32% "
+          "of their touches in the final 15% of the day — trend days that "
+          "keep grinding finish at the highs. (The deepest tail rung of all, "
+          "5% below open, matches them at 33%, the single largest final "
+          "share — extreme days in either direction print late or not at "
+          "all.)")
+        A("- **The inner rungs are broad.** The 35%/25% rungs spread across "
+          "the whole day; their medians (11:19-12:59) sit hours from their "
+          "modes because the distribution has no single peak.")
+        A("")
+        A("**Why no overnight arrival curves.** §2.3 shows the ON ladder is "
+          "drifted — rungs too close by ~6% — and levels that sit too close "
+          "are reached too early, so an ON arrival histogram computed on "
+          "them would bake that width error into its timing. The RTH arrival "
+          "study is reproducible because the RTH ladder passes its holdout; "
+          "the ON equivalent is deferred until the ON refit §2.3 prescribes "
+          "has been done and revalidated.")
+        A("")
+        A("**Day of week.** §4.9 found Monday's RTH ladder runs ~17% narrow, "
+          "so arrival was split by weekday too (train fold; cells with fewer "
+          "than 30 hits suppressed — tail rungs go blank on most days, which "
+          "is the honest state):")
+        A("")
+        fig("Median first touch by weekday, 35%/25% rungs, cells with >=30 "
+            "hits.", "fig_arrival_dow.png")
+        A("")
+        A("| rung | side | Mon | Tue | Wed | Thu | Fri |")
+        A("|---|---|---|---|---|---|---|")
+        DOWS = ("Mon", "Tue", "Wed", "Thu", "Fri")
+        for g in ar["rungs"]:
+            if g["target_p"] not in ARR_P:
+                continue
+            f = g["train"]
+            if f["hits"] < 30:
+                continue
+            cells = []
+            for dname in DOWS:
+                dd = next(x for x in ar["by_dow"] if x["day"] == dname)
+                gg = next(x for x in dd["rungs"]
+                          if x["target_p"] == g["target_p"]
+                          and x["side"] == g["side"])
+                ff = gg["train"]
+                if ff["hits"] >= 30 and ff["hit_med_min"] is not None:
+                    cells.append(_et_clock(ff["hit_med_min"]))
+                else:
+                    cells.append("—")
+            A(f"| {g['target_p']:.0%} | {names[g['side']]} | "
+              + " | ".join(cells) + " |")
+        A("")
+        A("Wednesday is the late day at every rung with enough hits — medians "
+          "12:31-13:59 against Friday's 10:52-12:37 at the 35%/25% rungs — "
+          "and at those same well-populated rungs the down-side arrives "
+          "earliest on Tue/Thu/Fri and latest on Mon/Wed. The Monday "
+          "exception echoes §4.9: the pooled ladder is drawn where Monday's "
+          "excursion rarely reaches, so what does print prints late.")
+        A("")
+        st = ar["stability"]
+        A(f"**Stability.** The milestone cumulatives replicate: "
+          f"**{st['pass']}/{st['cells']}** cells within the predeclared "
+          f"±{ar['tolerance_pp']:.0f} pp, every failing cell an inner rung "
+          f"(80/65/50%) at an early milestone with the holdout arriving "
+          f"*earlier* — the same direction as the §2.2 calibration drift, and "
+          f"**no priority rung (35%-5%) failed at any milestone**. The modal "
+          f"5-minute bucket is noisier, as a narrow bin on 25-70 holdout hits "
+          f"must be: {st['mode_exact']}/{st['n_mode_cells']} exact, "
+          f"{st['mode_within_10min']} within one adjacent bucket. **Read the "
+          f"modes as a window, not a time.**")
+        A("")
+        A("Rungs are nested, so no statistic here is pooled across rungs — "
+          "each cell stays one observation per session.")
+        A("")
+
+    # ------------------------------------------------------------ 5.5
+    rv = d.get("rev")
+    if rv:
+        A("### 5.5 Where does a move die? Zones, reversal, terminal cluster")
+        A("")
+        A(f"§5.4 answers when a level is *reached*. The trader watching an "
+          f"extended move asks where it *ends*. `reversal.py` measures three "
+          f"end-of-move distributions on the same 1-minute paths, per rung and "
+          f"side, full sessions only ({rv['n_half_excluded']} half-days "
+          f"excluded). Zones are percentiles of the excursion **among "
+          f"sessions that touched the rung** — a zone boundary means "
+          f"*among historical touches, the move ran this far past the level "
+          f"this share of the time*. Historical frequencies, not forecasts.")
+        A("")
+        A("| rung | side | hits | die in zone | back to anchor | ext p50 | "
+          "ext p75 | ext p90 |")
+        A("|---|---|---|---|---|---|---|---|")
+        for c in rv["cells"]:
+            if c["fold"] != "holdout" or c["n_hits"] < 30:
+                continue
+            med = f"{c['back_med_min']}m" if c["back_med_min"] is not None else "—"
+            A(f"| {c['rung']:.0%} | {names[c['side']]} | {c['n_hits']} | "
+              f"{c['die_pct']:.0%} | {c['back_pct']:.0%} | "
+              f"{c['ext_p50']:.2f} | {c['ext_p75']:.2f} | {c['ext_p90']:.2f} |")
+        A("")
+        A("Read the columns separately, because they answer different "
+          "questions:")
+        A("")
+        A(f"- **die in zone** is the probability the excursion *terminates* "
+          f"between this rung and the next one out — a session that touched "
+          f"the 25% rung but never the 15%. This is the ladder's own "
+          f"*extension-zone* structure: moves die at rungs at a measurable "
+          f"rate that rises with depth (train 29% at the 35% rung, 39-40% at "
+          f"the 25%, 49% at the 10%).")
+        A(f"- **back to anchor** is the probability the move retraced to the "
+          f"09:30 open *before the close*, measured among touches. It is "
+          f"context for where moves end, **not an edge**: §3.1 measured that "
+          f"fading the touch loses at every rung.")
+        A(f"- **ext p50/p75/p90** are how far past the level the excursion "
+          f"ran, among touches — the TYPICAL / DEEP / STRETCHED banding a "
+          f"zone ladder renders. The down side extends further than the up "
+          f"at every percentile, mirroring §4.7's tail skew.")
+        A("")
+        t_tr = rv["terminal"]["train"]
+        t_te = rv["terminal"]["holdout"]
+        if t_tr and t_te:
+            A(f"**The terminal cluster.** Across all sessions (not just "
+              f"touches), the day's furthest excursion lands most often in "
+              f"the {t_tr['lo']:.2f}-{t_tr['hi']:.2f} EV band "
+              f"({t_tr['n']} of {t_tr['n_sessions']} train sessions) — "
+              f"between the 50% and 35% rungs. The holdout mode sits higher "
+              f"at {t_te['lo']:.2f}-{t_te['hi']:.2f} EV "
+              f"({t_te['n']} of {t_te['n_sessions']}), consistent with the "
+              f"§2.2 hot inner rungs: when the day runs wider than the fit "
+              f"expects, the terminal zone moves out with it. **The most "
+              f"likely place for a move to die is the 35-50% rung band, "
+              f"and a trader's 'has this extended?' judgment reads against "
+              f"exactly that.**")
+        A("")
+
     # ------------------------------------------------------------ 6
     A("---")
     A("## 6. Limits")
@@ -1036,9 +1412,50 @@ def build_markdown(d: dict) -> str:
               "compare_variants --ticker ES1",
               "build_playbook --ticker ES1",
               "build_playbook --ticker ES1 --anchor rth_open",
+              "arrival --ticker ES1",
+              "reversal --ticker ES1",
+              "sessions_stack --ticker ES1",
               "charts", "report"):
         A(f".\\.venv\\Scripts\\python.exe -m scripts.expected_volatility.{c}")
     A("```")
+    A("")
+    A("### 7.1 Standing maintenance — when anything needs to change")
+    A("")
+    A("The ladder is designed so that **nothing is redone unless something "
+      "entirely new is introduced**. Two different situations have two "
+      "different procedures; confusing them is how a wrong fix gets shipped "
+      "(§2.3's multipliers are the worked example):")
+    A("")
+    A("| situation | what it is | procedure | frequency |")
+    A("|---|---|---|---|")
+    A("| **New data arrives** (normal operation) | the holdout grows | "
+      "re-run the pipeline in order (`paths` -> studies -> `report`); the "
+      "gate blocks the report if any artifact is stale | every data refresh |")
+    A("| **Calibration drift** (§2.3 ON: holdout runs hot at one sign) | "
+      "the regime moved after the fit | **expanding-window refit** — fold "
+      "the holdout into the training window, re-derive rungs and "
+      "multipliers, revalidate on the newest data; never a constant "
+      "multiplier | when the §2.2/§2.3 tables breach their own SE |")
+    A("| **Weekday / catalyst conditioning** | a *persistent, in-sample "
+      "measurable* effect (§4.9: Kruskal-Wallis, Bonferroni-surviving) | "
+      "per-day per-side multipliers fit on train only, shrunk 0.5 to 1.0, "
+      "shipped only if the holdout improves | once; then re-estimated at "
+      "each refit |")
+    A("| **An entirely new input** (VVIX chop badge, confluence, a new "
+      "session type) | new information | the full study -> holdout -> gate "
+      "cycle; §3.6 (chop) is the template for a candidate that FAILED it | "
+      "per candidate |")
+    A("")
+    A("The decision rule, in one line: **a drift means the fit is stale -> "
+      "refit; a stable in-sample structure means the fit is incomplete -> "
+      "condition; a new data source means nothing is known -> full study.**")
+    A("")
+    A("What does NOT trigger a change: new days alone (the gate handles "
+      "staleness), a single weekday's miss (§4.9 multipliers already carry "
+      "the measured weekday structure, and §2.3 shows piling on more "
+      "conditioning does not fix a drift), or a re-run of the same study "
+      "with no new inputs — the numbers are computed at render time, so "
+      "regenerating the report is always safe.")
     A("")
     A("| module | role |")
     A("|---|---|")
@@ -1047,6 +1464,14 @@ def build_markdown(d: dict) -> str:
     A("| `compare_variants.py` | anchor x vol-input horse race, HAR-RV, blend |")
     A("| `build_playbook.py` | trade-level statistics, both anchors |")
     A("| `measure_baselines.py` | the long-window studies: variance share by session, the 252-vs-365 fit, block stability, the scale-free reaction metric |")
+    A("| `arrival.py` | when is a rung typically reached — arrival curves, holdout stability (§5.4) |")
+    A("| `reversal.py` | where does a move die — extension zones, back-to-anchor, terminal cluster (§5.5) |")
+    A("| `sessions_stack.py` | Asia/London split of the overnight; the shipping verdicts (§2.3b) |")
+    A("| `chop_regime.py` | can VIX/VVIX call chop before the open? No (§3.6) |")
+    A("| `bracket.py` | the first-passage race: does bracket geometry beat breakeven? (§3.4) |")
+    A("| `timing.py` | does WHEN a touch happened matter? runner conversion (§3.5) |")
+    A("| `seasonality.py` | weekday dependence and the per-day multipliers (§4.9) |")
+    A("| `overnight.py` | the ON ladder fit/validation and the §2.3 drift diagnosis |")
     A("| `charts.py` | every figure in this document |")
     A("| `report.py` | this document, plus the staleness gate |")
     A("")

@@ -79,13 +79,55 @@ A rung labelled 50% says: *price will reach here on half of sessions*. That is n
 
 Mean absolute error across all 16 rungs: **1.45%** on the open anchor, 2.46% on the prior close. For scale, sampling noise alone on 197 sessions is about 3.5 pp at a 50% rung, so **the ladder is calibrated to within its own measurement error.**
 
-### 2.3 Was it one lucky stretch?
+### 2.3 Overnight ladder: not calibrated yet
+
+The separately fitted overnight ladder was evaluated on the same 197-session holdout. Its mean absolute error is 3.52% — about twice the RTH ladder's — and the per-rung errors lean the same way: **16/16 positive**, i.e. the rungs were touched *more* often than promised.
+
+**It is not 16 independent mistakes, and it is not "the same every day".** The 16 rungs are 16 readoffs of **one** excursion distribution, so same-sign errors are one drift seen 16 times — the two-sided sign test `p = 3.1e-05` treats them as independent and overstates the evidence. Individual days still scatter both ways; the statement is about the pooled holdout.
+
+**What the drift is.** The holdout window simply moved more than the train window did: mean `max(up,dn)/EV` went from 0.481 in train to 0.509 in holdout — a +6% scale shift the train-fitted rungs cannot know about. For scale, the RTH ladder on the identical holdout drifts -1% with 7/16 rungs positive — essentially none — so this is a property of the overnight window in this stretch, not of the VIX-implied scale itself.
+
+It is not uniform across the week, either:
+
+| weekday (holdout) | n | mean signed error | rungs positive |
+|---|---|---|---|
+| Mon | 40 | +8.3% | 13/16 |
+| Tue | 41 | -0.4% | 8/16 |
+| Wed | 40 | +0.3% | 6/16 |
+| Thu | 38 | +4.8% | 13/16 |
+| Fri | 38 | +4.8% | 15/16 |
+
+Mon and Thu/Fri carry the drift; Tue/Wed are flat. Note this *contrasts* with §4.9's Monday RTH finding, which has the opposite sign — Monday's day-session realises LESS than the pooled fit expects (rungs too wide), while Monday's overnight in this holdout ran HOT (rungs too narrow). Different sessions, different directions: Monday behaves as one thing in the day and another at night.
+
+**The fix that does not work.** The obvious move — apply §4.9's weekday multipliers, which already ship for ON — was measured rather than assumed. They were fit on the same train fold as this ladder, so they cannot know about a post-train drift by construction; applied to this holdout, pooled signed error goes +3.5% -> +3.2% (survives) and Monday +8.3% -> +9.1% (widens). **Weekday conditioning is the wrong tool for a drift** — the levels are drawn at the wrong scale, not the wrong day.
+
+**The fix that does.** A drift means the calibration is *stale*, not mis-specified: refit the rungs on an expanding window and revalidate — exactly the standing maintenance §7.1 prescribes. The refit moves with the regime; conditioning on more catalysts cannot.
+
+Do not treat the overnight Pine ladder as probability-calibrated until it is refit on current data and revalidated.
+
+### 2.3b The session stack: splitting the overnight answers it
+
+§2.3's overnight drift is not a property of "the overnight" as a whole — the ON window is two regimes glued together, and they calibrate differently. `sessions_stack.py` fits and validates each half separately, same fold split, same verdict rules (predeclared):
+
+| session | window | fit | holdout MAE | errors positive | drift | verdict |
+|---|---|---|---|---|---|---|
+| **London** | 03:00-09:30 | full train (887) | **1.95%** | 5/16 | 0.931x | **CALIBRATED** |
+| Asia | 18:00-03:00 | full train (887) | 9.95% | 16/16 | 1.334x | NOMINAL |
+| Asia | 18:00-03:00 | rolling from 2024-12-01 (228) | 5.12% | 14/16 | 1.109x | NOMINAL |
+| *RTH (reference)* | 09:30-15:59 | full train (887) | *1.45%* | *7/16* | *0.988x* | *CALIBRATED* |
+| *ON pooled (reference)* | 18:00-09:30 | full train (887) | *3.52%* | *16/16* | *1.060x* | *REFIT* |
+
+**London calibrates at RTH grade** — holdout MAE 1.95% against RTH's 1.45%, errors scattered both ways, essentially no drift. **Asia does not**: one-sided at every fit window tried, including a §7.1-style rolling refit (5.12% MAE but still 14/16 one-sided). The §2.3 drift therefore decomposes as: the *London half* of the overnight carries VIX's calibration; the *Asia half* does not. This is the expected structure — VIX prices US cash-session variance, and the Asia session trades regional information VIX does not see.
+
+**Shipping consequence.** The Pine session stack renders three verdicts and never lets a session pretend to a calibration it does not have: **NY (RTH) `CALIBRATED`, London `CALIBRATED`, Asia `NOMINAL`** — a distance map whose touch probabilities must be read as indicative, with constants regenerated on the rolling refit each §7.1 cycle. The pooled ON ladder of §2.3 should be retired in favour of the split: it averages a calibrated session with an uncalibrated one and inherits both problems.
+
+### 2.4 Was it one lucky stretch?
 
 A single holdout average can hide a ladder that was badly wrong for two months and badly wrong the other way for two more. Rolling the touch rate through the holdout:
 
 ![Rolling 60-session realised touch rate against the promised level.](figures/fig_recent_calibration.png)
 
-### 2.4 The last nine sessions, drawn
+### 2.5 The last nine sessions, drawn
 
 These are holdout days. The rungs were placed without seeing them.
 
@@ -97,7 +139,7 @@ And one session in full detail:
 
 This last one is worth reading carefully, because it is the **tail case** and not the typical one: a trend day that touched every upside rung including the 5% level and no downside rung at all. A 5% rung is supposed to be reached about one day in twenty, and days like this are what that means. A ladder that was never fully run through would be too wide.
 
-### 2.5 It replicates across instruments
+### 2.6 It replicates across instruments
 
 | instrument | vol index | n sessions | realised / implied | P(close within 1 EV) | dn/up skew |
 |---|---|---|---|---|---|
@@ -109,7 +151,7 @@ This last one is worth reading carefully, because it is the **tail case** and no
 
 > `CL1 x OVX` is excluded rather than omitted: the continuous CL series has roll gaps and bad prints, and this pipeline applies equity-index session conventions to a contract that settles at 14:30 ET. Any number it produced would be a convention artifact.
 
-### 2.6 What would falsify this
+### 2.7 What would falsify this
 
 - Realised touch rates drifting away from the diagonal on new data — the direct test, and the one the rolling chart is for.
 - The realised/implied ratio moving to 1.0 and staying there, which would mean the variance risk premium had gone.
@@ -156,10 +198,10 @@ A level touched at 15:45 has forty minutes to work. This decay is mechanical and
 
 The ladder reports *marginal* touch rates. No trading decision asks for one. A bracket asks which of two levels is reached **first**, and the marginal rates cannot answer that, because on most sessions both are touched. So the race was measured directly (`bracket.py`), over all 64 target/stop rung pairs, each side.
 
-| session | geometry edge | drift | unresolved |
+| session | geometry edge | drift | unresolved (widest) |
 |---|---|---|---|
-| RTH | **+0.00 pp** | -0.44 pp | — |
-| Overnight | **-0.04 pp** | +0.36 pp | — |
+| RTH | **+0.00 pp** | -0.44 pp | 90.6% |
+| Overnight | **-0.04 pp** | +0.36 pp | 90.5% |
 
 *Geometry edge* is `P(target first | the race was decided)` minus the breakeven `b/(a+b)`, averaged over the mirrored long/short pair so that the sample's directional drift cancels to first order. It is zero to two decimal places. **Your win rate is exactly what your bracket geometry says it is**, and the only remaining levers are refusing brackets whose arithmetic never worked, and costs.
 
@@ -182,7 +224,21 @@ The §3.2 null cannot distinguish *no effect* from *two effects that cancel*, be
 
 *Runner conversion* is `P(the next rung out is also reached | this one was)`. The level is identical in every row; what differs is how much session remains to travel through it. This is the one conditional statement in the report that is both large and clean.
 
+The overnight column carries §2.3's caveat with it: the ON rungs it converts between are drifted (too narrow by ~6% in the holdout), so both the touches and the conversions in that column run slightly hot relative to what a refit ON ladder would show. Read the RTH column as the calibrated one; the ON column as directionally right, pending the ON refit.
+
 The obvious companion measure — the move from the rung to the session close — is tabulated by `timing.py` but is **not** reported as an edge, for two reasons found by running it. Rungs are **nested**, so one session contributes up to eight rows to the same pooled mean and the naive pooled `t` reached 3.93 on 887 sessions. And continuation-to-close is *mechanically* bounded near zero for late touches, because a rung first reached at 15:50 leaves no time to come back — the measure is weakest exactly where it looks strongest.
+
+### 3.6 VIX and VVIX cannot call chop before the open
+
+Chop was predeclared as a completed-session property: directional efficiency `|close-open|/(high-low) <= 0.25` **and** an RTH range <= 1 EV, prevalence 27% on the holdout. Three logistic models saw only pre-09:30 inputs and were scored out of sample:
+
+| model | inputs | n train / holdout | holdout AUC | Brier |
+|---|---|---|---|---|
+| `vix` | VIX close, VIX percentile, abs gap | 887 / 197 | **0.520** | 0.201 |
+| `vix_vvix` | + VVIX/VIX ratio | 862 / 191 | **0.501** | 0.195 |
+| `full_pack` | VIX pctl, VVIX/VIX, term slope, VX basis, VRP, gap | 408 / 71 | **0.427** | 0.198 |
+
+An AUC of 0.5 is a coin; the full pack lands *below* it, on a 71-session holdout where VX-futures availability thins the sample. The strongest single coefficient (`term_30d_90d`) does not survive as ranking skill — the predicted-risk quintiles are flat against realised chop. **There is no pre-open `CHOP LIKELY` badge to ship: the pre-open VIX state does not separate chop days from trend days at any usable accuracy.** Chop is knowable in hindsight, or as an intraday state — §5.4's arrival curves are the honest version of that question.
 
 ---
 ## 4. The inputs
@@ -389,6 +445,76 @@ The skew inverts across the ladder — the up side is slightly wider at the inne
 
 **Do not** treat a touch as a signal. Not as a fade (negative at every rung) and not as a breakout (that result was the gap). **Do not** anchor at the prior close for intraday work. **Do not** carry a pre-2022 calibration; the 0DTE ladder is wider. **Do not** use a fixed-bps stop at these levels — measured adverse excursion at the p75 runs tens of basis points, so the repo's default 15 bps stop sits inside the noise and gets hit first on 40-68% of trades.
 
+### 5.4 When is a level typically reached?
+
+§2 gives each rung a P(touch) by the close. A trader standing at 11:00 with a rung untouched is asking a different question, and `arrival.py` measures it on the same 1-minute paths as a **5-minute first-touch histogram**: the share of hit sessions whose first touch lands in each 5-minute bucket, plus its median and modal bucket. Full sessions only — 40 half-days are excluded because a 13:00 close can only depress late-session arrival. Rungs are train-fitted. **These are historical frequencies — a description of past sessions, not a forecast of today's.**
+
+![5-minute first-touch histogram per rung and side, train fold. Solid tick = modal bucket, dashed = median.](figures/fig_arrival.png)
+
+| rung | side | hits | median | mode | first 15% | middle 70% | final 15% |
+|---|---|---|---|---|---|---|---|
+| 35% | above open | 303 | 12:17 | 10:45-10:50 | 16% | 71% | 13% |
+| 35% | below open | 292 | 11:19 | 10:00-10:05 | 27% | 65% | 7% |
+| 25% | above open | 218 | 12:59 | 15:55-16:00 | 11% | 73% | 16% |
+| 25% | below open | 210 | 12:15 | 09:55-10:00 | 19% | 73% | 8% |
+| 15% | above open | 130 | 14:00 | 15:50-15:55 | 7% | 67% | 26% |
+| 15% | below open | 133 | 13:02 | 10:15-10:20 | 14% | 67% | 20% |
+| 10% | above open | 84 | 14:10 | 15:55-16:00 | 5% | 63% | 32% |
+| 10% | below open | 88 | 13:31 | 10:35-10:40 | 2% | 77% | 20% |
+| 5% | above open | 40 | 13:47 | 15:10-15:15 | 8% | 60% | 32% |
+| 5% | below open | 43 | 14:30 | 15:55-16:00 | 0% | 67% | 33% |
+
+Read this as a histogram, not a schedule. The shape — not any single number — is the finding, and it is **bimodal in a specific way**:
+
+- **Downside rungs lean first-hour.** The 35%/25%/15%/10% below-open rungs all have their modal bucket between 09:55 and 10:40 — the open-drive lower. By noon an untouched below-open rung is past its most likely window, though the left@ series in the artifact (8-16% for 35%/25% at 13:30) says it is not dead. The 5% below-open rung is the exception — at n=43 its mode sits at the close, where the rare deep-down day prints late.
+- **Upside tail rungs are a close phenomenon.** The 15%/10%/5% above-open rungs have modal buckets at 15:10-15:55, with 26-32% of their touches in the final 15% of the day — trend days that keep grinding finish at the highs. (The deepest tail rung of all, 5% below open, matches them at 33%, the single largest final share — extreme days in either direction print late or not at all.)
+- **The inner rungs are broad.** The 35%/25% rungs spread across the whole day; their medians (11:19-12:59) sit hours from their modes because the distribution has no single peak.
+
+**Why no overnight arrival curves.** §2.3 shows the ON ladder is drifted — rungs too close by ~6% — and levels that sit too close are reached too early, so an ON arrival histogram computed on them would bake that width error into its timing. The RTH arrival study is reproducible because the RTH ladder passes its holdout; the ON equivalent is deferred until the ON refit §2.3 prescribes has been done and revalidated.
+
+**Day of week.** §4.9 found Monday's RTH ladder runs ~17% narrow, so arrival was split by weekday too (train fold; cells with fewer than 30 hits suppressed — tail rungs go blank on most days, which is the honest state):
+
+![Median first touch by weekday, 35%/25% rungs, cells with >=30 hits.](figures/fig_arrival_dow.png)
+
+| rung | side | Mon | Tue | Wed | Thu | Fri |
+|---|---|---|---|---|---|---|
+| 35% | above open | 12:06 | 12:14 | 13:56 | 12:30 | 11:37 |
+| 35% | below open | 11:40 | 11:08 | 12:31 | 11:08 | 10:52 |
+| 25% | above open | 13:16 | 12:38 | 13:59 | 13:31 | 12:37 |
+| 25% | below open | — | 12:04 | 13:20 | 11:38 | 11:42 |
+| 15% | above open | — | — | — | — | 13:44 |
+| 15% | below open | — | — | 13:59 | 13:08 | 12:36 |
+| 10% | above open | — | — | — | — | — |
+| 10% | below open | — | — | — | — | — |
+| 5% | above open | — | — | — | — | — |
+| 5% | below open | — | — | — | — | — |
+
+Wednesday is the late day at every rung with enough hits — medians 12:31-13:59 against Friday's 10:52-12:37 at the 35%/25% rungs — and at those same well-populated rungs the down-side arrives earliest on Tue/Thu/Fri and latest on Mon/Wed. The Monday exception echoes §4.9: the pooled ladder is drawn where Monday's excursion rarely reaches, so what does print prints late.
+
+**Stability.** The milestone cumulatives replicate: **68/80** cells within the predeclared ±5 pp, every failing cell an inner rung (80/65/50%) at an early milestone with the holdout arriving *earlier* — the same direction as the §2.2 calibration drift, and **no priority rung (35%-5%) failed at any milestone**. The modal 5-minute bucket is noisier, as a narrow bin on 25-70 holdout hits must be: 3/11 exact, 7 within one adjacent bucket. **Read the modes as a window, not a time.**
+
+Rungs are nested, so no statistic here is pooled across rungs — each cell stays one observation per session.
+
+### 5.5 Where does a move die? Zones, reversal, terminal cluster
+
+§5.4 answers when a level is *reached*. The trader watching an extended move asks where it *ends*. `reversal.py` measures three end-of-move distributions on the same 1-minute paths, per rung and side, full sessions only (40 half-days excluded). Zones are percentiles of the excursion **among sessions that touched the rung** — a zone boundary means *among historical touches, the move ran this far past the level this share of the time*. Historical frequencies, not forecasts.
+
+| rung | side | hits | die in zone | back to anchor | ext p50 | ext p75 | ext p90 |
+|---|---|---|---|---|---|---|---|
+| 35% | above open | 66 | 26% | 17% | 0.19 | 0.36 | 0.59 |
+| 35% | below open | 75 | 32% | 29% | 0.27 | 0.48 | 0.89 |
+| 25% | above open | 49 | 47% | 10% | 0.16 | 0.30 | 0.52 |
+| 25% | below open | 51 | 37% | 16% | 0.26 | 0.52 | 0.99 |
+| 15% | below open | 32 | 47% | 9% | 0.24 | 0.52 | 0.96 |
+
+Read the columns separately, because they answer different questions:
+
+- **die in zone** is the probability the excursion *terminates* between this rung and the next one out — a session that touched the 25% rung but never the 15%. This is the ladder's own *extension-zone* structure: moves die at rungs at a measurable rate that rises with depth (train 29% at the 35% rung, 39-40% at the 25%, 49% at the 10%).
+- **back to anchor** is the probability the move retraced to the 09:30 open *before the close*, measured among touches. It is context for where moves end, **not an edge**: §3.1 measured that fading the touch loses at every rung.
+- **ext p50/p75/p90** are how far past the level the excursion ran, among touches — the TYPICAL / DEEP / STRETCHED banding a zone ladder renders. The down side extends further than the up at every percentile, mirroring §4.7's tail skew.
+
+**The terminal cluster.** Across all sessions (not just touches), the day's furthest excursion lands most often in the 0.45-0.50 EV band (73 of 855 train sessions) — between the 50% and 35% rungs. The holdout mode sits higher at 0.60-0.65 EV (20 of 189), consistent with the §2.2 hot inner rungs: when the day runs wider than the fit expects, the terminal zone moves out with it. **The most likely place for a move to die is the 35-50% rung band, and a trader's 'has this extended?' judgment reads against exactly that.**
+
 ---
 ## 6. Limits
 
@@ -406,9 +532,27 @@ The skew inverts across the ladder — the up side is slightly wider at the inne
 .\.venv\Scripts\python.exe -m scripts.expected_volatility.compare_variants --ticker ES1
 .\.venv\Scripts\python.exe -m scripts.expected_volatility.build_playbook --ticker ES1
 .\.venv\Scripts\python.exe -m scripts.expected_volatility.build_playbook --ticker ES1 --anchor rth_open
+.\.venv\Scripts\python.exe -m scripts.expected_volatility.arrival --ticker ES1
+.\.venv\Scripts\python.exe -m scripts.expected_volatility.reversal --ticker ES1
+.\.venv\Scripts\python.exe -m scripts.expected_volatility.sessions_stack --ticker ES1
 .\.venv\Scripts\python.exe -m scripts.expected_volatility.charts
 .\.venv\Scripts\python.exe -m scripts.expected_volatility.report
 ```
+
+### 7.1 Standing maintenance — when anything needs to change
+
+The ladder is designed so that **nothing is redone unless something entirely new is introduced**. Two different situations have two different procedures; confusing them is how a wrong fix gets shipped (§2.3's multipliers are the worked example):
+
+| situation | what it is | procedure | frequency |
+|---|---|---|---|
+| **New data arrives** (normal operation) | the holdout grows | re-run the pipeline in order (`paths` -> studies -> `report`); the gate blocks the report if any artifact is stale | every data refresh |
+| **Calibration drift** (§2.3 ON: holdout runs hot at one sign) | the regime moved after the fit | **expanding-window refit** — fold the holdout into the training window, re-derive rungs and multipliers, revalidate on the newest data; never a constant multiplier | when the §2.2/§2.3 tables breach their own SE |
+| **Weekday / catalyst conditioning** | a *persistent, in-sample measurable* effect (§4.9: Kruskal-Wallis, Bonferroni-surviving) | per-day per-side multipliers fit on train only, shrunk 0.5 to 1.0, shipped only if the holdout improves | once; then re-estimated at each refit |
+| **An entirely new input** (VVIX chop badge, confluence, a new session type) | new information | the full study -> holdout -> gate cycle; §3.6 (chop) is the template for a candidate that FAILED it | per candidate |
+
+The decision rule, in one line: **a drift means the fit is stale -> refit; a stable in-sample structure means the fit is incomplete -> condition; a new data source means nothing is known -> full study.**
+
+What does NOT trigger a change: new days alone (the gate handles staleness), a single weekday's miss (§4.9 multipliers already carry the measured weekday structure, and §2.3 shows piling on more conditioning does not fix a drift), or a re-run of the same study with no new inputs — the numbers are computed at render time, so regenerating the report is always safe.
 
 | module | role |
 |---|---|
@@ -417,5 +561,13 @@ The skew inverts across the ladder — the up side is slightly wider at the inne
 | `compare_variants.py` | anchor x vol-input horse race, HAR-RV, blend |
 | `build_playbook.py` | trade-level statistics, both anchors |
 | `measure_baselines.py` | the long-window studies: variance share by session, the 252-vs-365 fit, block stability, the scale-free reaction metric |
+| `arrival.py` | when is a rung typically reached — arrival curves, holdout stability (§5.4) |
+| `reversal.py` | where does a move die — extension zones, back-to-anchor, terminal cluster (§5.5) |
+| `sessions_stack.py` | Asia/London split of the overnight; the shipping verdicts (§2.3b) |
+| `chop_regime.py` | can VIX/VVIX call chop before the open? No (§3.6) |
+| `bracket.py` | the first-passage race: does bracket geometry beat breakeven? (§3.4) |
+| `timing.py` | does WHEN a touch happened matter? runner conversion (§3.5) |
+| `seasonality.py` | weekday dependence and the per-day multipliers (§4.9) |
+| `overnight.py` | the ON ladder fit/validation and the §2.3 drift diagnosis |
 | `charts.py` | every figure in this document |
 | `report.py` | this document, plus the staleness gate |

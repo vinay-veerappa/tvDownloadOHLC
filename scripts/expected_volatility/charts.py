@@ -340,6 +340,89 @@ def fig_recent_calibration(ses, window: int = 60) -> str:
     return _save(fig, "fig_recent_calibration.png")
 
 
+def _et(min_from_open: int) -> str:
+    m = (9 * 60 + 30 + int(min_from_open))
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def fig_arrival(arr: dict) -> str:
+    """THE arrival histogram: 5-minute first-touch mass, per rung and side.
+
+    Train fold (the holdout is too thin for 5-minute bins). Bars are the share
+    of hit sessions whose first touch landed in that 5-minute bucket; the
+    solid line marks the modal bucket, the dashed line the median.
+    """
+    edges = arr["edges"]
+    rows = [g for g in arr["rungs"] if g["target_p"] in
+            (0.35, 0.25, 0.15, 0.10, 0.05)]
+    fig, axes = plt.subplots(len(rows), 2, figsize=(9.8, 1.55 * len(rows)),
+                             sharex=True, squeeze=False)
+    for r, g in enumerate(rows):
+        for c, (side, colr) in enumerate((("up", UP), ("dn", DN))):
+            ax = axes[r][c]
+            mass = g["train"]["mass"]
+            ax.bar([e - 2.5 for e in edges], mass, width=4.6, color=colr,
+                   alpha=0.8, edgecolor="none")
+            if g["train"]["mode_min"] is not None:
+                ax.axvline(g["train"]["mode_min"], color="#222222", lw=1.2)
+            if g["train"]["hit_med_min"] is not None:
+                ax.axvline(g["train"]["hit_med_min"], color=MUT, lw=1.0,
+                           ls="--")
+            if r == 0:
+                ax.set_title(f"{side}", fontsize=9)
+            if c == 0:
+                ax.set_ylabel(f"{g['target_p']:.0%}", fontsize=8.5,
+                              rotation=0, ha="right", va="center")
+            ax.set_ylim(0, max(0.16, max(m for m in mass if m) * 1.25))
+    ticks = list(range(30, 391, 60))
+    for ax in axes[-1]:
+        ax.set_xticks(ticks)
+        ax.set_xticklabels([_et(t) for t in ticks], fontsize=7.5)
+        ax.set_xlabel("ET")
+    fig.suptitle("When is a rung first touched?  5-minute buckets, share of "
+                 "hit sessions (train)\nsolid = modal bucket, dashed = median. "
+                 "Down rungs cluster at the open; up tails cluster at the close.",
+                 fontsize=10, fontweight="bold", y=1.005)
+    return _save(fig, "fig_arrival.png")
+
+
+def fig_arrival_dow(arr: dict) -> str:
+    """Median arrival by weekday, for the rungs with enough hits per day."""
+    days = [d for d in arr["by_dow"] if d["n_train"] > 0]
+    labels = [d["day"] for d in days]
+    show = [(t, s) for t in (0.35, 0.25) for s in ("up", "dn")]
+    fig, axes = plt.subplots(1, 2, figsize=(9.8, 3.6), sharey=True)
+    for ax, side in zip(axes, ("up", "dn")):
+        series = []
+        for t, s in show:
+            if s != side:
+                continue
+            ys = []
+            for d in days:
+                g = next(x for x in d["rungs"]
+                         if x["target_p"] == t and x["side"] == s)
+                f = g["train"]
+                ys.append(f["hit_med_min"] if f["hits"] >= 30 and
+                          f["hit_med_min"] is not None else np.nan)
+            series.append((t, ys))
+        w = 0.38
+        for k, (t, ys) in enumerate(series):
+            ax.bar(np.arange(len(labels)) + (k - 0.5) * w, ys, width=w,
+                   color=UP if side == "up" else DN, alpha=0.8,
+                   label=f"{t:.0%} rung")
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels(labels)
+        ax.legend(frameon=False, fontsize=8)
+        ax.set_title(f"{side} rungs", fontsize=9)
+    yt = list(range(60, 391, 60))
+    axes[0].set_yticks(yt)
+    axes[0].set_yticklabels([_et(t) for t in yt], fontsize=8)
+    axes[0].set_ylabel("median first touch (ET)")
+    fig.suptitle("Median arrival by weekday (train; cells with >=30 hits only)",
+                 fontsize=10, fontweight="bold", y=1.02)
+    return _save(fig, "fig_arrival_dow.png")
+
+
 def build_all(ticker: str = "ES1") -> dict:
     import json
     print("rendering figures ...")
@@ -358,6 +441,11 @@ def build_all(ticker: str = "ES1") -> dict:
     if cpath.exists():
         figs["conditioning"] = fig_conditioning(
             json.loads(cpath.read_text(encoding="utf-8")))
+    apath = DATA / "expected_volatility" / f"arrival_{ticker}_RTH.json"
+    if apath.exists():
+        arr = json.loads(apath.read_text(encoding="utf-8"))
+        figs["arrival"] = fig_arrival(arr)
+        figs["arrival_dow"] = fig_arrival_dow(arr)
     return figs
 
 

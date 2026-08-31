@@ -1,0 +1,447 @@
+// ─────────────────────────────────────────────────────────────────────
+//  EV Session Stack — probability·distance·time map (GENERATED)
+//  ONE indicator, multi-symbol: ES / NQ / YM / RTY / GC.
+//  Source of truth: scripts/expected_volatility/ + RESEARCH_REPORT.md
+//  DO NOT hand-edit the data blocks — regenerate with gen_pine_multi.py.
+//
+//  Per-symbol holdout verdicts (rendered in the dashboard footer):
+//  ES: London CAL, Asia NOMINAL | NQ: London CAL, Asia NOMINAL | YM: London REFIT, Asia NOMINAL | RTY: London REFIT, Asia NOMINAL | GC: London REFIT, Asia NOMINAL
+//  London draws ONLY where CAL (ES/NQ); REFIT sessions stay blank rather
+//  than render drifted levels. Historical probabilities — a description
+//  of past sessions, NOT a forecast, and NOT an entry signal (§3.1/§3.2).
+// ─────────────────────────────────────────────────────────────────────
+//@version=6
+indicator("EV Session Stack", "EV-Stack", overlay = true,
+     max_lines_count = 500, max_labels_count = 500, max_boxes_count = 100)
+
+// ── inputs ──────────────────────────────────────────────────────────
+grpS = "Sessions"
+showRTH    = input.bool(true, "NY (RTH) — CALIBRATED",              group = grpS)
+showLondon = input.bool(true, "London 03:00-09:30 (draws only where CAL)", group = grpS)
+showAsia   = input.bool(true, "Asia 18:00-03:00 — NOMINAL (indicative)", group = grpS)
+grpL = "Rungs"
+showInner  = input.bool(true,  "Inner rungs 80/65/50 (session frame)", group = grpL)
+showWork   = input.bool(true,  "Work rungs 35/25 (primary)",        group = grpL)
+showTails  = input.bool(true,  "Tail rungs 15/10/5 (dotted)",       group = grpL)
+dowAdjust  = input.bool(true,  "Weekday width adjustment (§4.9)",   group = grpL)
+grpT = "Table"
+showTable  = input.bool(true,  "Show dashboard",                     group = grpT)
+tblPos     = input.string("Top Right", "Position", options = ["Top Right","Top Left","Bottom Right","Bottom Left"], group = grpT)
+tblSizeIn  = input.string("Small", "Size", options = ["Tiny","Small","Normal"], group = grpT)
+grpZ = "Zones (behind 35% rung)"
+showZones  = input.bool(true, "Extension zones",                     group = grpZ)
+zoneLbls   = input.bool(true, "Zone labels",                         group = grpZ)
+
+// ── DATA — per-symbol packed blocks; slot order is the contract ─────
+// slots: 0=ES, 1=NQ, 2=YM, 3=RTY, 4=GC
+// rung probabilities in TARGET_P order (index-matched to the ladders)
+var array<float> PROBS = array.from(0.80, 0.65, 0.50, 0.35, 0.25, 0.15, 0.10, 0.05)
+// RTH ladders: [slot*8 + rung] (paths.py train fit, holdout-validated)
+var array<float> cUpRTH = array.from(0.1239, 0.2215, 0.3397, 0.4974, 0.5982, 0.7456, 0.8569, 1.0267, 0.1309, 0.2538, 0.3944, 0.5462, 0.6720, 0.8251, 0.9284, 1.1191, 0.1554, 0.2508, 0.4068, 0.5628, 0.6982, 0.8580, 0.9721, 1.1644, 0.1450, 0.2648, 0.4267, 0.5739, 0.7075, 0.8960, 1.0037, 1.2411, 0.1028, 0.1888, 0.2965, 0.4256, 0.5427, 0.6849, 0.8102, 1.0066)
+var array<float> cDnRTH = array.from(0.1029, 0.2108, 0.3267, 0.4787, 0.6258, 0.8245, 1.0191, 1.2564, 0.1316, 0.2306, 0.3639, 0.5364, 0.6886, 0.9081, 1.1012, 1.3292, 0.1309, 0.2530, 0.3790, 0.5373, 0.6651, 0.8609, 1.0323, 1.3171, 0.1647, 0.2973, 0.4359, 0.5949, 0.7446, 0.9599, 1.0768, 1.2868, 0.1074, 0.1973, 0.3046, 0.4245, 0.5220, 0.6766, 0.8050, 0.9799)
+// weekday multipliers Mon..Fri: [slot*5 + dow] (seasonality.py §4.9)
+var array<float> wUpDOW = array.from(0.9833, 0.9466, 1.0617, 0.9517, 1.0719, 1.0720, 0.9222, 1.0352, 0.9566, 1.0365, 1.0200, 0.9378, 1.0427, 0.9852, 1.0238, 1.0019, 0.9795, 1.0421, 0.9974, 0.9818, 0.9326, 0.9757, 1.0318, 0.9963, 1.0666)
+var array<float> wDnDOW = array.from(0.8661, 1.0335, 1.0519, 1.0882, 0.9902, 0.8858, 1.0240, 1.0060, 1.1028, 0.9956, 0.8827, 1.0328, 1.0481, 1.0540, 0.9922, 0.9350, 0.9629, 1.0491, 1.0774, 0.9844, 0.9835, 0.9848, 1.0601, 0.9633, 1.0117)
+// London/Asia ladders: [slot*8 + rung] (sessions_stack.py)
+var array<float> cUpLDN = array.from(0.0767, 0.1384, 0.1973, 0.2673, 0.3297, 0.4193, 0.4853, 0.6049, 0.0879, 0.1467, 0.2005, 0.2776, 0.3386, 0.4400, 0.4869, 0.6124, 0.0810, 0.1350, 0.1975, 0.2886, 0.3502, 0.4315, 0.5069, 0.6248, 0.0931, 0.1554, 0.2376, 0.3228, 0.4030, 0.5202, 0.6377, 0.8196, 0.1173, 0.2057, 0.2967, 0.3925, 0.4933, 0.6282, 0.7419, 0.9069)
+var array<float> cDnLDN = array.from(0.0653, 0.1163, 0.1795, 0.2565, 0.3329, 0.4493, 0.5267, 0.7142, 0.0697, 0.1237, 0.1934, 0.2724, 0.3514, 0.4605, 0.5486, 0.7132, 0.0765, 0.1270, 0.1944, 0.2772, 0.3586, 0.4755, 0.5620, 0.7388, 0.0734, 0.1389, 0.2052, 0.3035, 0.3875, 0.4974, 0.6149, 0.8041, 0.0988, 0.1747, 0.2576, 0.3822, 0.4881, 0.5970, 0.7267, 0.8860)
+var array<float> cUpASA = array.from(0.0499, 0.0878, 0.1308, 0.1775, 0.2233, 0.2974, 0.3398, 0.4308, 0.0498, 0.0928, 0.1403, 0.2001, 0.2472, 0.3268, 0.3967, 0.4910, 0.0446, 0.0797, 0.1216, 0.1697, 0.2097, 0.2707, 0.3184, 0.4128, 0.0572, 0.0976, 0.1426, 0.1939, 0.2403, 0.3034, 0.3658, 0.4813, 0.0858, 0.1536, 0.2242, 0.3092, 0.3879, 0.4976, 0.5995, 0.8091)
+var array<float> cDnASA = array.from(0.0507, 0.0845, 0.1231, 0.1824, 0.2409, 0.3170, 0.3776, 0.4851, 0.0485, 0.0875, 0.1302, 0.1913, 0.2577, 0.3554, 0.4170, 0.5354, 0.0496, 0.0858, 0.1299, 0.1845, 0.2425, 0.3058, 0.3633, 0.4747, 0.0498, 0.0861, 0.1305, 0.1899, 0.2432, 0.3130, 0.3944, 0.5414, 0.0819, 0.1457, 0.2143, 0.2970, 0.3648, 0.4857, 0.5772, 0.7774)
+// arrival §5.4 TRAIN fold, RTH: 16 rows/symbol; med [slot*16 + row];
+// arrCum [slot*80 + row*5 + ms], ms = 10:00/11:00/12:00/13:30/15:00.
+var array<int>   arrMed = array.from(15, 15, 39, 40, 90, 72, 167, 109, 209, 165, 270, 212, 280, 241, 257, 300, 11, 10, 35, 26, 62, 53, 127, 86, 184, 122, 251, 150, 261, 210, 250, 236, 12, 11, 32, 35, 79, 68, 130, 122, 183, 147, 234, 206, 256, 229, 225, 229, 5, 7, 21, 23, 62, 48, 74, 83, 107, 120, 176, 197, 214, 196, 259, 266, 15, 14, 30, 30, 44, 53, 82, 69, 103, 93, 123, 114, 150, 127, 134, 135)
+var array<float> arrCum = array.from(55.2, 70.3, 74.4, 77.2, 79.9, 51.0, 67.8, 72.0, 74.6, 77.2, 27.8, 46.9, 52.5, 57.7, 62.5, 26.9, 46.0, 51.7, 57.2, 62.5, 9.0, 25.3, 34.0, 41.3, 47.0, 11.0, 26.9, 33.9, 39.6, 46.1, 1.9, 11.1, 15.9, 23.4, 30.6, 3.2, 14.5, 20.5, 26.1, 31.7, 0.8, 5.5, 8.5, 14.1, 21.2, 1.6, 7.8, 11.6, 17.9, 22.6, 0.1, 2.0, 3.4, 6.1, 11.1, 0.1, 3.7, 6.0, 9.2, 12.5, 0.1, 0.9, 2.1, 3.5, 6.7, 0.0, 1.3, 2.8, 4.9, 8.2, 0.0, 0.4, 1.2, 2.0, 3.2, 0.0, 0.1, 0.8, 2.0, 3.4, 55.3, 68.2, 72.1, 74.9, 76.9, 56.0, 67.8, 70.6, 73.3, 75.9, 28.2, 45.7, 50.7, 55.6, 60.2, 34.2, 49.9, 54.3, 57.1, 61.5, 13.0, 29.9, 36.3, 42.6, 46.7, 17.3, 33.5, 38.1, 43.1, 47.1, 3.2, 14.2, 19.8, 26.2, 32.2, 5.7, 17.4, 22.6, 26.9, 31.7, 0.9, 6.8, 10.4, 14.8, 21.4, 2.5, 10.1, 14.3, 18.3, 22.5, 0.4, 2.5, 4.5, 6.6, 11.0, 0.7, 4.3, 6.9, 10.1, 12.2, 0.2, 1.1, 2.3, 4.3, 6.9, 0.1, 1.9, 3.2, 6.1, 7.8, 0.1, 0.6, 1.6, 2.1, 3.6, 0.1, 0.7, 1.1, 2.6, 4.0, 49.9, 62.9, 67.8, 70.5, 73.9, 53.8, 66.1, 71.3, 74.0, 76.8, 29.7, 45.0, 52.0, 56.5, 60.4, 29.2, 44.2, 51.4, 56.5, 61.1, 13.0, 25.7, 32.5, 39.0, 44.6, 13.5, 27.8, 33.9, 39.4, 45.1, 5.0, 12.8, 18.7, 23.4, 30.4, 4.9, 14.0, 19.7, 25.8, 31.6, 1.8, 6.6, 11.1, 15.7, 20.4, 2.1, 8.5, 12.5, 17.1, 22.0, 0.5, 2.7, 4.3, 7.4, 12.2, 0.7, 4.3, 6.3, 9.2, 13.5, 0.0, 1.4, 2.6, 4.6, 7.6, 0.1, 1.9, 3.1, 5.6, 8.0, 0.0, 0.4, 1.3, 2.6, 4.1, 0.0, 0.4, 1.2, 2.8, 4.1, 63.4, 72.7, 75.4, 77.2, 79.0, 62.1, 71.9, 73.5, 76.1, 78.5, 37.7, 51.6, 56.0, 59.7, 62.5, 38.5, 52.6, 56.6, 59.9, 63.9, 16.0, 29.1, 34.6, 39.8, 44.9, 16.4, 33.2, 38.6, 42.9, 47.2, 9.3, 19.3, 23.5, 27.7, 33.3, 5.6, 18.6, 24.0, 28.7, 33.3, 4.0, 10.8, 14.3, 17.7, 21.5, 2.0, 9.5, 14.3, 18.4, 22.5, 1.2, 5.1, 7.2, 9.2, 12.9, 0.5, 3.9, 6.2, 9.8, 12.4, 0.2, 2.0, 4.1, 5.3, 8.0, 0.2, 2.1, 3.8, 5.8, 8.3, 0.0, 0.6, 1.9, 2.4, 3.7, 0.0, 0.6, 0.9, 2.1, 4.0, 53.1, 67.1, 71.5, 74.5, 76.1, 57.0, 70.5, 73.8, 75.3, 76.8, 34.7, 50.8, 56.2, 59.5, 61.9, 34.5, 53.8, 59.8, 62.5, 63.8, 17.6, 35.1, 41.1, 46.2, 48.9, 15.3, 32.3, 38.9, 43.5, 46.5, 4.6, 17.6, 24.6, 28.7, 33.0, 7.4, 20.0, 26.2, 30.3, 33.6, 2.4, 10.8, 15.8, 19.3, 23.3, 4.7, 12.1, 16.6, 20.8, 23.3, 0.1, 5.4, 8.2, 10.7, 13.4, 1.5, 6.0, 8.6, 12.0, 13.4, 0.1, 2.9, 4.8, 6.3, 8.1, 0.4, 3.4, 5.5, 8.1, 9.0, 0.0, 1.4, 2.4, 3.1, 3.9, 0.1, 1.4, 2.6, 3.8, 4.5)
+// per-session arrival (session_timing.py, TRAIN fold): LONDON 16 rows
+// med [slot*16 + row], cum [slot*80 + row*5 + ms]; milestones
+// London 04:00/05:30/07:00/08:30/09:30 — Asia 20:00/22:00/00:00/02:00/03:00.
+// Minutes are SESSION-LOCAL (from each session's own open). Asia = NOMINAL,
+// indicative only.
+var array<int>   ldnMed = array.from(38, 27, 93, 72, 194, 123, 273, 197, 325, 244, 330, 302, 330, 320, 330, 330, 42, 28, 98, 74, 191, 128, 276, 226, 325, 264, 330, 298, 330, 330, 330, 330, 34, 38, 79, 75, 158, 143, 281, 210, 314, 250, 330, 286, 330, 330, 330, 330, 43, 28, 101, 75, 197, 127, 269, 205, 316, 273, 330, 299, 330, 330, 330, 330, 52, 37, 142, 88, 239, 180, 281, 283, 320, 324, 330, 330, 330, 330, 331, 337)
+var array<float> ldnCum = array.from(49.0, 65.0, 70.2, 77.8, 79.9, 51.7, 65.8, 70.6, 76.4, 79.9, 22.3, 39.7, 47.0, 60.1, 64.9, 28.4, 44.4, 51.0, 59.9, 64.9, 8.5, 20.6, 28.9, 43.5, 50.1, 15.8, 28.5, 35.1, 45.4, 50.1, 2.7, 9.7, 14.5, 26.0, 35.1, 6.3, 13.5, 20.3, 29.9, 35.1, 1.6, 4.5, 7.9, 16.9, 25.0, 2.6, 8.1, 12.4, 20.4, 25.0, 0.8, 2.2, 3.8, 9.9, 15.0, 1.0, 3.2, 5.4, 11.5, 15.0, 0.4, 1.2, 1.8, 6.0, 10.0, 0.6, 1.6, 3.0, 7.5, 10.0, 0.2, 0.7, 1.0, 2.8, 5.1, 0.0, 0.4, 1.4, 3.0, 5.1, 47.0, 63.5, 68.8, 77.0, 80.0, 51.1, 65.4, 70.2, 77.2, 80.0, 20.7, 39.8, 46.9, 60.6, 65.0, 27.8, 43.9, 50.3, 60.9, 65.0, 9.5, 22.5, 28.7, 44.1, 50.1, 13.0, 26.4, 33.9, 45.2, 50.1, 3.0, 9.2, 14.4, 26.8, 35.1, 5.2, 13.5, 19.1, 30.4, 35.1, 1.3, 5.2, 8.2, 16.5, 25.1, 2.4, 7.9, 11.7, 20.4, 25.1, 0.8, 1.6, 2.7, 8.8, 15.1, 0.8, 3.7, 5.7, 10.6, 15.1, 0.5, 0.9, 1.6, 6.4, 10.1, 0.2, 1.6, 3.1, 6.7, 10.1, 0.5, 0.8, 0.9, 2.9, 5.1, 0.0, 0.6, 1.2, 3.0, 5.1, 50.3, 64.9, 70.0, 76.8, 80.0, 46.4, 61.6, 68.5, 75.3, 80.0, 26.4, 43.1, 51.4, 60.9, 65.0, 27.2, 42.6, 50.9, 60.1, 65.0, 10.3, 24.5, 32.3, 44.1, 50.0, 13.1, 25.9, 34.3, 44.4, 50.0, 2.6, 8.7, 15.0, 25.6, 35.0, 5.4, 12.7, 20.1, 28.1, 35.0, 1.5, 4.5, 8.4, 17.3, 25.1, 2.7, 6.8, 11.7, 19.0, 25.1, 0.8, 2.1, 4.0, 10.0, 15.0, 0.8, 2.8, 6.1, 11.4, 15.0, 0.5, 1.2, 2.2, 6.3, 10.1, 0.5, 1.5, 3.5, 6.9, 10.1, 0.2, 0.5, 1.2, 2.8, 5.0, 0.0, 0.6, 1.6, 3.4, 5.0, 45.8, 63.0, 68.3, 76.3, 80.0, 52.8, 66.3, 70.7, 76.9, 80.0, 21.2, 39.3, 47.5, 59.1, 65.0, 27.2, 44.7, 49.8, 60.1, 65.0, 6.8, 20.5, 28.8, 42.9, 50.0, 12.2, 26.7, 33.4, 45.0, 50.0, 2.1, 10.0, 15.0, 27.9, 35.0, 3.8, 12.1, 19.3, 29.4, 35.0, 1.1, 5.0, 8.0, 18.5, 25.1, 2.3, 6.7, 11.4, 19.7, 25.1, 0.4, 1.8, 3.6, 10.2, 15.0, 1.1, 3.4, 6.1, 11.4, 15.0, 0.4, 1.1, 1.6, 6.7, 10.1, 0.4, 1.5, 2.8, 6.4, 10.1, 0.2, 0.2, 0.5, 3.4, 5.0, 0.0, 0.4, 1.2, 3.0, 5.0, 42.7, 58.2, 66.7, 75.3, 80.0, 49.2, 62.7, 67.6, 75.2, 80.0, 17.9, 33.7, 44.4, 57.1, 65.0, 23.9, 40.5, 47.0, 58.2, 65.0, 6.9, 17.4, 25.6, 39.4, 50.1, 9.7, 23.6, 30.1, 43.2, 50.1, 2.0, 8.0, 13.2, 25.9, 35.0, 2.3, 9.9, 15.3, 26.0, 35.0, 0.6, 4.3, 7.2, 16.6, 25.0, 0.9, 4.7, 8.1, 16.8, 25.0, 0.1, 1.8, 3.9, 8.6, 15.1, 0.6, 1.6, 4.3, 9.7, 15.1, 0.0, 0.6, 1.8, 5.0, 10.1, 0.4, 0.7, 2.7, 5.7, 10.1, 0.0, 0.1, 0.6, 2.3, 5.0, 0.1, 0.4, 0.8, 2.0, 5.0)
+var array<int>   asiMed = array.from(17, 16, 86, 78, 142, 122, 176, 158, 216, 208, 266, 257, 259, 260, 312, 262, 16, 14, 86, 84, 134, 123, 195, 148, 210, 194, 235, 232, 266, 284, 249, 216, 11, 7, 75, 51, 134, 123, 165, 163, 203, 216, 211, 238, 211, 264, 225, 261, 13, 13, 86, 65, 144, 121, 177, 170, 210, 197, 227, 225, 216, 231, 255, 271, 116, 94, 166, 177, 201, 216, 242, 235, 258, 258, 286, 283, 274, 274, 244, 294)
+var array<float> asiCum = array.from(61.7, 72.8, 75.9, 78.0, 79.9, 61.8, 73.6, 76.0, 77.9, 79.9, 37.9, 52.9, 57.6, 61.8, 64.9, 39.6, 54.1, 58.3, 61.8, 64.9, 21.4, 34.8, 41.4, 45.7, 50.1, 24.8, 38.7, 43.0, 47.1, 50.1, 12.1, 22.1, 26.8, 31.9, 35.1, 13.4, 23.8, 27.1, 31.9, 35.1, 6.9, 14.0, 18.0, 21.6, 25.0, 6.7, 14.8, 17.4, 21.6, 25.0, 3.3, 7.1, 9.5, 11.8, 15.0, 2.9, 6.9, 9.5, 11.7, 15.0, 2.2, 4.6, 6.7, 8.7, 10.0, 1.8, 4.4, 6.7, 8.1, 10.0, 1.4, 2.2, 2.8, 4.0, 5.1, 1.1, 2.2, 3.0, 4.0, 5.1, 63.8, 73.6, 75.4, 78.0, 80.0, 62.8, 72.5, 75.6, 78.3, 80.0, 37.6, 53.9, 58.0, 61.9, 65.0, 38.9, 52.1, 55.6, 61.1, 65.0, 22.7, 35.9, 41.5, 46.0, 50.1, 24.3, 37.5, 42.0, 46.6, 50.1, 11.0, 20.8, 26.4, 31.2, 35.1, 14.4, 24.4, 27.5, 32.3, 35.1, 7.7, 14.9, 18.0, 21.5, 25.1, 7.5, 14.4, 17.5, 21.0, 25.1, 3.7, 7.9, 9.5, 12.4, 15.1, 4.1, 7.5, 9.9, 12.2, 15.1, 2.2, 4.7, 6.4, 8.0, 10.1, 2.6, 4.7, 5.9, 7.9, 10.1, 1.3, 2.4, 3.1, 4.2, 5.1, 1.6, 2.7, 3.2, 4.1, 5.1, 61.8, 71.5, 74.4, 77.5, 80.0, 64.4, 73.4, 75.3, 77.2, 80.0, 38.8, 52.3, 57.0, 60.8, 65.0, 42.6, 55.5, 59.5, 62.4, 65.0, 23.4, 36.4, 41.8, 46.6, 50.0, 23.8, 38.4, 42.0, 45.6, 50.0, 12.8, 22.2, 26.8, 30.6, 35.0, 13.5, 23.1, 26.7, 31.0, 35.0, 7.7, 14.8, 18.5, 22.0, 25.1, 6.2, 13.4, 16.9, 20.7, 25.1, 4.2, 8.6, 10.3, 12.7, 15.0, 3.2, 7.5, 10.3, 12.5, 15.0, 2.7, 5.5, 7.3, 8.9, 10.1, 2.1, 4.5, 6.2, 8.3, 10.1, 1.8, 2.6, 3.0, 4.2, 5.0, 1.3, 2.5, 3.3, 4.1, 5.0, 62.4, 72.4, 75.1, 77.8, 80.0, 61.7, 73.0, 75.1, 78.0, 80.0, 37.2, 53.9, 58.0, 61.4, 65.0, 41.3, 53.9, 57.0, 61.0, 65.0, 21.4, 35.5, 40.9, 46.2, 50.0, 24.6, 37.8, 42.6, 46.5, 50.0, 13.6, 21.7, 26.5, 30.7, 35.0, 13.4, 22.7, 27.3, 30.7, 35.0, 8.3, 14.3, 18.1, 22.0, 25.1, 7.6, 14.5, 17.4, 22.0, 25.1, 4.2, 7.7, 10.0, 12.4, 15.0, 3.9, 7.7, 10.3, 12.4, 15.0, 2.8, 5.4, 7.5, 9.1, 10.1, 2.6, 5.1, 6.8, 8.7, 10.1, 1.9, 2.5, 3.2, 3.6, 5.0, 1.4, 2.3, 2.9, 3.9, 5.0, 41.8, 69.0, 73.7, 78.1, 80.0, 46.2, 69.6, 75.1, 78.1, 80.0, 21.5, 48.8, 55.4, 60.9, 65.0, 21.5, 47.5, 55.8, 61.8, 65.0, 11.2, 30.4, 38.4, 45.1, 50.1, 11.1, 29.2, 38.0, 45.1, 50.1, 5.9, 17.3, 24.2, 30.3, 35.0, 5.3, 18.4, 25.0, 30.2, 35.0, 3.6, 11.2, 16.0, 21.3, 25.0, 3.6, 11.9, 17.1, 21.9, 25.0, 1.9, 6.2, 9.1, 12.0, 15.1, 2.3, 6.0, 9.7, 12.6, 15.1, 1.2, 4.4, 6.1, 8.3, 10.1, 2.0, 4.4, 6.7, 8.2, 10.1, 0.7, 2.3, 3.2, 4.0, 5.0, 0.9, 2.3, 3.0, 4.1, 5.0)
+// per-session reversal/extension zones (session_timing.py, TRAIN, n>=30):
+// same row order as RTH zones (35up,35dn,25up,...,10dn). ldnExt/asiExt
+// [slot*24 + row*3 + k]; ldnRate/asiRate [slot*16 + row*2 + k]
+// = die%, back%. Sentinel -1 renders as dash. Gates: LDN zones draw only
+// where the session verdict is CAL (same rule as its ladder).
+var array<float> ldnExt  = array.from(0.118, 0.243, 0.384, 0.159, 0.308, 0.530, 0.108, 0.241, 0.377, 0.161, 0.327, 0.572, 0.117, 0.224, 0.386, 0.167, 0.335, 0.662, 0.120, 0.222, 0.523, 0.191, 0.378, 0.701, 0.132, 0.231, 0.413, 0.166, 0.299, 0.519, 0.125, 0.249, 0.390, 0.143, 0.303, 0.602, 0.096, 0.222, 0.535, 0.142, 0.315, 0.585, 0.126, 0.242, 0.574, 0.165, 0.404, 0.597, 0.123, 0.249, 0.391, 0.164, 0.323, 0.623, 0.113, 0.230, 0.402, 0.152, 0.299, 0.596, 0.121, 0.231, 0.503, 0.157, 0.370, 0.672, 0.118, 0.246, 0.542, 0.178, 0.394, 0.770, 0.168, 0.348, 0.634, 0.170, 0.350, 0.612, 0.179, 0.350, 0.715, 0.173, 0.365, 0.621, 0.172, 0.395, 0.728, 0.200, 0.413, 0.764, 0.183, 0.482, 0.765, 0.190, 0.395, 0.924, 0.200, 0.384, 0.619, 0.186, 0.366, 0.606, 0.186, 0.346, 0.582, 0.190, 0.366, 0.634, 0.184, 0.355, 0.527, 0.196, 0.361, 0.719, 0.166, 0.334, 0.513, 0.160, 0.396, 0.651)
+var array<float> ldnRate = array.from(28.6, 26.4, 28.6, 35.4, 40.1, 20.7, 40.1, 28.8, 33.1, 18.1, 33.1, 20.3, 49.4, 14.6, 49.4, 18.0, 28.5, 25.5, 28.5, 35.4, 39.8, 18.1, 39.8, 26.9, 33.1, 15.4, 33.1, 19.2, 49.4, 16.1, 49.4, 19.5, 28.4, 27.4, 28.4, 31.8, 40.2, 22.9, 40.2, 23.4, 32.8, 17.2, 32.8, 21.1, 50.0, 16.3, 50.0, 14.0, 28.4, 28.4, 28.4, 30.4, 40.2, 23.4, 40.2, 22.4, 32.8, 18.0, 32.8, 17.2, 50.0, 19.8, 50.0, 14.0, 28.4, 25.1, 28.4, 31.1, 39.7, 16.4, 39.7, 21.0, 33.3, 8.5, 33.3, 14.7, 50.0, 7.0, 50.0, 11.6)
+var array<float> asiExt  = array.from(0.095, 0.185, 0.329, 0.117, 0.218, 0.376, 0.087, 0.184, 0.345, 0.098, 0.214, 0.379, 0.085, 0.197, 0.371, 0.103, 0.229, 0.355, 0.091, 0.229, 0.397, 0.108, 0.242, 0.463, 0.106, 0.218, 0.373, 0.125, 0.250, 0.394, 0.106, 0.211, 0.365, 0.126, 0.239, 0.398, 0.106, 0.229, 0.393, 0.118, 0.221, 0.406, 0.094, 0.216, 0.439, 0.118, 0.239, 0.481, 0.082, 0.163, 0.305, 0.103, 0.206, 0.354, 0.086, 0.179, 0.372, 0.092, 0.193, 0.347, 0.078, 0.190, 0.356, 0.109, 0.220, 0.447, 0.095, 0.263, 0.372, 0.111, 0.226, 0.522, 0.088, 0.203, 0.318, 0.099, 0.224, 0.415, 0.094, 0.205, 0.322, 0.102, 0.229, 0.387, 0.110, 0.196, 0.416, 0.130, 0.288, 0.420, 0.116, 0.197, 0.453, 0.148, 0.236, 0.513, 0.157, 0.321, 0.623, 0.151, 0.328, 0.632, 0.150, 0.351, 0.646, 0.156, 0.354, 0.635, 0.167, 0.385, 0.691, 0.195, 0.414, 0.668, 0.210, 0.435, 0.659, 0.203, 0.423, 0.647)
+var array<float> asiRate = array.from(28.6, 25.7, 28.6, 31.8, 40.1, 16.7, 40.1, 21.6, 33.1, 9.8, 33.1, 12.0, 49.4, 10.1, 49.4, 10.1, 28.5, 21.9, 28.5, 32.8, 39.8, 15.7, 39.8, 22.7, 33.1, 11.5, 33.1, 15.4, 49.4, 9.2, 49.4, 14.9, 28.4, 31.1, 28.4, 35.4, 40.2, 24.8, 40.2, 23.8, 32.8, 18.8, 32.8, 19.5, 50.0, 12.8, 50.0, 12.8, 28.4, 28.1, 28.4, 34.4, 40.2, 22.4, 40.2, 23.4, 32.8, 12.5, 32.8, 14.8, 50.0, 12.8, 50.0, 15.1, 28.4, 24.8, 28.4, 32.4, 39.7, 19.2, 39.7, 26.6, 33.3, 14.0, 33.3, 20.2, 50.0, 14.0, 50.0, 20.9)
+// zones §5.5 TRAIN fold n>=30: 8 rows/symbol (35..10, 5% excluded)
+// die@zone undefined there. revExt [slot*24 + row*3 + k];
+// revRate [slot*16 + row*2 + k] = die%, back%.
+var array<float> revExt  = array.from(0.199, 0.404, 0.593, 0.299, 0.577, 0.904, 0.208, 0.398, 0.660, 0.282, 0.526, 0.870, 0.195, 0.319, 0.668, 0.273, 0.550, 0.892, 0.171, 0.401, 0.634, 0.239, 0.477, 0.862, 0.234, 0.418, 0.708, 0.291, 0.625, 0.941, 0.212, 0.390, 0.615, 0.261, 0.568, 0.955, 0.183, 0.366, 0.624, 0.295, 0.534, 0.980, 0.192, 0.358, 0.637, 0.229, 0.540, 0.943, 0.256, 0.449, 0.765, 0.275, 0.548, 0.922, 0.225, 0.396, 0.708, 0.300, 0.576, 0.907, 0.202, 0.413, 0.660, 0.300, 0.574, 0.848, 0.193, 0.434, 0.731, 0.291, 0.540, 0.996, 0.262, 0.478, 0.745, 0.292, 0.526, 0.861, 0.232, 0.453, 0.804, 0.278, 0.489, 0.783, 0.205, 0.415, 0.802, 0.231, 0.436, 0.787, 0.238, 0.507, 0.883, 0.210, 0.451, 0.760, 0.214, 0.422, 0.648, 0.207, 0.445, 0.633, 0.204, 0.388, 0.620, 0.215, 0.414, 0.700, 0.187, 0.361, 0.640, 0.216, 0.369, 0.782, 0.198, 0.353, 0.696, 0.175, 0.416, 0.816)
+var array<float> revRate = array.from(29.0, 19.5, 28.6, 25.7, 39.5, 11.5, 40.1, 14.4, 32.6, 5.3, 33.1, 6.0, 49.4, 4.5, 49.4, 1.1, 28.5, 19.8, 28.6, 21.3, 39.4, 11.7, 39.5, 12.1, 33.3, 7.0, 33.1, 4.6, 48.8, 4.7, 49.4, 3.5, 28.7, 18.9, 28.9, 28.2, 38.9, 11.4, 39.6, 17.9, 33.3, 7.8, 33.6, 8.6, 50.0, 2.3, 49.4, 4.7, 28.3, 24.9, 28.4, 17.1, 39.4, 15.5, 39.7, 9.8, 33.3, 9.3, 33.3, 1.6, 50.0, 7.0, 50.0, 2.3, 28.7, 22.7, 28.8, 26.1, 39.7, 14.0, 39.4, 14.1, 33.3, 9.3, 33.3, 7.0, 50.0, 7.0, 50.0, 3.5)
+// per-slot vol index (auto-selected by chart symbol) + session verdicts
+var array<string> VOLS    = array.from("CBOE:VIX", "CBOE:VXN", "CBOE:VXD", "CBOE:RVX", "CBOE:GVZ")
+var array<string> LDNVERD = array.from("CAL", "CAL", "REFIT", "REFIT", "REFIT")
+var array<string> ASIVERD = array.from("NOMINAL", "NOMINAL", "NOMINAL", "NOMINAL", "NOMINAL")
+
+// ── symbol slot resolution ─────────────────────────────────────────
+// Matches big futures, micros, CME codes, cash indexes and unlevered
+// ETFs to their family slot (MES->ES, SPY/QQQ/DIA/IWM->index slots,
+// XAU/GLD->GC). Leveraged ETFs are deliberately unsupported: a 3x
+// daily-reset product changes the EV structure, and the family
+// probabilities would be wrong on it. slotSafe keeps every array.get
+// in bounds even on an unmatched symbol.
+f_slot() =>
+    string t = syminfo.ticker
+    int s = -1
+    if str.startswith(t, "ES") or str.startswith(t, "MES") or str.startswith(t, "SPX") or str.startswith(t, "SPY") or str.startswith(t, "XSP") or str.startswith(t, "VOO")
+        s := 0
+    else if str.startswith(t, "NQ") or str.startswith(t, "MNQ") or str.startswith(t, "NDX") or str.startswith(t, "QQQ")
+        s := 1
+    else if str.startswith(t, "YM") or str.startswith(t, "MYM") or str.startswith(t, "DJI") or str.startswith(t, "DIA") or str.startswith(t, "DJ")
+        s := 2
+    else if str.startswith(t, "RTY") or str.startswith(t, "RUT") or str.startswith(t, "M2K") or str.startswith(t, "IWM")
+        s := 3
+    else if str.startswith(t, "GC") or str.startswith(t, "MGC") or str.startswith(t, "XAU") or str.startswith(t, "GLD")
+        s := 4
+    s
+
+int slot = f_slot()
+bool supported = slot >= 0
+int slotSafe = math.max(slot, 0)
+string volSym = array.get(VOLS, slotSafe)
+string ldnVerd = array.get(LDNVERD, slotSafe)
+string asiVerd = array.get(ASIVERD, slotSafe)
+bool ldnOn = showLondon and supported and ldnVerd == "CAL"
+bool asiOn = showAsia and supported
+
+// ── helpers ─────────────────────────────────────────────────────────
+NY_TZ = "America/New_York"
+// median first-touch minute from the 09:30 open -> ET wall clock.
+// m is INT (arrMed is array<int>): keeps timestamp()+m*60000 a series
+// int — str.format_time requires int (CE10123 otherwise).
+f_med2clock(int m) =>
+    m < 0 ? "—" : str.format_time(timestamp(NY_TZ, year(time, NY_TZ), month(time, NY_TZ), dayofmonth(time, NY_TZ), 9, 30) + m * 60000, "HH:mm", NY_TZ)
+
+// session-local clock: LONDON anchored 03:00, ASIA anchored 18:00
+f_med2clockS(string kind, int m) =>
+    int hh = kind == "LONDON" ? 3 : 18
+    m < 0 ? "—" : str.format_time(timestamp(NY_TZ, year(time, NY_TZ), month(time, NY_TZ), dayofmonth(time, NY_TZ), hh, 0) + m * 60000, "HH:mm", NY_TZ)
+
+f_pos(s) =>
+    s == "Top Left" ? position.top_left : s == "Bottom Right" ? position.bottom_right : s == "Bottom Left" ? position.bottom_left : position.top_right
+
+f_tsz(s) => s == "Tiny" ? size.tiny : s == "Normal" ? size.normal : size.small
+
+f_clearLn(arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            line.delete(array.get(arr, i))
+    array.clear(arr)
+
+f_clearLb(arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            label.delete(array.get(arr, i))
+    array.clear(arr)
+
+f_clearBx(arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            box.delete(array.get(arr, i))
+    array.clear(arr)
+
+// label text: P(touch) · median arrival · cum (clock anchored per session)
+// NOTE: composed from locals — expression continuations at 4-space indent
+// parse as new statements in Pine v6 (server CE: 'Syntax error at input').
+f_rungLbl(float p, int med, float cum15) =>
+    string sP = str.tostring(p * 100, "#") + "%"
+    string sM = med >= 0 ? " · med " + f_med2clock(med) : ""
+    string sC = cum15 >= 0 ? " · " + str.tostring(cum15, "#.#") + "%" : ""
+    sP + sM + sC
+
+// session-anchored variant: anchorHH 3 (London), 18 (Asia)
+f_rungLblT(float p, int med, float cum15, int anchorHH) =>
+    string sP = str.tostring(p * 100, "#") + "%"
+    string medTxt = str.format_time(timestamp(NY_TZ, year(time, NY_TZ), month(time, NY_TZ), dayofmonth(time, NY_TZ), anchorHH, 0) + med * 60000, "HH:mm", NY_TZ)
+    string sM = med >= 0 ? " · med " + medTxt : ""
+    string sC = cum15 >= 0 ? " · " + str.tostring(cum15, "#.#") + "%" : ""
+    sP + sM + sC
+
+// ── state ───────────────────────────────────────────────────────────
+var array<line>  lnRTH  = array.new<line>()
+var array<label> lbRTH  = array.new<label>()
+var array<box>   zbxRTH = array.new<box>()
+var array<label> zlbRTH = array.new<label>()
+var array<line>  lnLDN  = array.new<line>()
+var array<label> lbLDN  = array.new<label>()
+var array<box>   zbxLDN = array.new<box>()
+var array<label> zlbLDN = array.new<label>()
+var array<line>  lnASA  = array.new<line>()
+var array<label> lbASA  = array.new<label>()
+var array<box>   zbxASA = array.new<box>()
+var array<label> zlbASA = array.new<label>()
+var float rthOpen = na
+var float ldnOpen = na
+var float asiOpen = na
+var float rthEV   = na
+var float ldnEV   = na
+var float asiEV   = na
+
+// ── runtime reads ───────────────────────────────────────────────────
+vixPrev = request.security(volSym, "1D", close[1], lookahead = barmerge.lookahead_off)
+int nyHour = hour(time, NY_TZ)
+int nyMin  = minute(time, NY_TZ)
+int nyDow  = dayofweek(time, NY_TZ)
+bool inRTH    = (nyHour == 9 and nyMin >= 30) or (nyHour >= 10 and nyHour < 16)
+bool inLondon = nyHour >= 3 and nyHour < 9
+bool inAsia   = nyHour >= 18 or nyHour < 3
+bool rthStart = inRTH and not inRTH[1]
+bool ldnStart = inLondon and not inLondon[1]
+bool asiStart = inAsia and not inAsia[1]
+
+// tEnd for the NY session (today 16:00 ET)
+f_tEndRTH() => timestamp(NY_TZ, year(time, NY_TZ), month(time, NY_TZ), dayofmonth(time, NY_TZ), 16, 0)
+
+// ── drawing primitives ──────────────────────────────────────────────
+// one rung: line + probability label; returns the level
+f_rung(S, EV, c, pTxt, side, col, sty, wid, tEnd) =>
+    float lvl = side == "up" ? S + EV * c : S - EV * c
+    array.push(lnRTH, line.new(time, lvl, tEnd, lvl, xloc = xloc.bar_time, color = col, style = sty, width = wid))
+    array.push(lbRTH, label.new(tEnd, lvl, pTxt, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = col, size = size.tiny))
+    lvl
+
+// the session anchor: THE reference every rung of that session is
+// measured from. Solid bright line, session-colored, price in label.
+f_anchor(pArr, pLbl, S, col, tEnd, tag) =>
+    array.push(pArr, line.new(time, S, tEnd, S, xloc = xloc.bar_time, color = col, style = line.style_solid, width = 3))
+    array.push(pLbl, label.new(tEnd, S, tag + " OPEN " + str.tostring(S, format.mintick), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(col, 25), textcolor = color.white, size = size.tiny))
+
+// extension zones behind a rung (TYPICAL/DEEP/STRETCH), one side.
+// Zone boxes go to the caller's array so every session shares this.
+f_zone(bxArr, lbArr, S, EV, c, e50, e75, e90, isUp, tEnd) =>
+    float sgn  = isUp ? 1.0 : -1.0
+    float base = S + sgn * EV * c
+    float z1 = base + sgn * EV * e50
+    float z2 = base + sgn * EV * e75
+    float z3 = base + sgn * EV * e90
+    array.push(bxArr, box.new(time, math.max(base, z1), tEnd, math.min(base, z1), xloc = xloc.bar_time, bgcolor = color.new(#9e9e9e, 78), border_color = color.new(#9e9e9e, 45)))
+    array.push(bxArr, box.new(time, math.max(z1, z2), tEnd, math.min(z1, z2), xloc = xloc.bar_time, bgcolor = color.new(#2196f3, 78), border_color = color.new(#2196f3, 45)))
+    array.push(bxArr, box.new(time, math.max(z2, z3), tEnd, math.min(z2, z3), xloc = xloc.bar_time, bgcolor = color.new(#ff9800, 78), border_color = color.new(#ff9800, 45)))
+    if zoneLbls
+        array.push(lbArr, label.new(tEnd, (base + z1) / 2, "TYPICAL", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = #9e9e9e, size = size.tiny))
+        array.push(lbArr, label.new(tEnd, (z1 + z2) / 2, "DEEP",     xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = #2196f3, size = size.tiny))
+        array.push(lbArr, label.new(tEnd, (z2 + z3) / 2, "STRETCH",  xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = #ff9800, size = size.tiny))
+
+// ── NY (RTH) session build ──────────────────────────────────────────
+if rthStart and showRTH and supported
+    f_clearLn(lnRTH)
+    f_clearLb(lbRTH)
+    f_clearBx(zbxRTH)
+    f_clearLb(zlbRTH)
+    rthOpen := open
+    rthEV   := open * vixPrev / math.sqrt(252) / 100.0
+    if not na(rthEV) and rthEV > 0
+        int tEnd = f_tEndRTH()
+        int dIdx = nyDow == dayofweek.monday ? 0 : nyDow == dayofweek.tuesday ? 1 : nyDow == dayofweek.wednesday ? 2 : nyDow == dayofweek.thursday ? 3 : 4
+        int base8 = slot * 8
+        int base5 = slot * 5
+        int aBase = slot * 16
+        int cBase = slot * 80
+        int eBase = slot * 24
+        float wU = dowAdjust ? array.get(wUpDOW, base5 + dIdx) : 1.0
+        float wD = dowAdjust ? array.get(wDnDOW, base5 + dIdx) : 1.0
+        // zones behind the 35% rung: zone rows 0 (up) and 1 (dn)
+        if showZones and showWork
+            float c35u = array.get(cUpRTH, base8 + 3) * wU
+            float c35d = array.get(cDnRTH, base8 + 3) * wD
+            f_zone(zbxRTH, zlbRTH, rthOpen, rthEV, c35u, array.get(revExt, eBase + 0), array.get(revExt, eBase + 1), array.get(revExt, eBase + 2), true, tEnd)
+            f_zone(zbxRTH, zlbRTH, rthOpen, rthEV, c35d, array.get(revExt, eBase + 3), array.get(revExt, eBase + 4), array.get(revExt, eBase + 5), false, tEnd)
+        // rungs — EVERY rung now has an arrival row (16 rows = 8 rungs x 2),
+        // so all labels carry median arrival + by-15:00 cumulative
+        for j = 0 to 7
+            bool inner = j <= 2
+            bool work = j == 3 or j == 4
+            bool tail = j >= 5
+            bool want = (inner and showInner) or (work and showWork) or (tail and showTails)
+            if want
+                float p = array.get(PROBS, j)
+                float cu = array.get(cUpRTH, base8 + j) * wU
+                float cd_ = array.get(cDnRTH, base8 + j) * wD
+                int aRow = j * 2
+                int medU = array.get(arrMed, aBase + aRow)
+                int medD = array.get(arrMed, aBase + aRow + 1)
+                float cumU = array.get(arrCum, cBase + aRow * 5 + 4)
+                float cumD = array.get(arrCum, cBase + (aRow + 1) * 5 + 4)
+                color colU = inner ? #1b7f4b : work ? #0d5c33 : color.new(#0d5c33, 25)
+                color colD = inner ? #b3341f : work ? #8f1f14 : color.new(#8f1f14, 25)
+                int wid = work ? 2 : 1
+                string sty = inner or tail ? line.style_dotted : line.style_solid
+                f_rung(rthOpen, rthEV, cu, f_rungLbl(p, medU, cumU), "up", colU, sty, wid, tEnd)
+                f_rung(rthOpen, rthEV, cd_, f_rungLbl(p, medD, cumD), "dn", colD, sty, wid, tEnd)
+        // the anchor: where the whole ladder is measured from
+        f_anchor(lnRTH, lbRTH, rthOpen, #1565c0, tEnd, "RTH 09:30")
+        // the session frame: shade between the 80% rungs (up vs dn) —
+        // the band ~80% of days live inside. This is the 'typical day'
+        // zone a trader reads first; extension zones (35%+) are the tail.
+        if showZones
+            float p80u = array.get(cUpRTH, base8) * wU
+            float p80d = array.get(cDnRTH, base8) * wD
+            float frU = rthOpen + rthEV * p80u
+            float frD = rthOpen - rthEV * p80d
+            array.push(zbxRTH, box.new(time, frU, tEnd, frD, xloc = xloc.bar_time, bgcolor = color.new(#1565c0, 92), border_color = color.new(#1565c0, 30)))
+
+// ── London / Asia anchors ───────────────────────────────────────────
+if ldnStart
+    f_clearLn(lnLDN)
+    f_clearLb(lbLDN)
+    f_clearBx(zbxLDN)
+    f_clearLb(zlbLDN)
+    ldnOpen := open
+    ldnEV   := open * vixPrev / math.sqrt(252) / 100.0
+if asiStart
+    f_clearLn(lnASA)
+    f_clearLb(lbASA)
+    f_clearBx(zbxASA)
+    f_clearLb(zlbASA)
+    asiOpen := open
+    asiEV   := open * vixPrev / math.sqrt(252) / 100.0
+
+// draw London FULL ladder — only where CALIBRATED, with per-session timing
+if ldnOn and ldnStart and not na(ldnEV) and ldnEV > 0
+    int tEndL = timestamp(NY_TZ, year(time, NY_TZ), month(time, NY_TZ), dayofmonth(time, NY_TZ), 9, 30)
+    int aBaseL = slot * 16
+    int cBaseL = slot * 80
+    int eBaseL = slot * 24
+    f_anchor(lnLDN, lbLDN, ldnOpen, #5d8aa8, tEndL, "LDN 03:00")
+    if showZones
+        float p80uL = array.get(cUpLDN, slot * 8)
+        float p80dL = array.get(cDnLDN, slot * 8)
+        array.push(zbxLDN, box.new(time, ldnOpen + ldnEV * p80uL, tEndL, ldnOpen - ldnEV * p80dL, xloc = xloc.bar_time, bgcolor = color.new(#5d8aa8, 92), border_color = color.new(#5d8aa8, 30)))
+    // extension zones behind the 35% rung (rows 0 up / 1 dn)
+    if showZones and showWork
+        float c35uL = array.get(cUpLDN, slot * 8 + 3)
+        float c35dL = array.get(cDnLDN, slot * 8 + 3)
+        f_zone(zbxLDN, zlbLDN, ldnOpen, ldnEV, c35uL, array.get(ldnExt, eBaseL + 0), array.get(ldnExt, eBaseL + 1), array.get(ldnExt, eBaseL + 2), true, tEndL)
+        f_zone(zbxLDN, zlbLDN, ldnOpen, ldnEV, c35dL, array.get(ldnExt, eBaseL + 3), array.get(ldnExt, eBaseL + 4), array.get(ldnExt, eBaseL + 5), false, tEndL)
+    for j = 0 to 7
+        bool inner = j <= 2
+        bool work = j == 3 or j == 4
+        bool tail = j >= 5
+        bool want = (inner and showInner) or (work and showWork) or (tail and showTails)
+        if want
+            float p = array.get(PROBS, j)
+            int aRowL = j * 2
+            int medU_L = array.get(ldnMed, aBaseL + aRowL)
+            int medD_L = array.get(ldnMed, aBaseL + aRowL + 1)
+            float cumU_L = array.get(ldnCum, cBaseL + aRowL * 5 + 4)
+            float cumD_L = array.get(ldnCum, cBaseL + (aRowL + 1) * 5 + 4)
+            float lvlU = ldnOpen + ldnEV * array.get(cUpLDN, slot * 8 + j)
+            float lvlD = ldnOpen - ldnEV * array.get(cDnLDN, slot * 8 + j)
+            color colU = inner ? #2e6da4 : work ? #2e6da4 : color.new(#2e6da4, 20)
+            color colD = inner ? #a85643 : work ? #a85643 : color.new(#a85643, 25)
+            int widL = work ? 2 : 1
+            string styL = inner or tail ? line.style_dotted : line.style_dashed
+            array.push(lnLDN, line.new(time, lvlU, tEndL, lvlU, xloc = xloc.bar_time, color = colU, style = styL, width = widL))
+            array.push(lbLDN, label.new(tEndL, lvlU, "LDN " + f_rungLblT(p, medU_L, cumU_L, 3), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = colU, size = size.tiny))
+            array.push(lnLDN, line.new(time, lvlD, tEndL, lvlD, xloc = xloc.bar_time, color = colD, style = styL, width = widL))
+            array.push(lbLDN, label.new(tEndL, lvlD, "LDN " + f_rungLblT(p, medD_L, cumD_L, 3), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = colD, size = size.tiny))
+
+// draw Asia FULL ladder (NOMINAL — indicative), with per-session timing.
+// Asia opens 18:00 ET, runs to 03:00 next day; anchor-18:00 + 9h avoids
+// a calendar-date+1 that can overflow the month.
+if asiOn and asiStart and not na(asiEV) and asiEV > 0
+    int tEndA = timestamp(NY_TZ, year(time, NY_TZ), month(time, NY_TZ), dayofmonth(time, NY_TZ), 18, 0) + 9 * 3600000
+    int aBaseA = slot * 16
+    int cBaseA = slot * 80
+    int eBaseA = slot * 24
+    f_anchor(lnASA, lbASA, asiOpen, #7c7c1e, tEndA, "ASIA 18:00")
+    if showZones
+        float p80uA = array.get(cUpASA, slot * 8)
+        float p80dA = array.get(cDnASA, slot * 8)
+        array.push(zbxASA, box.new(time, asiOpen + asiEV * p80uA, tEndA, asiOpen - asiEV * p80dA, xloc = xloc.bar_time, bgcolor = color.new(#7c7c1e, 92), border_color = color.new(#7c7c1e, 30)))
+    // extension zones behind the 35% rung (rows 0 up / 1 dn) — NOMINAL,
+    // indicative only, per the Asia verdict
+    if showZones and showWork
+        float c35uA = array.get(cUpASA, slot * 8 + 3)
+        float c35dA = array.get(cDnASA, slot * 8 + 3)
+        f_zone(zbxASA, zlbASA, asiOpen, asiEV, c35uA, array.get(asiExt, eBaseA + 0), array.get(asiExt, eBaseA + 1), array.get(asiExt, eBaseA + 2), true, tEndA)
+        f_zone(zbxASA, zlbASA, asiOpen, asiEV, c35dA, array.get(asiExt, eBaseA + 3), array.get(asiExt, eBaseA + 4), array.get(asiExt, eBaseA + 5), false, tEndA)
+    for j = 0 to 7
+        bool inner = j <= 2
+        bool work = j == 3 or j == 4
+        bool tail = j >= 5
+        bool want = (inner and showInner) or (work and showWork) or (tail and showTails)
+        if want
+            float p = array.get(PROBS, j)
+            int aRowA = j * 2
+            int medU_A = array.get(asiMed, aBaseA + aRowA)
+            int medD_A = array.get(asiMed, aBaseA + aRowA + 1)
+            float cumU_A = array.get(asiCum, cBaseA + aRowA * 5 + 4)
+            float cumD_A = array.get(asiCum, cBaseA + (aRowA + 1) * 5 + 4)
+            color colU = inner ? #8d8a1e : work ? #6e6c14 : color.new(#6e6c1e, 20)
+            color colD = inner ? #8d8a1e : work ? #6e6c1e : color.new(#6e6c1e, 20)
+            int widA = work ? 2 : 1
+            float lvlU = asiOpen + asiEV * array.get(cUpASA, slot * 8 + j)
+            float lvlD = asiOpen - asiEV * array.get(cDnASA, slot * 8 + j)
+            array.push(lnASA, line.new(time, lvlU, tEndA, lvlU, xloc = xloc.bar_time, color = colU, style = line.style_dotted, width = widA))
+            array.push(lbASA, label.new(tEndA, lvlU, "ASIA* " + f_rungLblT(p, medU_A, cumU_A, 18), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = colU, size = size.tiny))
+            array.push(lnASA, line.new(time, lvlD, tEndA, lvlD, xloc = xloc.bar_time, color = colD, style = line.style_dotted, width = widA))
+            array.push(lbASA, label.new(tEndA, lvlD, "ASIA* " + f_rungLblT(p, medD_A, cumD_A, 18), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = colD, size = size.tiny))
+
+// ── dashboard ────────────────────────────────────────────────────────
+var table tbl = na
+if showTable and barstate.islast
+    if not na(tbl)
+        table.delete(tbl)
+    // rows: 3 (title+VIX+header) + 16 arrival rows + 2 (verdict+disclaimer)
+    tbl := table.new(f_pos(tblPos), 7, 21, bgcolor = color.new(color.black, 30), border_color = color.new(color.gray, 70), frame_color = color.new(color.gray, 50), frame_width = 1)
+    if supported
+        int row = 0
+        table.cell(tbl, 0, row, "EV STACK · " + syminfo.ticker + " · " + str.format_time(time, "EEE HH:mm", NY_TZ), text_color = color.white, text_size = f_tsz(tblSizeIn))
+        table.merge_cells(tbl, 0, row, 6, row)
+        row += 1
+        string evS = na(rthEV) or rthEV <= 0 ? "—" : str.tostring(rthEV, format.mintick)
+        table.cell(tbl, 0, row, "VIX " + (na(vixPrev) ? "—" : str.tostring(vixPrev, "#.##")) + " → EV " + evS + " pts" + (dowAdjust ? " · dow-adj" : ""), text_color = color.silver, text_size = f_tsz(tblSizeIn))
+        table.merge_cells(tbl, 0, row, 6, row)
+        row += 1
+        string[] hdr = array.from("rung", "med arr", "by 11", "by 13:30", "by 15", "die@", "back@")
+        for c = 0 to 6
+            table.cell(tbl, c, row, array.get(hdr, c), text_color = color.gray, text_size = f_tsz(tblSizeIn))
+        row += 1
+        // arrival rows: 16 per symbol, rung-major (80up,80dn,65up,65dn,...,5dn)
+        int aBase = slot * 16
+        int cBase = slot * 80
+        int rBase = slot * 16
+        for ai = 0 to 16 - 1
+            int j = ai / 2   // rung index 0..7, up then dn per rung
+            string side = ai % 2 == 0 ? "up" : "dn"
+            float p = array.get(PROBS, j)
+            string medS = f_med2clock(array.get(arrMed, aBase + ai))
+            string c11 = str.tostring(array.get(arrCum, cBase + ai * 5 + 1), "#.#") + "%"
+            string c1330 = str.tostring(array.get(arrCum, cBase + ai * 5 + 3), "#.#") + "%"
+            string c15 = str.tostring(array.get(arrCum, cBase + ai * 5 + 4), "#.#") + "%"
+            // die/back: zone rows are priority rungs only (j 3..6); inner
+            // (j<3) and the 5% tail (j==7) have no zone row — show dash.
+            string dieS = "—"
+            string backS = "—"
+            if j >= 3 and j < 7
+                int rr = (j - 3) * 2 + ai % 2
+                float dv = array.get(revRate, rBase + rr * 2)
+                float bv = array.get(revRate, rBase + rr * 2 + 1)
+                if dv >= 0
+                    dieS := str.tostring(dv, "#") + "%"
+                if bv >= 0
+                    backS := str.tostring(bv, "#") + "%"
+            color tc = side == "up" ? #26a69a : #ef5350
+            table.cell(tbl, 0, row, str.tostring(p * 100, "#") + "% " + (side == "up" ? "▲" : "▼"), text_color = tc, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 1, row, medS,  text_color = color.white, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 2, row, c11,   text_color = color.white, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 3, row, c1330, text_color = color.white, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 4, row, c15,   text_color = color.white, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 5, row, dieS, text_color = color.white, text_size = f_tsz(tblSizeIn))
+            table.cell(tbl, 6, row, backS, text_color = color.white, text_size = f_tsz(tblSizeIn))
+            row += 1
+        table.cell(tbl, 0, row, "NY CAL · LONDON " + ldnVerd + " · ASIA " + asiVerd, text_color = color.silver, text_size = f_tsz(tblSizeIn))
+        table.merge_cells(tbl, 0, row, 6, row)
+        row += 1
+        table.cell(tbl, 0, row, "historical probabilities · not a signal", text_color = color.gray, text_size = f_tsz(tblSizeIn))
+        table.merge_cells(tbl, 0, row, 6, row)
+    else
+        table.cell(tbl, 0, 0, "EV Stack: unsupported symbol (ES/NQ/YM/RTY/GC)", text_color = color.orange, text_size = f_tsz(tblSizeIn))
+        table.merge_cells(tbl, 0, 0, 6, 0)

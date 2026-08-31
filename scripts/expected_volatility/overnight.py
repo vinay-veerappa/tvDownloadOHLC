@@ -121,17 +121,91 @@ def run(ticker: str = "ES1") -> dict:
             errs.append(abs(a - p))
 
     gap = s["gap_ev"].dropna()
+
+    # WHERE the drift lives. The 16 rungs are 16 readoffs of ONE excursion
+    # distribution, so 16/16 same-sign errors are one drift seen 16 times, not
+    # 16 independent misses — the binomial sign test overstates the evidence
+    # it was built to give. The honest questions are how big the drift is (the
+    # mx ratio) and where it sits (weekday). Individual days still scatter
+    # both ways; this is a statement about the pooled holdout only.
+    DOW = ("Mon", "Tue", "Wed", "Thu", "Fri")
+
+    def _signed(sub) -> list:
+        return [float((sub[side] >= lad[col][i]).mean() - p)
+                for i, p in enumerate(TARGET_P)
+                for side, col in (("up", "c_up"), ("dn", "c_dn"))]
+
+    by_dow = []
+    for wd in range(5):
+        sub = te[te.index.weekday == wd]
+        if len(sub) < 20:
+            continue
+        ew = _signed(sub)
+        by_dow.append({"day": DOW[wd], "n": len(sub),
+                       "mean_signed_err": round(float(np.mean(ew)), 4),
+                       "pos": int(sum(1 for x in ew if x > 0)),
+                       "n_rungs": len(ew)})
+
+    # DOES the shipped weekday fix absorb the drift? §4.9's ON multipliers
+    # were fit on the SAME train fold this ladder was, so they cannot know
+    # about a post-train scale drift by construction — but that is an
+    # argument, and the report's rule is that arguments get measured. Applied
+    # to this holdout they leave the pooled drift essentially intact
+    # (+3.5% -> +3.2%) and WIDEN Monday's miss, because Monday's multiplier
+    # was itself fit to a calmer Monday. A drift needs a REFIT, not more
+    # conditioning.
+    mult_path = OUT_DIR / f"dow_multipliers_{ticker}_ON.json"
+    mult_test = None
+    if mult_path.exists():
+        import json as _json
+        mj = _json.loads(mult_path.read_text(encoding="utf-8"))
+        wm = {r["day"]: (r["w_up"], r["w_dn"]) for r in mj["days"]}
+
+        def _signed_mult(sub, w) -> list:
+            return [float((sub[side] >= float(lad[col][i]) *
+                           (w[0] if side == "up" else w[1])).mean()) - p
+                    for i, p in enumerate(TARGET_P)
+                    for side, col in (("up", "c_up"), ("dn", "c_dn"))]
+
+        e_raw = _signed(te)
+        e_adj, adj_dow = [], []
+        for wd in range(5):
+            sub = te[te.index.weekday == wd]
+            if len(sub) < 20:
+                continue
+            day = DOW[wd]
+            ew = _signed_mult(sub, wm[day])
+            adj_dow.append({"day": day, "n": len(sub),
+                            "mean_signed_err": round(float(np.mean(ew)), 4),
+                            "pos": int(sum(1 for x in ew if x > 0)),
+                            "n_rungs": len(ew)})
+            e_adj.extend(ew)
+        mult_test = {
+            "pooled_raw": round(float(np.mean(e_raw)), 4),
+            "pooled_dow_adj": round(float(np.mean(e_adj)), 4),
+            "mon_raw": next(b["mean_signed_err"] for b in by_dow if b["day"] == "Mon"),
+            "mon_adj": next(b["mean_signed_err"] for b in adj_dow if b["day"] == "Mon"),
+            "note": ("weekday multipliers are train-fit and cannot absorb a "
+                     "post-train drift; pooled error survives and Monday "
+                     "widens"),
+        }
+
     return {
         "ticker": ticker, "session": "overnight 18:00-09:30 ET",
         "minutes": ON_MINUTES,
         "n_train": len(tr), "n_holdout": len(te),
         "first": str(s.index.min().date()), "last": str(s.index.max().date()),
         "mean_mx": round(float(tr["mx"].mean()), 4),
+        "mx_train": round(float(tr["mx"].mean()), 4),
+        "mx_holdout": round(float(te["mx"].mean()), 4),
+        "mx_ratio": round(float(te["mx"].mean() / tr["mx"].mean()), 4),
         "cal_err": round(float(np.mean(errs)), 4),
         "worst_err": round(float(np.max(errs)), 4),
         "gap_into_1800_mean_abs": round(float(gap.abs().mean()), 4),
         "gap_exceeds_0p25": round(float((gap.abs() > 0.25).mean()), 4),
         "ladder": lad.to_dict("records"), "rungs": rungs,
+        "holdout_by_dow": by_dow,
+        "dow_multiplier_test": mult_test,
     }
 
 
@@ -168,6 +242,14 @@ def main(argv: list[str] | None = None) -> int:
     k = max(npos, 16 - npos)
     p_sign = 2 * sum(math.comb(16, j) for j in range(k, 17)) / 2 ** 16
     print(f"  sign test: {npos}/16 rungs err > 0, two-sided p = {p_sign:.2g}")
+    # One drift seen 16 times is not 16 independent errors — the rungs are 16
+    # readoffs of one excursion distribution — so the sign test overstates the
+    # evidence it gives. Report the drift's SIZE and where it sits instead.
+    print(f"  excursion drift: mean mx/EV train {r['mx_train']:.4f} -> "
+          f"holdout {r['mx_holdout']:.4f}  ({r['mx_ratio']:.3f}x)")
+    print(f"  by weekday (holdout): " + ", ".join(
+        f"{b['day']} {b['mean_signed_err']:+.1%} ({b['pos']}/{b['n_rungs']})"
+        for b in r["holdout_by_dow"]))
     biased = p_sign < 0.01
     print("  VERDICT:", "BIASED — all rungs miss the same way; magnitude is at the "
           "noise floor but the direction is not"
