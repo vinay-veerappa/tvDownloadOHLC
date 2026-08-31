@@ -619,9 +619,20 @@ if showTable and barstate.islast
     warn = volChoice == "Auto (from symbol)" and not mapped ?
          "⚠ no vol index mapped for " + root + " — using " + volManual :
          nMin < 40 ? "z = |realised − promised| / SE" :
+         // BOTH-sides-high must be tested FIRST. The previous version asked
+         // `hiUp == N or hiDn == N` and then reported whichever was true,
+         // calling it "one-sided" — so a ladder too narrow on BOTH sides
+         // printed "UP side ... widen that side only". Caught live on MNQ,
+         // where the overnight ladder is 8/8 high up AND 8/8 high down; the
+         // advice would have fixed half the miss and left the other half.
+         hiUp == N and hiDn == N ?
+         "⚠ " + sideLab + " is high on all " + str.tostring(N) +
+         " rungs BOTH sides — too narrow here, widen up AND down" :
          hiUp == N or hiDn == N ?
-         "⚠ " + sideLab + " " + (hiUp == N ? "UP" : "DOWN") + " side is high on all " +
-         str.tostring(N) + " rungs here — one-sided, so widen that side only" :
+         "⚠ " + sideLab + " " + (hiUp == N ? "UP" : "DOWN") + " side high on all " +
+         str.tostring(N) + " rungs, other side " +
+         str.tostring(hiUp == N ? hiDn : hiUp) + "/" + str.tostring(N) +
+         " — one-sided, widen that side only" :
          "z = |realised − promised| / SE · signs " + str.tostring(hiUp) + "/" +
          str.tostring(N) + " up, " + str.tostring(hiDn) + "/" + str.tostring(N) + " down"
     table.cell(tbl, 0, N + 3, warn, text_color = cTextDim, bgcolor = cBgPri,
