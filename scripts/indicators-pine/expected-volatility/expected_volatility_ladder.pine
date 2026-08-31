@@ -742,20 +742,28 @@ if showTable and barstate.islast
          "⚠ no ladder fitted for " + root + " — borrowing ES; the z column is "
          + "the only thing standing behind these levels" :
          nMin < 40 ? "z = |realised − promised| / SE" :
-         // BOTH-sides-high must be tested FIRST. The previous version asked
-         // `hiUp == N or hiDn == N` and then reported whichever was true,
-         // calling it "one-sided" — so a ladder too narrow on BOTH sides
-         // printed "UP side ... widen that side only". Caught live on MNQ,
-         // where the overnight ladder is 8/8 high up AND 8/8 high down; the
-         // advice would have fixed half the miss and left the other half.
+         // "One-sided" is a claim about BOTH sides, so it cannot be made from
+         // one of them. The first version tested `hiUp == N or hiDn == N` and
+         // called whichever fired one-sided; the second tested 8-and-8 first,
+         // which fixed only the exact tie. Measured across six instruments,
+         // 8/8-up with 7/8-down still printed "one-sided" on MNQ and MGC — the
+         // other side was running high on seven of eight rungs by up to 12pp.
+         //
+         // So no verdict is composed at all now. Each side is described only
+         // when it is UNAMBIGUOUS — high on every rung, or high on none — and
+         // the other side's raw count is always shown next to it. A directive
+         // that cannot be wrong is worth more than one that reads well.
          hiUp == N and hiDn == N ?
-         "⚠ " + sideLab + " is high on all " + str.tostring(N) +
-         " rungs BOTH sides — too narrow here, widen up AND down" :
-         hiUp == N or hiDn == N ?
-         "⚠ " + sideLab + " " + (hiUp == N ? "UP" : "DOWN") + " side high on all " +
-         str.tostring(N) + " rungs, other side " +
-         str.tostring(hiUp == N ? hiDn : hiUp) + "/" + str.tostring(N) +
-         " — one-sided, widen that side only" :
+         "⚠ " + sideLab + " high on all " + str.tostring(N) +
+         " rungs BOTH sides — too narrow, widen up AND down" :
+         hiUp == 0 and hiDn == 0 ?
+         "⚠ " + sideLab + " high on NO rung either side — too wide, narrow both" :
+         hiUp == N or hiUp == 0 or hiDn == N or hiDn == 0 ?
+         "⚠ " + sideLab + " " +
+         (hiUp == N ? "UP too narrow (8/8 high)" : hiUp == 0 ? "UP too wide (0/8 high)" :
+          hiDn == N ? "DOWN too narrow (8/8 high)" : "DOWN too wide (0/8 high)") +
+         " · other side " +
+         str.tostring(hiUp == N or hiUp == 0 ? hiDn : hiUp) + "/" + str.tostring(N) :
          "z = |realised − promised| / SE · signs " + str.tostring(hiUp) + "/" +
          str.tostring(N) + " up, " + str.tostring(hiDn) + "/" + str.tostring(N) + " down"
     table.cell(tbl, 0, N + 3, warn, text_color = cTextDim, bgcolor = cBgPri,
