@@ -210,6 +210,14 @@ def collect(ticker: str = "ES1") -> dict:
         "gap": gap, "repl": repl,
         "har_beta": [float(b) for b in ses.har_beta],
         "blend_beta": [float(b) for b in ses.blend_beta],
+        "brk_rth": jload(f"bracket_{ticker}_RTH.json"),
+        "brk_on": jload(f"bracket_{ticker}_ON.json"),
+        "tim_rth": jload(f"timing_{ticker}_RTH.json"),
+        "tim_on": jload(f"timing_{ticker}_ON.json"),
+        "sea_rth": jload(f"seasonality_{ticker}_RTH.json"),
+        "sea_on": jload(f"seasonality_{ticker}_ON.json"),
+        "dow_rth": jload(f"dow_multipliers_{ticker}_RTH.json"),
+        "dow_on": jload(f"dow_multipliers_{ticker}_ON.json"),
         "variants": jload(f"variants_{ticker}.json"),
         "cond": jload(f"conditioning_{ticker}_{ANCHOR}.json"),
         "play_close": jload(f"playbook_{ticker}.json"),
@@ -593,6 +601,81 @@ def build_markdown(d: dict) -> str:
       "does not — on the open anchor it is flat noise around 50%.")
     A("")
 
+    # ------------------------------------------------------------ 3.4
+    br, bn = d.get("brk_rth"), d.get("brk_on")
+    if br and bn:
+        A("### 3.4 A bracket around these levels is a fair game")
+        A("")
+        A("The ladder reports *marginal* touch rates. No trading decision asks "
+          "for one. A bracket asks which of two levels is reached **first**, "
+          "and the marginal rates cannot answer that, because on most sessions "
+          "both are touched. So the race was measured directly "
+          "(`bracket.py`), over all 64 target/stop rung pairs, each side.")
+        A("")
+        A("| session | geometry edge | drift | unresolved |")
+        A("|---|---|---|---|")
+        for k, x in (("RTH", br), ("Overnight", bn)):
+            A(f"| {k} | **{x['geometry_edge_pp']:+.2f} pp** | "
+              f"{x['drift_pp']:+.2f} pp | — |")
+        A("")
+        A("*Geometry edge* is `P(target first | the race was decided)` minus "
+          "the breakeven `b/(a+b)`, averaged over the mirrored long/short pair "
+          "so that the sample's directional drift cancels to first order. It is "
+          "zero to two decimal places. **Your win rate is exactly what your "
+          "bracket geometry says it is**, and the only remaining levers are "
+          "refusing brackets whose arithmetic never worked, and costs.")
+        A("")
+        A("Two traps were live in the first version of this measurement, and "
+          "both are worth stating because they are easy to repeat.")
+        A("")
+        A("**`win - breakeven` is not a test of the market.** For a driftless "
+          "random walk run to *infinity*, `P(+a before -b) = b/(a+b)` exactly. "
+          "A session is finite: on a wide bracket most sessions end having "
+          f"touched neither leg — up to **{max(1 - r['resolved'] for r in br['grids']['long']):.1%}** "
+          "of them — and that probability is subtracted from both sides. The "
+          "naive metric therefore read about **-19 pp on every bracket** and "
+          "grew more negative the wider the bracket got. It was measuring the "
+          "horizon, not the market.")
+        A("")
+        A("**Long and short are not two independent readings.** ES rose a great "
+          "deal over this window, so a long bracket inherits that drift and a "
+          "short one pays it. Reading the long column alone would have called "
+          "the drift an edge.")
+        A("")
+
+    # ------------------------------------------------------------ 3.5
+    tr_, tn = d.get("tim_rth"), d.get("tim_on")
+    if tr_ and tn and br:
+        A("### 3.5 Runner conversion — the one thing that is conditional")
+        A("")
+        A("The §3.2 null cannot distinguish *no effect* from *two effects that "
+          "cancel*, because it averages over time-of-touch: a rung reached at "
+          "10:00 leaves six hours of session, the same rung at 15:30 leaves "
+          "twenty minutes. Splitting by session quarter (`timing.py`):")
+        A("")
+        A("| quarter of session | RTH | overnight |")
+        A("|---|---|---|")
+        for i, bkt in enumerate(tr_["pooled"]):
+            on = tn["pooled"][i] if i < len(tn["pooled"]) else None
+            A(f"| {bkt['bucket']} | {bkt['convert']:.1%} | "
+              f"{on['convert']:.1%} |" if on else "|")
+        A("")
+        A("*Runner conversion* is `P(the next rung out is also reached | this "
+          "one was)`. The level is identical in every row; what differs is how "
+          "much session remains to travel through it. This is the one "
+          "conditional statement in the report that is both large and clean.")
+        A("")
+        A("The obvious companion measure — the move from the rung to the "
+          "session close — is tabulated by `timing.py` but is **not** reported "
+          "as an edge, for two reasons found by running it. Rungs are "
+          "**nested**, so one session contributes up to eight rows to the same "
+          "pooled mean and the naive pooled `t` reached 3.93 on 887 sessions. "
+          "And continuation-to-close is *mechanically* bounded near zero for "
+          "late touches, because a rung first reached at 15:50 leaves no time "
+          "to come back — the measure is weakest exactly where it looks "
+          "strongest.")
+        A("")
+
     # ------------------------------------------------------------ 4
     A("---")
     A("## 4. The inputs")
@@ -801,6 +884,81 @@ def build_markdown(d: dict) -> str:
 
     # ------------------------------------------------------------ 5
     A("---")
+    # ------------------------------------------------------------ 4.9
+    sr, sn = d.get("sea_rth"), d.get("sea_on")
+    dr, dn_ = d.get("dow_rth"), d.get("dow_on")
+    if sr and sn and dr and dn_:
+        A("### 4.9 The ladder is day-of-week dependent")
+        A("")
+        A("A pooled ladder assumes every weekday draws from one excursion "
+          "distribution. It does not. Kruskal-Wallis across the five weekdays "
+          f"gives **H = {sr['kruskal_H']}, p = {sr['kruskal_p']:.2g}** for RTH "
+          f"and **H = {sn['kruskal_H']}, p = {sn['kruskal_p']:.2g}** overnight, "
+          f"on {sr['n']} sessions.")
+        A("")
+        A("`scale` is that weekday's typical excursion relative to the pooled "
+          "ladder: 0.83 means the drawn levels are 17% too wide.")
+        A("")
+        A("| day | RTH scale | t | RTH rungs high | ON scale | t | ON rungs high |")
+        A("|---|---|---|---|---|---|---|")
+        for i, row in enumerate(sr["days"]):
+            o = sn["days"][i]
+            A(f"| {row['day']} | {row['scale']:.3f} | {row['t_vs_pool']:+.2f} | "
+              f"{row['rungs_high']}/{row['rungs_total']} | {o['scale']:.3f} | "
+              f"{o['t_vs_pool']:+.2f} | {o['rungs_high']}/{o['rungs_total']} |")
+        A("")
+        mon = next(r for r in sr["days"] if r["day"] == "Mon")
+        A(f"**Monday RTH is the finding**: scale {mon['scale']:.3f}, "
+          f"t = {mon['t_vs_pool']:+.2f}, which survives a Bonferroni correction "
+          "across every comparison in this section. It is also *asymmetric* — "
+          "the miss is **-8.60 pp on the down side with 0 of 8 rungs high**, "
+          "against -0.44 pp and 4 of 8 on the up side. The mechanism is not "
+          "folklore: VIX is quoted in calendar time and Friday's close carries "
+          "the weekend, so it prices two extra days of crash risk that Monday's "
+          "realised downside usually does not deliver. The fear is in the "
+          "input; it is not in the outcome.")
+        A("")
+        A("The prediction going in had the opposite sign, and for the wrong "
+          "session. A Sunday 18:00 open follows ~49 hours of unpriceable news, "
+          "so the overnight session was expected to run wide; it scores "
+          f"{next(r for r in sn['days'] if r['day'] == 'Mon')['scale']:.3f}, "
+          "flat. The weekend premium lands in Monday's *day* session.")
+        A("")
+        A("This also retires a standing claim in earlier drafts and in the Pine "
+          "header, that the overnight UP side runs narrow on 8 of 8 rungs and "
+          "wants a fixed 1.15-1.30 multiplier. Over 1084 sessions rather than "
+          "75, the pooled overnight up bias is **+0.80 pp**, and it is the "
+          "average of **Thursday +5.68 pp** and **Tuesday -6.08 pp**. It was a "
+          "weekday effect being read as a constant, and a constant multiplier "
+          "would have worsened Tuesday by as much as it helped Thursday.")
+        A("")
+        A("#### Correcting for it")
+        A("")
+        A("One width multiplier per weekday **per side** — a shared per-day "
+          "scalar destroys Monday's asymmetry, which is the actual signal, and "
+          "degrades monotonically against the holdout. Each is the geometric "
+          "mean excursion ratio on the train fold, then **shrunk halfway to "
+          "1.0**. Unshrunk they make the RTH holdout *worse* "
+          f"({dr['holdout_err_raw']:.2%} to 5.23%): ten parameters against ~40 "
+          "holdout sessions per weekday is more fit than the data supports. "
+          "0.5 is deliberately not the argmax on either series — RTH peaks at "
+          "0.25 and ON at 1.0 — it is the one value that improves both, chosen "
+          "that way so the shrinkage is not itself fitted to the holdout.")
+        A("")
+        A("| day | RTH up | RTH down | ON up | ON down |")
+        A("|---|---|---|---|---|")
+        for i, row in enumerate(dr["days"]):
+            o = dn_["days"][i]
+            A(f"| {row['day']} | {row['w_up']:.3f} | {row['w_dn']:.3f} | "
+              f"{o['w_up']:.3f} | {o['w_dn']:.3f} |")
+        A("")
+        A("Holdout mean absolute calibration error, all five weekdays and both "
+          f"sides: **{dr['holdout_err_raw']:.2%} to {dr['holdout_err_adj']:.2%}** "
+          f"(RTH) and **{dn_['holdout_err_raw']:.2%} to "
+          f"{dn_['holdout_err_adj']:.2%}** (overnight). Both improve, which is "
+          "the only reason they ship.")
+        A("")
+
     A("## 5. Using it")
     A("")
     A("### 5.1 The ladder")
@@ -908,8 +1066,20 @@ def check_not_stale(md: str) -> list[str]:
     """
     problems: list[str] = []
 
-    def forbid(cond: bool, pattern: str, why: str) -> None:
-        if cond and re.search(pattern, md, flags=re.I | re.S):
+    # A report that RETIRES a claim has to be able to state what it retired.
+    # Matching the raw text cannot tell "X is true" from "X was believed and is
+    # now retired", so the first version of the §4.9 rule fired on §4.9 itself.
+    # Sentences carrying an explicit retraction cue are dropped before matching:
+    # the gate then tests whether a claim is being ASSERTED, not merely quoted.
+    # This is the narrow fix. Deleting the rule instead is how a gate dies.
+    RETRACT = (r"retire|withdrew|withdrawn|no longer|used to|earlier draft|"
+               r"was read as|superseded|turned out|it was a|rather than 75")
+    live = " ".join(seg for seg in re.split(r"(?<=[.!?])\s+", md)
+                    if not re.search(RETRACT, seg, flags=re.I))
+
+    def forbid(cond: bool, pattern: str, why: str, scope: str = "live") -> None:
+        text = live if scope == "live" else md
+        if cond and re.search(pattern, text, flags=re.I | re.S):
             problems.append(f"matches /{pattern}/, but {why}")
 
     forbid((OUT_DIR / "variants_ES1.json").exists(),
@@ -926,6 +1096,27 @@ def check_not_stale(md: str) -> list[str]:
            "both anchors are measured (§3.2)")
     forbid(True, r"continuation levels, not reversal levels",
            "that headline was withdrawn by the anchor control")
+    forbid((OUT_DIR / "seasonality_ES1_RTH.json").exists(),
+           r"day[- ]of[- ]week[^.]{0,90}(not (yet )?(tested|measured|studied)|is open)",
+           "seasonality.py has run — weekday dependence is measured (§4.9)")
+    forbid((OUT_DIR / "seasonality_ES1_RTH.json").exists(),
+           r"overnight UP side[^.]{0,60}8\s*(of|/)\s*8[^.]{0,80}1\.15",
+           "the 8/8 + fixed-1.15-1.30 advice was retired by §4.9; the pooled "
+           "bias is +0.80pp and is a weekday effect. A sentence QUOTING the "
+           "retired claim must say so — do not restate it as live")
+    forbid((OUT_DIR / "bracket_ES1_RTH.json").exists(),
+           r"(first passage|which (level|leg) is (reached|hit) first)[^.]{0,90}"
+           r"(cannot be|is not) (measured|known)",
+           "bracket.py measures the race directly (§3.4)")
+    forbid((OUT_DIR / "timing_ES1_RTH.json").exists(),
+           r"time[- ]of[- ]touch[^.]{0,90}(untested|not conditioned|still open)",
+           "timing.py has run — touches are split by session quarter (§3.5)")
+    # The two measurement traps §3.4 and §3.5 document. Restating either metric
+    # as valid would undo the reason those sections exist.
+    forbid(True, r"win\s*(rate)?\s*minus breakeven[^.]{0,60}(is|as) the edge",
+           "that metric measures the finite horizon, not the market (§3.4)")
+    forbid(True, r"continuation[- ]to[- ]close[^.]{0,70}(is|shows) an edge",
+           "it is mechanically bounded for late touches (§3.5)")
 
     # Internal cross-references must resolve. References to the plan share this
     # document's numbering, so they must be written "DATA_PLAN §x.y" and are

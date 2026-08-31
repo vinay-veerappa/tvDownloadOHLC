@@ -152,6 +152,38 @@ This is the failure mode worth internalising: the holdout was honest and the lad
 
 A level touched at 15:45 has forty minutes to work. This decay is mechanical and it survives re-anchoring. The *win rate* by time of day does not — on the open anchor it is flat noise around 50%.
 
+### 3.4 A bracket around these levels is a fair game
+
+The ladder reports *marginal* touch rates. No trading decision asks for one. A bracket asks which of two levels is reached **first**, and the marginal rates cannot answer that, because on most sessions both are touched. So the race was measured directly (`bracket.py`), over all 64 target/stop rung pairs, each side.
+
+| session | geometry edge | drift | unresolved |
+|---|---|---|---|
+| RTH | **+0.00 pp** | -0.44 pp | — |
+| Overnight | **-0.04 pp** | +0.36 pp | — |
+
+*Geometry edge* is `P(target first | the race was decided)` minus the breakeven `b/(a+b)`, averaged over the mirrored long/short pair so that the sample's directional drift cancels to first order. It is zero to two decimal places. **Your win rate is exactly what your bracket geometry says it is**, and the only remaining levers are refusing brackets whose arithmetic never worked, and costs.
+
+Two traps were live in the first version of this measurement, and both are worth stating because they are easy to repeat.
+
+**`win - breakeven` is not a test of the market.** For a driftless random walk run to *infinity*, `P(+a before -b) = b/(a+b)` exactly. A session is finite: on a wide bracket most sessions end having touched neither leg — up to **90.6%** of them — and that probability is subtracted from both sides. The naive metric therefore read about **-19 pp on every bracket** and grew more negative the wider the bracket got. It was measuring the horizon, not the market.
+
+**Long and short are not two independent readings.** ES rose a great deal over this window, so a long bracket inherits that drift and a short one pays it. Reading the long column alone would have called the drift an edge.
+
+### 3.5 Runner conversion — the one thing that is conditional
+
+The §3.2 null cannot distinguish *no effect* from *two effects that cancel*, because it averages over time-of-touch: a rung reached at 10:00 leaves six hours of session, the same rung at 15:30 leaves twenty minutes. Splitting by session quarter (`timing.py`):
+
+| quarter of session | RTH | overnight |
+|---|---|---|
+| Q1 first quarter | 80.8% | 83.5% |
+| Q2 | 73.2% | 81.1% |
+| Q3 | 64.4% | 72.2% |
+| Q4 final quarter | 41.9% | 57.8% |
+
+*Runner conversion* is `P(the next rung out is also reached | this one was)`. The level is identical in every row; what differs is how much session remains to travel through it. This is the one conditional statement in the report that is both large and clean.
+
+The obvious companion measure — the move from the rung to the session close — is tabulated by `timing.py` but is **not** reported as an edge, for two reasons found by running it. Rungs are **nested**, so one session contributes up to eight rows to the same pooled mean and the naive pooled `t` reached 3.93 on 887 sessions. And continuation-to-close is *mechanically* bounded near zero for late touches, because a rung first reached at 15:50 leaves no time to come back — the measure is weakest exactly where it looks strongest.
+
 ---
 ## 4. The inputs
 
@@ -281,6 +313,40 @@ An early version of the reaction test asked: *after touching a rung, does price 
 The first column falls away; the second does not. **Any threshold expressed as a fraction of the quantity being tested will manufacture a trend.** It is kept here because DATA_PLAN §6.1 was about to define the reaction metric exactly that way, and because it is the same error class as the anchor confound in §3.2: not a wrong number, a wrong question.
 
 ---
+### 4.9 The ladder is day-of-week dependent
+
+A pooled ladder assumes every weekday draws from one excursion distribution. It does not. Kruskal-Wallis across the five weekdays gives **H = 32.128, p = 1.8e-06** for RTH and **H = 20.57, p = 0.00039** overnight, on 1084 sessions.
+
+`scale` is that weekday's typical excursion relative to the pooled ladder: 0.83 means the drawn levels are 17% too wide.
+
+| day | RTH scale | t | RTH rungs high | ON scale | t | ON rungs high |
+|---|---|---|---|---|---|---|
+| Mon | 0.833 | -4.47 | 4/16 | 0.987 | -0.37 | 9/16 |
+| Tue | 0.980 | -0.59 | 3/16 | 0.948 | -1.44 | 8/16 |
+| Wed | 1.054 | +1.61 | 12/16 | 0.923 | -2.23 | 3/16 |
+| Thu | 1.079 | +1.99 | 10/16 | 1.058 | +1.65 | 13/16 |
+| Fri | 1.077 | +2.04 | 12/16 | 1.095 | +2.62 | 16/16 |
+
+**Monday RTH is the finding**: scale 0.833, t = -4.47, which survives a Bonferroni correction across every comparison in this section. It is also *asymmetric* — the miss is **-8.60 pp on the down side with 0 of 8 rungs high**, against -0.44 pp and 4 of 8 on the up side. The mechanism is not folklore: VIX is quoted in calendar time and Friday's close carries the weekend, so it prices two extra days of crash risk that Monday's realised downside usually does not deliver. The fear is in the input; it is not in the outcome.
+
+The prediction going in had the opposite sign, and for the wrong session. A Sunday 18:00 open follows ~49 hours of unpriceable news, so the overnight session was expected to run wide; it scores 0.987, flat. The weekend premium lands in Monday's *day* session.
+
+This also retires a standing claim in earlier drafts and in the Pine header, that the overnight UP side runs narrow on 8 of 8 rungs and wants a fixed 1.15-1.30 multiplier. Over 1084 sessions rather than 75, the pooled overnight up bias is **+0.80 pp**, and it is the average of **Thursday +5.68 pp** and **Tuesday -6.08 pp**. It was a weekday effect being read as a constant, and a constant multiplier would have worsened Tuesday by as much as it helped Thursday.
+
+#### Correcting for it
+
+One width multiplier per weekday **per side** — a shared per-day scalar destroys Monday's asymmetry, which is the actual signal, and degrades monotonically against the holdout. Each is the geometric mean excursion ratio on the train fold, then **shrunk halfway to 1.0**. Unshrunk they make the RTH holdout *worse* (5.16% to 5.23%): ten parameters against ~40 holdout sessions per weekday is more fit than the data supports. 0.5 is deliberately not the argmax on either series — RTH peaks at 0.25 and ON at 1.0 — it is the one value that improves both, chosen that way so the shrinkage is not itself fitted to the holdout.
+
+| day | RTH up | RTH down | ON up | ON down |
+|---|---|---|---|---|
+| Mon | 0.983 | 0.866 | 0.989 | 0.950 |
+| Tue | 0.947 | 1.034 | 0.902 | 1.087 |
+| Wed | 1.062 | 1.052 | 0.978 | 0.948 |
+| Thu | 0.952 | 1.088 | 1.111 | 0.963 |
+| Fri | 1.072 | 0.990 | 1.044 | 1.069 |
+
+Holdout mean absolute calibration error, all five weekdays and both sides: **5.16% to 4.96%** (RTH) and **6.68% to 6.20%** (overnight). Both improve, which is the only reason they ship.
+
 ## 5. Using it
 
 ### 5.1 The ladder

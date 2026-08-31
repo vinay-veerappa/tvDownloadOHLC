@@ -20,22 +20,26 @@
 //      rescaling one from the other by sqrt(minutes) is wrong in both
 //      directions at once.
 //
+//   4. WIDTH VARIES BY WEEKDAY. A pooled ladder is miscalibrated by day of the
+//      week — Kruskal-Wallis rejects one shared excursion distribution at
+//      p = 1.8e-6 (RTH) and 3.9e-4 (ON) across 1084 sessions. Monday RTH runs
+//      17% narrow, almost entirely on the DOWN side (-8.6pp, 0/8 rungs high):
+//      Friday's VIX close prices a weekend that Monday's realised downside does
+//      not deliver. Per-weekday, per-side multipliers are applied by default.
+//
 // THE VALIDATION TABLE IS THE POINT. It counts, on your chart, how often each
 // rung was actually touched, and scores the gap in STANDARD ERRORS — a 6pp miss
 // on 74 sessions is noise, the same miss on 900 is real drift, and a fixed
 // percentage-point threshold cannot tell those apart.
 //
-// ⚠ KNOWN BIAS, OVERNIGHT — AND IT IS ONE-SIDED. On ES the overnight UP rungs
-//   are touched more often than promised on 8 of 8 rungs, in both a 197-session
-//   holdout (mean +4.3pp) and the most recent 75 (mean +9.2pp). The DOWN side is
-//   clean in the recent window (4/8, all small). The magnitude is unstable
-//   between windows, so do not trust a fixed correction constant — widen the
-//   overnight UP side with its own multiplier and watch the z column.
-//   Likely mechanism: this ladder is DRIFTLESS. It places rungs from the
-//   excursion distribution alone, so a market trending up overnight will run
-//   through the upper rungs more often than a symmetric fit expects. That is a
-//   property of the model, not a bug, and it will invert in a downtrend.
-//   The RTH ladder shows no such pattern (6 up / 10 down, mixed).
+// ⚠ WHAT REPLACED THE OLD OVERNIGHT WARNING. This header used to state that the
+//   overnight UP side runs narrow on 8 of 8 rungs and advise a fixed 1.15-1.30
+//   multiplier. Measured over 1084 sessions rather than 75, the pooled overnight
+//   up bias is +0.80pp — and it is the average of Thursday +5.68pp and Tuesday
+//   -6.08pp. It was a WEEKDAY effect being read as a constant, and a constant
+//   multiplier would have worsened Tuesday by as much as it helped Thursday.
+//   The footer now counts the signs on your own chart window instead of
+//   asserting a count it never measured.
 //
 //@version=6
 indicator("Expected Volatility — Percentile Ladder", "EV Ladder", overlay = true,
@@ -45,8 +49,9 @@ indicator("Expected Volatility — Percentile Ladder", "EV Ladder", overlay = tr
 grpS = "Sessions"
 useRTH = input.bool(true,  "RTH  09:30-16:00", group = grpS)
 useON  = input.bool(false, "Overnight  18:00-09:30", group = grpS,
-     tooltip = "Separate fitted ladder, not a rescale of the RTH one. Its UP " +
-     "side runs narrow on ES — see the header note and 'ON width x — up'.")
+     tooltip = "Separate fitted ladder, not a rescale of the RTH one: the " +
+     "overnight carries far less variance per minute than its clock length " +
+     "implies, so a sqrt(minutes) rescale would be wrong in both directions.")
 rthSpec = input.session("0930-1600", "RTH spec", group = grpS)
 onSpec  = input.session("1800-0930", "Overnight spec", group = grpS)
 tzSpec  = input.string("America/New_York", "Timezone", group = grpS)
@@ -62,9 +67,32 @@ volMode = input.string("Prior close", "Vol read", options = ["Prior close", "Tod
 evUpR = input.float(1.0, "RTH width x — up",   minval = 0.3, maxval = 3.0, step = 0.05, group = grpL)
 evDnR = input.float(1.0, "RTH width x — down", minval = 0.3, maxval = 3.0, step = 0.05, group = grpL)
 evUpN = input.float(1.0, "ON width x — up",    minval = 0.3, maxval = 3.0, step = 0.05, group = grpL,
-     tooltip = "The overnight UP side runs narrow on ES — 8/8 rungs, both windows. " +
-     "Try 1.15-1.30, then read the z column.")
+     tooltip = "Manual override, applied ON TOP of the day-of-week " +
+     "multiplier. Leave at 1.0 unless the footer's live sign count says one " +
+     "side is high on every rung; the pooled overnight up bias is only " +
+     "+0.80pp over 1084 sessions and is a weekday effect, not a constant.")
 evDnN = input.float(1.0, "ON width x — down",  minval = 0.3, maxval = 3.0, step = 0.05, group = grpL)
+useDow = input.bool(true, "Day-of-week width adjustment", group = grpL,
+     tooltip = "A pooled ladder is miscalibrated by weekday. Kruskal-Wallis " +
+     "rejects one shared excursion distribution at p = 1.8e-6 (RTH) and " +
+     "3.9e-4 (ON) over 1084 sessions. Monday RTH runs 17% narrow and it is " +
+     "almost entirely the DOWN side (-8.6pp, 0/8 rungs high): Friday's VIX " +
+     "close carries a weekend the realised move does not deliver. " +
+     "Holdout mean |calibration error| 5.16%->4.96% (RTH), 6.68%->6.20% (ON).")
+
+// Per-weekday, per-side width multipliers, fitted on the 887-session train fold
+// and SHRUNK HALFWAY TO 1.0. Unshrunk they make the RTH holdout worse (5.16% ->
+// 5.23%): ten parameters against ~40 holdout sessions per weekday is more fit
+// than the data supports. 0.5 is not the argmax on either series — RTH peaks at
+// 0.25, ON at 1.0 — it is the single value that improves both, chosen that way
+// so the shrinkage is not itself fitted to the holdout.
+//
+// Index 0 = Monday .. 4 = Friday. For the overnight arrays the weekday is the
+// RTH DAY THE SESSION LEADS INTO, so index 0 is the SUNDAY 18:00 open.
+var dowUpR = array.from(0.983, 0.947, 1.062, 0.952, 1.072)
+var dowDnR = array.from(0.866, 1.034, 1.052, 1.088, 0.990)
+var dowUpN = array.from(0.989, 0.902, 0.978, 1.111, 1.044)
+var dowDnN = array.from(0.950, 1.087, 0.948, 0.963, 1.068)
 histSess = input.int(5, "Completed sessions to draw", minval = 0, maxval = 25, group = grpL)
 
 grpV = "Volatility index"
@@ -280,12 +308,26 @@ endR   = not inR and inR[1]
 startN = inN and not inN[1]
 endN   = not inN and inN[1]
 
+// Weekday index, 0 = Mon .. 4 = Fri. `dayofweek` is 1 = Sunday, and it must be
+// read in the session timezone: at 18:00 ET a UTC clock has already rolled over,
+// which would file every overnight session under the following day.
+dowR = dayofweek(time, tzSpec) - 2          // Mon(2) -> 0
+// An overnight session opens the EVENING BEFORE the day it belongs to, so
+// Sunday's 18:00 open is Monday's session. Sun(1) -> 0.
+dowN = dayofweek(time, tzSpec) - 1
+okR = dowR >= 0 and dowR <= 4
+okN = dowN >= 0 and dowN <= 4
+
 if startR and useRTH
     rth.anchor := anchorMode == "Session open" ? open : pxPrevClose
     rth.ev     := na(volRead) ? na : rth.anchor * volRead / math.sqrt(252) / 100
     rth.hi     := high
     rth.lo     := low
     rth.bar    := bar_index
+    // Re-derived every session: the multiplier is a property of THIS session's
+    // weekday, not a global, so it must not persist into the next one.
+    rth.sUp    := evUpR * (useDow and okR ? array.get(dowUpR, dowR) : 1.0)
+    rth.sDn    := evDnR * (useDow and okR ? array.get(dowDnR, dowR) : 1.0)
 else if inR and useRTH
     rth.hi := math.max(nz(rth.hi, high), high)
     rth.lo := math.min(nz(rth.lo, low), low)
@@ -296,6 +338,8 @@ if startN and useON
     ovn.hi     := high
     ovn.lo     := low
     ovn.bar    := bar_index
+    ovn.sUp    := evUpN * (useDow and okN ? array.get(dowUpN, dowN) : 1.0)
+    ovn.sDn    := evDnN * (useDow and okN ? array.get(dowDnN, dowN) : 1.0)
 else if inN and useON
     ovn.hi := math.max(nz(ovn.hi, high), high)
     ovn.lo := math.min(nz(ovn.lo, low), low)
@@ -446,11 +490,49 @@ if showTable and barstate.islast
          str.tostring(ovn.n) + " sessions — " + note,
          text_color = cTextDim, bgcolor = cBgPri, text_size = tblSz)
     table.merge_cells(tbl, 0, N + 2, nCols - 1, N + 2)
+    // Derived, not asserted. The string this replaced read "overnight UP side
+    // runs narrow (8/8 rungs) — try ON width 1.15-1.30" and was printed whenever
+    // no multiplier had been set, so it could not stop being true: it claimed a
+    // sign count it never counted, on a symbol it did not check. On the full
+    // 1084-session sample the pooled overnight up bias is +0.80pp, not the
+    // +6pp that advice was scaled for, and it is an average of Thursday +5.68
+    // and Tuesday -6.08 — a weekday effect a constant multiplier cannot fix.
+    // So: count the signs on THIS chart's window and report what is there.
+    // Counted on whichever ladder is displayed; the overnight one wins when both
+    // are on, because that is where the historical bias lived. Deliberately not
+    // `useON ? ovn : rth` — a ternary whose branches are user-defined types is
+    // accepted inconsistently across Pine builds, and the counters are plain
+    // ints, so selecting those instead avoids the question entirely.
+    // Fresh names throughout: `i`, `ru`, `rd` are all already bound in this
+    // scope by the table loop above, and Pine treats a second `=` on a live
+    // name as a REDECLARATION error rather than shadowing it.
+    // `nSign` is float, not int: hits and session count are both ints, and an
+    // int/int division truncates — every rate would floor to 0 and every sign
+    // count would report zero rungs high, silently and on every symbol.
+    // `* 1.0` rather than a cast: hits and session count are both ints, and an
+    // int/int division truncates — every rate would floor to 0 and the sign
+    // count would read zero rungs high, silently, on every symbol.
+    nSign = (useON ? ovn.n : rth.n) * 1.0
+    hiUp = 0
+    hiDn = 0
+    for k = 0 to N - 1
+        pT = array.get(pTarget, k)
+        if nSign > 0
+            ruS = useON ? array.get(ovn.hitUp, k) : array.get(rth.hitUp, k)
+            rdS = useON ? array.get(ovn.hitDn, k) : array.get(rth.hitDn, k)
+            hiUp += ruS / nSign > pT ? 1 : 0
+            hiDn += rdS / nSign > pT ? 1 : 0
+    // Not `lab`: that name is bound to a BOOL a few blocks up, and a name
+    // reused at a different type is the kind of thing Pine rejects late.
+    sideLab = useON ? "overnight" : "RTH"
     warn = volChoice == "Auto (from symbol)" and not mapped ?
          "⚠ no vol index mapped for " + root + " — using " + volManual :
-         useON and evUpN == 1.0 ?
-         "⚠ overnight UP side runs narrow on ES (8/8 rungs) — try ON width up 1.15-1.30" :
-         "z = |realised − promised| / SE"
+         nMin < 40 ? "z = |realised − promised| / SE" :
+         hiUp == N or hiDn == N ?
+         "⚠ " + sideLab + " " + (hiUp == N ? "UP" : "DOWN") + " side is high on all " +
+         str.tostring(N) + " rungs here — one-sided, so widen that side only" :
+         "z = |realised − promised| / SE · signs " + str.tostring(hiUp) + "/" +
+         str.tostring(N) + " up, " + str.tostring(hiDn) + "/" + str.tostring(N) + " down"
     table.cell(tbl, 0, N + 3, warn, text_color = cTextDim, bgcolor = cBgPri,
          text_size = tblSz)
     table.merge_cells(tbl, 0, N + 3, nCols - 1, N + 3)
