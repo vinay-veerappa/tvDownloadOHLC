@@ -207,7 +207,9 @@ view restorable. Injection survives viewport abuse.
 
 **L2 — Stack ↔ TV Integration (the real goal)**
 - [x] T2.1 Python → HUD (levels card, CDP pump) — **arch decision: page sandbox blocks fetch/XHR**
-- [ ] T2.2 NT8 bridge → HUD (positions/P&L via pump) — **next high-value**
+- [x] T2.2 NT8 bridge → HUD — **DONE 2026-08-31**: `/positions` endpoint + live card verified
+  (Sim101 Long 1 MNQ @29,317.50 rendered bottom-right; symbol-mismatch guard: entry line only
+  drawn when position symbol matches chart, else card shows ⚠)
 - [ ] T2.3 Trading Brain governance badges (via pump)
 - [ ] T2.4 GEX/CBOE vendor levels as overlay zones (SVG ready via T4.1)
 - [ ] T2.5 bidirectional alerting (TV alert → webhook → stack)

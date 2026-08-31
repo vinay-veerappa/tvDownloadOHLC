@@ -10,6 +10,7 @@ Run (Windows): ..\\.venv\\Scripts\\python.exe -m scripts.streamer.tv_levels_api 
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -140,6 +141,31 @@ def levels(ticker: str = Query("YM1")) -> dict:
 @app.get("/health")
 def health() -> dict:
     return {"ok": True, "ts": pd.Timestamp.utcnow().isoformat()}
+
+
+# ---------------------------------------------------------------------------
+# NT8 positions feed (T2.2): reads a JSON snapshot written by the agent from
+# the NT8 MCP bridge (ninjatrader_nt_positions). The bridge is not callable
+# from FastAPI directly (MCP stdio), so the agent pumps the snapshot file.
+# ---------------------------------------------------------------------------
+
+NT8_SNAPSHOT = Path(__file__).parent / "nt8_positions_snapshot.json"
+
+
+@app.get("/positions")
+def positions() -> dict:
+    """Live NT8 positions from the snapshot file (agent-pumped)."""
+    snap = NT8_SNAPSHOT
+    if not snap.exists():
+        return {"error": "no nt8 snapshot yet", "positions": []}
+    try:
+        data = json.loads(snap.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"snapshot-parse: {exc!s}"[:120], "positions": []}
+    # freshness: stale > 60s means the bridge/agent stopped pumping
+    age = (datetime.now(timezone.utc) - datetime.fromisoformat(data["ts_utc"])).total_seconds()
+    return {"ts_utc": data["ts_utc"], "stale": age > 60, "age_s": round(age, 1),
+            "positions": data["positions"]}
 
 
 def main() -> None:
