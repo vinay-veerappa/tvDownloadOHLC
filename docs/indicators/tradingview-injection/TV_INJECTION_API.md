@@ -130,6 +130,62 @@ python API (localhost:PORT) ──── agent reads JSON ────> ui_evalu
     by `s.metaInfo && typeof s.metaInfo === 'function'` for studies
 13. Weekend session math: Sunday ≥18:00 ET belongs to MONDAY's logical session (Globex reopen);
     Sat / Sun-before-18:00 belong to Friday's. Handled in `tv_levels_api._et_bounds`.
+14. `bar.value` values: `[ts_epoch_seconds, o, h, l, c, volume]`.
+15. Live-storage parquet (`live_storage_-ROOT.parquet`) schema: `time` (int64 ms), `open/high/low/
+    close/volume`, `timestamp` (str with +00:00). Always normalize to naive-UTC `dt` column before
+    comparing (pandas 3 returns `datetime64[us, UTC]` from `timestamp`).
+16. `pd.Timestamp.utcnow()` deprecated in pandas 3 — warns; use `pd.Timestamp.now('UTC').tz_localize(None)`.
+17. Stale-process trap: after editing a Python module, KILL the old process — `Start-Process`
+    silently spawns a second server or the old code keeps serving (cost us a 30-min debug loop).
+
+## 6b. Round-2 API discoveries (2026-08-31)
+
+### History paging (T1.4)
+```js
+series.requestMoreData(5000, true)   // loads 5000 more bars back
+series.requestMoreDataAvailable()    // false = pager exhausted
+series.isLoading()                   // true while paging
+```
+MYM1! 5m: 311 visible → 5311 after one page (back to Aug 3). `requestMoreDataAvailable:false`
+confirms the provider's 5m ceiling. Repeatable to page deeper.
+
+### Viewport control (T3.2)
+```js
+const ts = w.model().timeScale();
+ts.barSpacing()          // px per bar (current)
+ts.setBarSpacing(3)      // zoom out; ~2-40 valid
+ts.rightOffset()         // bars of right margin
+ts.setRightOffset(-20)   // pan left (negative shows more right history… actually future space)
+ts.scrollToRealtime(); ts.scrollToFirstBar();
+```
+
+### Price-anchored overlays (T4.1) — the crown jewel
+```js
+const pane = w.model().panes()[0];
+const ps = pane.defaultPriceScale();
+const y = ps.priceToCoordinate(53862);   // price -> pixel Y in pane
+ps.coordinateToPrice(yPx)                // inverse
+// SVG: position:absolute inside .layout__area--center (chart container),
+// pointer-events:none, redraw on timeScale changes (barSpacing/offset subscriptions exist there)
+```
+Proven: PDH/PDL/SESHI/SESLO drawn as SVG lines + labels matching the price axis exactly.
+
+### Studies add/remove (T3.3)
+- **Robust path:** MCP `chart_manage_indicator` (add → returns entity_id → remove).
+- Internal `model.createStudyInserter().insert('RSI@tv-basicstudies')` returns a **Promise** and
+  didn't land within 6s — prefer the MCP tool.
+
+### Drawings (T3.4)
+- **Robust path:** MCP `draw_shape` / `draw_list` / `draw_remove_one`.
+- Read back via `w.model().dataSources()` → filter `title()==='horizontal line'` →
+  `s.points()` → `[{price, index}]`. Class names are minified (`j` etc.) — match by `title()`.
+- Internal `model.createLineTool({pane, linetool:'LineToolHorzLine', point:{index,price},
+  properties:{}, actionSource:'ui'})` exists but fragile (`u.childs is not a function` without
+  full registration args) — not worth it while MCP drawing tools exist.
+
+### Churn stress (T5.2 partial)
+20 rapid `setBarSpacing` flips + 10 `setRightOffset` pans → internals alive, bars intact,
+view restorable. Injection survives viewport abuse.
 
 ## 7. File Inventory
 
@@ -139,15 +195,54 @@ python API (localhost:PORT) ──── agent reads JSON ────> ui_evalu
 | `tradingview-mcp/` | The MCP server (submodule) — profiles, gates, `ui_evaluate` |
 | `~/.config/opencode/opencode.jsonc` | MCP registration + capability gates (§1) |
 
-## 8. Outstanding Test Matrix (from the validated baseline)
+## 8. Test Matrix — Status Board
 
-- T1.4 full history depth beyond chart-visible count
-- T1.6 DOM depth ladder vs `depth_get`
-- T2.2 NT8 bridge → DOM (positions/P&L via CDP pump)
-- T2.3 Trading Brain states as chart badges (via pump)
-- T2.4 GEX/CBOE vendor levels as overlay zones
-- T2.5 bidirectional alerting (TV alert → webhook → stack)
-- T3.2 pan/zoom control; T3.3 add/remove studies; T3.4 internal drawings; T3.5-3.6 multi-tab/layout
-- T4.x rich UI (SVG/canvas, drag, themes)
-- T5.1 long soak; T5.2 resize; T5.4 CDP reconnect; T5.5 post-update probe
-- T6.x MCP read tools (session_snapshot diffing, draw/alerts, replay read-only, paper status)
+**L1 — Live Data & Subscriptions**
+- [x] T1.1 tick feed — DOM legend MutationObserver (events dead) — 42/min measured
+- [x] T1.2 symbol change survival (+ observer re-bind requirement)
+- [x] T1.3 timeframe change survival
+- [x] T1.4 full history depth — `requestMoreData` paging (311→5311, ceiling verified)
+- [x] T1.5 indicator series reads — RSI sub-pane values via `_valuesProvider.getValues`
+- [ ] T1.6 DOM depth-ladder vs `depth_get`
+
+**L2 — Stack ↔ TV Integration (the real goal)**
+- [x] T2.1 Python → HUD (levels card, CDP pump) — **arch decision: page sandbox blocks fetch/XHR**
+- [ ] T2.2 NT8 bridge → HUD (positions/P&L via pump) — **next high-value**
+- [ ] T2.3 Trading Brain governance badges (via pump)
+- [ ] T2.4 GEX/CBOE vendor levels as overlay zones (SVG ready via T4.1)
+- [ ] T2.5 bidirectional alerting (TV alert → webhook → stack)
+
+**L3 — Chart Control via Injection**
+- [x] T3.1 `setSymbol`/`setResolution` programmatic
+- [x] T3.2 pan/zoom (`timeScale` full control)
+- [x] T3.3 add/remove studies (MCP tool; internal = promise-based)
+- [x] T3.4 drawings (MCP draw_*; read-back via `dataSources()` title-matching)
+- [ ] T3.5 multi-tab overlays & survival
+- [ ] T3.6 multi-pane layout (2x2), per-pane targeting
+
+**L4 — Rich UI**
+- [x] T4.1 SVG price-anchored overlay (`priceToCoordinate`)
+- [ ] T4.2 CSS animations (event pulses)
+- [ ] T4.3 drag-moveable panels
+- [ ] T4.4 custom fonts/icons
+- [ ] T4.5 theme adaptation (TV CSS vars)
+
+**L5 — Robustness & Longevity**
+- [~] T5.2 churn stress (zoom/pan x30) — PASS; window resize untested (OS-level)
+- [ ] T5.1 hours-long soak
+- [ ] T5.3 theme switch / fullscreen survival
+- [ ] T5.4 CDP disconnect-reconnect mid-session
+- [ ] T5.5 post-TV-update API drift probe
+- [ ] T5.6 error boundary (internals throwing)
+
+**L6 — MCP Tool Surface**
+- [ ] T6.1 `session_snapshot` / `chart_changes` diffing
+- [ ] T6.2 draw/alert round-trips (draw_* partially done in T3.4)
+- [ ] T6.3 alert_create/list round-trip
+- [ ] T6.4 `data_get_pine_*` on your EV Ladder
+- [ ] T6.5 replay read-only navigation
+- [ ] T6.6 watchlist + batch screening
+- [ ] T6.7 paper trading status (read-only)
+
+**Recommended next:** T2.2 (NT8 positions on chart — combines proven pump + SVG anchor),
+then T2.4 (GEX zones), then T3.6 (multi-pane), then T5.1 soak.
