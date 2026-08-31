@@ -238,13 +238,23 @@ view restorable. Injection survives viewport abuse.
 - [ ] T5.6 error boundary (internals throwing)
 
 **L6 — MCP Tool Surface**
-- [ ] T6.1 `session_snapshot` / `chart_changes` diffing
-- [ ] T6.2 draw/alert round-trips (draw_* partially done in T3.4)
-- [ ] T6.3 alert_create/list round-trip
-- [ ] T6.4 `data_get_pine_*` on your EV Ladder
-- [ ] T6.5 replay read-only navigation
-- [ ] T6.6 watchlist + batch screening
-- [ ] T6.7 paper trading status (read-only)
+- [x] T6.1 `session_snapshot` / `chart_changes` — hash-diff works (`since:` prior hashes →
+  changed/unchanged lists); `include:` narrows sections; compact mode returns hashes only
+- [x] T6.2 alerts — `alert_create` (crossing price) → `alert_list` (62-alert inventory with
+  conditions) → `alert_delete`; alert IDs returned; created at 1m resolution by default
+- [x] T6.4 `data_get_pine_*` — your EV Ladder fully readable: `pine_tables` returns the complete
+  rung table (12 rows), `pine_lines` returns 505 horizontal levels, `pine_boxes` 504 zones.
+  **`study_filter` needs the full indicator TITLE** ('EV Ladder' short title returned 0; use
+  'Expected Volatility — Percentile Ladder')
+- [x] T6.5 replay read-only — `replay_start(date,time)` → `replay_step` ×3 → `replay_status`
+  (position/pnl null when no trades) → `replay_stop`. Gotcha: TV shows 'Continue your last
+  replay?' modal on re-entry — dismiss via `ui_click` 'Continue' before status reads
+- [~] T6.6 watchlist ✅ (51 symbols w/ prices, "Futures" list) · batch_run ❌ **tool bug**:
+  0-byte screenshot files (colon in `CME_MINI:MES1!` breaks filename) and chart left on last
+  batch symbol — use single `chart_set_symbol` + `capture_screenshot` loops instead
+- [x] T6.7 paper status (read-only) — `paper_get_status` reports provider TRADOVATE
+  (connected, D63705235), `safe_for_paper_mutation:false` correctly fail-closed for
+  non-Paper broker. Mutations properly refused outside Paper broker id.
 
 **Recommended next:** T2.2 (NT8 positions on chart — combines proven pump + SVG anchor),
 then T2.4 (GEX zones), then T3.6 (multi-pane), then T5.1 soak.
