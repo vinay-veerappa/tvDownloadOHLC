@@ -32,6 +32,18 @@
 // on 74 sessions is noise, the same miss on 900 is real drift, and a fixed
 // percentage-point threshold cannot tell those apart.
 //
+//   5. ONE LADDER PER INSTRUMENT. Constants are fitted for ES, NQ, RTY, YM, CL
+//      and GC and selected from the chart symbol. Shipping one ES ladder for
+//      every symbol assumed the excursion/EV ratio is instrument-invariant. It
+//      nearly is for RTH — but NOT overnight, where the ES constants missed by
+//      16.9pp on CL and 22.4pp on GC. Anything outside those six borrows the ES
+//      ladder and the footer says so out loud.
+//
+//      Each instrument's fit is SCORED ON ITS OWN HOLDOUT against the ES
+//      constants, and only ships if it wins. It does not always: CL and GC RTH
+//      both lost and fall back. A per-instrument fit has more parameters and
+//      always looks better in sample, so "we fitted it" is not evidence.
+//
 // ⚠ WHAT REPLACED THE OLD OVERNIGHT WARNING. This header used to state that the
 //   overnight UP side runs narrow on 8 of 8 rungs and advise a fixed 1.15-1.30
 //   multiplier. Measured over 1084 sessions rather than 75, the pooled overnight
@@ -39,7 +51,8 @@
 //   -6.08pp. It was a WEEKDAY effect being read as a constant, and a constant
 //   multiplier would have worsened Tuesday by as much as it helped Thursday.
 //   The footer now counts the signs on your own chart window instead of
-//   asserting a count it never measured.
+//   asserting a count it never measured. The manual width inputs remain, at 1.0,
+//   as an override — they are no longer how an instrument gets calibrated.
 //
 //@version=6
 indicator("Expected Volatility — Percentile Ladder", "EV Ladder", overlay = true,
@@ -80,19 +93,17 @@ useDow = input.bool(true, "Day-of-week width adjustment", group = grpL,
      "close carries a weekend the realised move does not deliver. " +
      "Holdout mean |calibration error| 5.16%->4.96% (RTH), 6.68%->6.20% (ON).")
 
-// Per-weekday, per-side width multipliers, fitted on the 887-session train fold
-// and SHRUNK HALFWAY TO 1.0. Unshrunk they make the RTH holdout worse (5.16% ->
-// 5.23%): ten parameters against ~40 holdout sessions per weekday is more fit
-// than the data supports. 0.5 is not the argmax on either series — RTH peaks at
-// 0.25, ON at 1.0 — it is the single value that improves both, chosen that way
-// so the shrinkage is not itself fitted to the holdout.
+// The weekday multipliers are PER INSTRUMENT and live in the generated block
+// below, alongside that instrument's ladder. They are shrunk halfway to 1.0:
+// unshrunk they make the ES RTH holdout worse (5.16% -> 5.23%), because ten
+// parameters against ~40 holdout sessions per weekday is more fit than the data
+// supports. 0.5 is not the argmax on either series — ES RTH peaks at 0.25 and
+// ES ON at 1.0 — it is the one value that improves both, chosen that way so the
+// shrinkage is not itself fitted to the holdout.
 //
 // Index 0 = Monday .. 4 = Friday. For the overnight arrays the weekday is the
-// RTH DAY THE SESSION LEADS INTO, so index 0 is the SUNDAY 18:00 open.
-var dowUpR = array.from(0.983, 0.947, 1.062, 0.952, 1.072)
-var dowDnR = array.from(0.866, 1.034, 1.052, 1.088, 0.990)
-var dowUpN = array.from(0.989, 0.902, 0.978, 1.111, 1.044)
-var dowDnN = array.from(0.950, 1.087, 0.948, 0.963, 1.068)
+// RTH DAY THE SESSION LEADS INTO, so index 0 is the SUNDAY 18:00 open. An
+// instrument whose weekday fit LOST its holdout test carries 1.000 across.
 histSess = input.int(5, "Completed sessions to draw", minval = 0, maxval = 25, group = grpL)
 
 grpV = "Volatility index"
@@ -188,11 +199,119 @@ tblHdSz = tblSize == "Tiny" ? size.small : tblSize == "Small" ? size.normal :
 // hand-edit: rerun compare_variants.py / overnight.py --pine and re-copy.
 N = 8
 var pTarget = array.from(0.80, 0.65, 0.50, 0.35, 0.25, 0.15, 0.10, 0.05)
-var cUpR = array.from(0.1239, 0.2215, 0.3397, 0.4974, 0.5982, 0.7456, 0.8569, 1.0267)
-var cDnR = array.from(0.1029, 0.2108, 0.3267, 0.4787, 0.6258, 0.8245, 1.0191, 1.2564)
-var cUpN = array.from(0.0931, 0.1631, 0.2381, 0.3231, 0.3983, 0.5152, 0.6024, 0.7793)
-var cDnN = array.from(0.0766, 0.1434, 0.2259, 0.3269, 0.4317, 0.5757, 0.6843, 0.8768)
 var shown = array.from(showP80, showP65, showP50, showP35, showP25, showP15, showP10, showP05)
+
+// ────────────────────────────────────────────────── instrument family
+// ONE root -> family map, feeding BOTH the volatility index and the ladder.
+// Two independent lists would be two readers of the same fact and free to
+// drift: a symbol could pick up VXN while still drawing the ES ladder, and
+// nothing on screen would say so.
+root = syminfo.root
+fam = root == "ES"  or root == "MES" or root == "SPX" or root == "SPY" ? 0 :
+     root == "NQ"  or root == "MNQ" or root == "NDX" or root == "QQQ" ? 1 :
+     root == "RTY" or root == "M2K" or root == "RUT" or root == "IWM" ? 2 :
+     root == "YM"  or root == "MYM" or root == "DJI" or root == "DIA" ? 3 :
+     root == "CL"  or root == "MCL" or root == "USO"                  ? 4 :
+     root == "GC"  or root == "MGC" or root == "GLD"                  ? 5 :
+     root == "SI"  or root == "SIL" or root == "SLV"                  ? 6 :
+     root == "6E"  or root == "M6E" or root == "FXE"                  ? 7 :
+     root == "ZN"  or root == "ZB"  or root == "TLT"                  ? 8 : -1
+// Families 6-8 have a volatility index but NO fitted ladder — the study covers
+// six instruments. They borrow the ES ladder, which is a GUESS: nothing has
+// tested that SLV's excursion/EV ratio resembles ES's, and the two instruments
+// where that assumption was tested and failed (CL and GC overnight) missed by
+// 17 and 22 percentage points. `fitted` drives the footer that says so.
+fitted = fam >= 0 and fam <= 5
+
+// ──────────────────────────────── per-instrument ladders and weekday tables
+// GENERATED — do not hand-edit between the sentinels. Regenerate with:
+//   python -m scripts.expected_volatility.instruments --write-pine
+//
+// Each instrument's ladder is fitted on its own train fold and SCORED ON ITS
+// HOLDOUT AGAINST THE ES CONSTANTS. A per-instrument fit has more parameters
+// and always looks better in sample, so "we fitted it" is not a reason to ship
+// it. Where the fit lost, the ES numbers are emitted for that symbol and the
+// comment says so — 2 of 12 instrument-sessions fell back that way.
+// <<< EV-LADDER-CONSTANTS >>>
+// ---- generated by scripts/expected_volatility/instruments.py ----
+// ES RTH: own fit; holdout |cal err| ES 5.16% / own 5.16% / own+dow 4.96%  (n=197)
+var cUpR_ES = array.from(0.1239, 0.2215, 0.3397, 0.4974, 0.5982, 0.7456, 0.8569, 1.0267)
+var cDnR_ES = array.from(0.1029, 0.2108, 0.3267, 0.4787, 0.6258, 0.8245, 1.0191, 1.2564)
+var wUpR_ES = array.from(0.983, 0.947, 1.062, 0.952, 1.072)
+var wDnR_ES = array.from(0.866, 1.034, 1.052, 1.088, 0.990)
+// ES ON: own fit; holdout |cal err| ES 6.68% / own 6.68% / own+dow 6.20%  (n=197)
+var cUpN_ES = array.from(0.0931, 0.1631, 0.2381, 0.3231, 0.3983, 0.5152, 0.6024, 0.7793)
+var cDnN_ES = array.from(0.0766, 0.1434, 0.2259, 0.3269, 0.4317, 0.5757, 0.6843, 0.8768)
+var wUpN_ES = array.from(0.989, 0.902, 0.978, 1.111, 1.044)
+var wDnN_ES = array.from(0.950, 1.087, 0.948, 0.963, 1.068)
+// NQ RTH: own fit; holdout |cal err| ES 6.55% / own 6.05% / own+dow 5.04%  (n=197)
+var cUpR_NQ = array.from(0.1309, 0.2538, 0.3944, 0.5462, 0.6720, 0.8251, 0.9284, 1.1191)
+var cDnR_NQ = array.from(0.1316, 0.2306, 0.3639, 0.5364, 0.6886, 0.9081, 1.1012, 1.3292)
+var wUpR_NQ = array.from(1.072, 0.922, 1.035, 0.957, 1.037)
+var wDnR_NQ = array.from(0.886, 1.024, 1.006, 1.103, 0.996)
+// NQ ON: own fit; holdout |cal err| ES 10.80% / own 9.52% / own+dow 8.82%  (n=196)
+var cUpN_NQ = array.from(0.1000, 0.1780, 0.2491, 0.3463, 0.4242, 0.5568, 0.6462, 0.8321)
+var cDnN_NQ = array.from(0.0842, 0.1516, 0.2391, 0.3598, 0.4664, 0.5824, 0.6838, 0.9137)
+var wUpN_NQ = array.from(1.015, 0.896, 0.975, 1.131, 1.015)
+var wDnN_NQ = array.from(0.971, 1.070, 0.952, 0.967, 1.047)
+// RTY RTH: own fit; holdout |cal err| ES 8.85% / own 5.20% / own+dow 5.16%  (n=168)
+var cUpR_RTY = array.from(0.1450, 0.2648, 0.4267, 0.5739, 0.7075, 0.8960, 1.0037, 1.2411)
+var cDnR_RTY = array.from(0.1647, 0.2973, 0.4359, 0.5949, 0.7446, 0.9599, 1.0768, 1.2868)
+var wUpR_RTY = array.from(1.002, 0.979, 1.042, 0.997, 0.982)
+var wDnR_RTY = array.from(0.935, 0.963, 1.049, 1.077, 0.984)
+// RTY ON: own fit; holdout |cal err| ES 9.97% / own 6.30% / own+dow 5.55%  (n=168)
+var cUpN_RTY = array.from(0.1174, 0.1916, 0.2794, 0.3809, 0.4875, 0.6215, 0.7357, 0.9542)
+var cDnN_RTY = array.from(0.0928, 0.1676, 0.2609, 0.3660, 0.4750, 0.6320, 0.7527, 0.9980)
+var wUpN_RTY = array.from(1.053, 0.888, 0.957, 1.099, 1.043)
+var wDnN_RTY = array.from(0.937, 1.081, 0.977, 0.987, 1.017)
+// YM RTH: own fit; holdout |cal err| ES 7.10% / own 5.07% / own+dow 5.56%  (n=168)
+var cUpR_YM = array.from(0.1554, 0.2508, 0.4068, 0.5628, 0.6982, 0.8580, 0.9721, 1.1644)
+var cDnR_YM = array.from(0.1309, 0.2530, 0.3790, 0.5373, 0.6651, 0.8609, 1.0323, 1.3171)
+var wUpR_YM = array.from(1.000, 1.000, 1.000, 1.000, 1.000)
+var wDnR_YM = array.from(1.000, 1.000, 1.000, 1.000, 1.000)
+// YM ON: own fit; holdout |cal err| ES 6.45% / own 6.44% / own+dow 5.89%  (n=168)
+var cUpN_YM = array.from(0.0857, 0.1576, 0.2348, 0.3285, 0.4032, 0.5104, 0.6069, 0.7596)
+var cDnN_YM = array.from(0.0872, 0.1625, 0.2507, 0.3572, 0.4582, 0.5855, 0.6988, 0.9301)
+var wUpN_YM = array.from(1.023, 0.884, 0.984, 1.068, 1.067)
+var wDnN_YM = array.from(0.979, 1.060, 0.951, 0.987, 1.024)
+// CL RTH: ES fallback — own fit lost on holdout; holdout |cal err| ES 6.94% / own 11.24% / own+dow 11.35%  (n=168)
+var cUpR_CL = array.from(0.1239, 0.2215, 0.3397, 0.4974, 0.5982, 0.7456, 0.8569, 1.0267)
+var cDnR_CL = array.from(0.1029, 0.2108, 0.3267, 0.4787, 0.6258, 0.8245, 1.0191, 1.2564)
+var wUpR_CL = array.from(1.000, 1.000, 1.000, 1.000, 1.000)
+var wDnR_CL = array.from(1.000, 1.000, 1.000, 1.000, 1.000)
+// CL ON: own fit; holdout |cal err| ES 16.85% / own 5.25% / own+dow 5.75%  (n=166)
+var cUpN_CL = array.from(0.1752, 0.3030, 0.4542, 0.5921, 0.7578, 0.9492, 1.1018, 1.3734)
+var cDnN_CL = array.from(0.1796, 0.3137, 0.4735, 0.6418, 0.7887, 0.9999, 1.2376, 1.5866)
+var wUpN_CL = array.from(1.000, 1.000, 1.000, 1.000, 1.000)
+var wDnN_CL = array.from(1.000, 1.000, 1.000, 1.000, 1.000)
+// GC RTH: ES fallback — own fit lost on holdout; holdout |cal err| ES 6.84% / own 8.13% / own+dow 7.92%  (n=168)
+var cUpR_GC = array.from(0.1239, 0.2215, 0.3397, 0.4974, 0.5982, 0.7456, 0.8569, 1.0267)
+var cDnR_GC = array.from(0.1029, 0.2108, 0.3267, 0.4787, 0.6258, 0.8245, 1.0191, 1.2564)
+var wUpR_GC = array.from(1.000, 1.000, 1.000, 1.000, 1.000)
+var wDnR_GC = array.from(1.000, 1.000, 1.000, 1.000, 1.000)
+// GC ON: own fit; holdout |cal err| ES 22.42% / own 8.12% / own+dow 7.94%  (n=168)
+var cUpN_GC = array.from(0.1535, 0.2702, 0.3831, 0.5254, 0.6466, 0.8453, 0.9973, 1.1908)
+var cDnN_GC = array.from(0.1323, 0.2298, 0.3463, 0.4923, 0.6108, 0.7891, 0.9782, 1.2397)
+var wUpN_GC = array.from(0.961, 1.008, 0.971, 1.032, 1.029)
+var wDnN_GC = array.from(1.139, 0.948, 0.994, 0.992, 0.961)
+// <<< /EV-LADDER-CONSTANTS >>>
+
+cUpR = fam == 1 ? cUpR_NQ : fam == 2 ? cUpR_RTY : fam == 3 ? cUpR_YM :
+     fam == 4 ? cUpR_CL : fam == 5 ? cUpR_GC : cUpR_ES
+cDnR = fam == 1 ? cDnR_NQ : fam == 2 ? cDnR_RTY : fam == 3 ? cDnR_YM :
+     fam == 4 ? cDnR_CL : fam == 5 ? cDnR_GC : cDnR_ES
+cUpN = fam == 1 ? cUpN_NQ : fam == 2 ? cUpN_RTY : fam == 3 ? cUpN_YM :
+     fam == 4 ? cUpN_CL : fam == 5 ? cUpN_GC : cUpN_ES
+cDnN = fam == 1 ? cDnN_NQ : fam == 2 ? cDnN_RTY : fam == 3 ? cDnN_YM :
+     fam == 4 ? cDnN_CL : fam == 5 ? cDnN_GC : cDnN_ES
+dowUpR = fam == 1 ? wUpR_NQ : fam == 2 ? wUpR_RTY : fam == 3 ? wUpR_YM :
+     fam == 4 ? wUpR_CL : fam == 5 ? wUpR_GC : wUpR_ES
+dowDnR = fam == 1 ? wDnR_NQ : fam == 2 ? wDnR_RTY : fam == 3 ? wDnR_YM :
+     fam == 4 ? wDnR_CL : fam == 5 ? wDnR_GC : wDnR_ES
+dowUpN = fam == 1 ? wUpN_NQ : fam == 2 ? wUpN_RTY : fam == 3 ? wUpN_YM :
+     fam == 4 ? wUpN_CL : fam == 5 ? wUpN_GC : wUpN_ES
+dowDnN = fam == 1 ? wDnN_NQ : fam == 2 ? wDnN_RTY : fam == 3 ? wDnN_YM :
+     fam == 4 ? wDnN_CL : fam == 5 ? wDnN_GC : wDnN_ES
 
 // RUNNER CONVERSION — P(rung i+1 is reached | rung i was), 7 transitions each
 // (80->65 ... 10->5), from bracket.py on the same 887 train sessions.
@@ -213,16 +332,14 @@ var runUpN = array.from(0.799, 0.765, 0.728, 0.710, 0.582, 0.617, 0.532)
 var runDnN = array.from(0.870, 0.718, 0.704, 0.729, 0.581, 0.689, 0.500)
 
 // ─────────────────────────────────────────────────────────── vol source
-root = syminfo.root
-autoSym = root == "ES"  or root == "MES" or root == "SPX" or root == "SPY" ? "CBOE:VIX"   :
-     root == "NQ"  or root == "MNQ" or root == "NDX" or root == "QQQ" ? "CBOE:VXN"   :
-     root == "RTY" or root == "M2K" or root == "RUT" or root == "IWM" ? "CBOE:RVX"   :
-     root == "YM"  or root == "MYM" or root == "DJI" or root == "DIA" ? "CBOE:VXD"   :
-     root == "CL"  or root == "MCL" or root == "USO"                  ? "CBOE:OVX"   :
-     root == "GC"  or root == "MGC" or root == "GLD"                  ? "CBOE:GVZ"   :
-     root == "SI"  or root == "SIL" or root == "SLV"                  ? "CBOE:VXSLV" :
-     root == "6E"  or root == "M6E" or root == "FXE"                  ? "CBOE:EVZ"   :
-     root == "ZN"  or root == "ZB"  or root == "TLT"                  ? "CBOE:VXTLT" : ""
+// Derived from `fam`, not from a second root list. The duplicate list this
+// replaced was the same nine families written twice, which is one edit away
+// from a symbol drawing the ES ladder against VXN.
+autoSym = fam == 0 ? "CBOE:VIX"   : fam == 1 ? "CBOE:VXN"   :
+     fam == 2 ? "CBOE:RVX"   : fam == 3 ? "CBOE:VXD"   :
+     fam == 4 ? "CBOE:OVX"   : fam == 5 ? "CBOE:GVZ"   :
+     fam == 6 ? "CBOE:VXSLV" : fam == 7 ? "CBOE:EVZ"   :
+     fam == 8 ? "CBOE:VXTLT" : ""
 mapped = autoSym != ""
 volSym = volChoice == "Auto (from symbol)" ? (mapped ? autoSym : volManual) :
      volChoice == "VIX (30d)"     ? "CBOE:VIX"   :
@@ -618,6 +735,12 @@ if showTable and barstate.islast
     sideLab = useON ? "overnight" : "RTH"
     warn = volChoice == "Auto (from symbol)" and not mapped ?
          "⚠ no vol index mapped for " + root + " — using " + volManual :
+         // Borrowing a ladder has to be VISIBLE. Silently drawing ES constants
+         // on an untested instrument is how the overnight ladder was off by 17
+         // and 22 percentage points on CL and GC without anything saying so.
+         not fitted ?
+         "⚠ no ladder fitted for " + root + " — borrowing ES; the z column is "
+         + "the only thing standing behind these levels" :
          nMin < 40 ? "z = |realised − promised| / SE" :
          // BOTH-sides-high must be tested FIRST. The previous version asked
          // `hiUp == N or hiDn == N` and then reported whichever was true,
