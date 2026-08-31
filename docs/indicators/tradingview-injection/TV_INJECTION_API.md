@@ -187,6 +187,75 @@ Proven: PDH/PDL/SESHI/SESLO drawn as SVG lines + labels matching the price axis 
 20 rapid `setBarSpacing` flips + 10 `setRightOffset` pans → internals alive, bars intact,
 view restorable. Injection survives viewport abuse.
 
+## 9. ORDER INTERCEPTION — PROVEN (2026-08-31, live Tradovate) ⭐
+
+The founding use case. Fully verified against a **live Tradovate account**.
+
+### Order flow (complete, discovered end-to-end)
+```
+Panel click
+→ TradingViewApi.trading()._checkAndPlaceOrder(order)        // logs order JSON
+  → trading.brokerCommandsUI().placeOrder()
+    → activeBroker()._placeOrder()                           // maintenance/telemetry gates
+      → activeBroker()._brokerConnection.placeOrder()
+        → _placeOrder(): customFields → digitalSignature → body merge
+          → _fetchWithLatencyTrackingIfNeeded()
+            → _restFetch → **window.fetch**  ← INTERCEPTION POINT
+```
+Key: the broker connection is plain REST over **window.fetch** — every order crosses a
+patchable JS boundary. The API base observed: `https://tv-demo.tradovateapi.com`
+(TV-mediated Tradovate connector; account id in the URL path).
+
+### The guard pattern (what was tested)
+```js
+window.fetch = function(...args) {
+  const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+  const method = (args[1]?.method || 'GET').toUpperCase();
+  if (ARMED && /tradovateapi\.com/.test(url) && method === 'POST' && /order/i.test(url)) {
+    AUDIT.push({ url, body: args[1]?.body, at: Date.now() });        // full payload captured
+    return Promise.resolve(new Response(JSON.stringify({
+      errorText: 'WS-GUARD: order blocked', errorCode: 'WS_GUARD_DENY'
+    }), { status: 403, headers: { 'Content-Type': 'application/json' } }));   // VETO
+  }
+  return origFetch.apply(this, args);                                 // allow
+};
+```
+TV's UI surfaces the synthetic 403 as a normal order rejection — user sees an error, we
+hold the full order body (the exact policy-engine input).
+
+### Measured result (user placed orders by hand, guard armed)
+6/6 vetoed pre-broker — `MNQU6` limits ×4, `MYMU6` limit ×1, `MYMU6` **market+bracket
+(SL/TP)** ×1 — with full request bodies captured (`instrument, type, side, qty,
+limitPrice, stopLoss, takeProfit`, account id from URL). Broker verified **0 orders /
+0 positions** afterwards; 300 non-order requests passed untouched (session unharmed);
+order-type and instrument-agnostic. Guard disarmed after the test.
+
+### Read-only access (needed by any guard/policy engine)
+```js
+const b = window.__tvTrading.activeBroker();
+b.currentAccount()        // 'D63705235' (a String observable — char-array if misread as array)
+b.orders()/positions()    // observables (empty = flat)
+window.__tvConn.orders()  // same via connection layer
+```
+
+### Boundaries (honest scope)
+- Guards **TV-originated orders on this broker connection** — i.e. everything sent through
+  the chart's Trading Panel / DOM / broker API on the patched `fetch`.
+- Does NOT see orders placed outside TV Desktop (direct broker API/web, NT8).
+- Guard lives in page memory: lost on TV reload → must be re-armed by the persistent
+  daemon (see §9); re-assert guard on every `execUTION context` we touch.
+- Deny-all also blocks session-refresh POSTs matching the order pattern → keep the URL
+  match ORDER-SPECIFIC, or expect occasional panel reconnects while armed.
+
+### Follow-up build plan
+1. **Policy engine** in the wrapper: max qty per order, max daily loss (via account state
+   observable), instrument allowlist, price sanity band (fat-finger), kill-switch flag,
+   full audit JSONL (payload + decision + timestamp).
+2. **Pass-through confirmation flow**: allowed orders proceed via `origFetch` unchanged.
+3. **Persistent daemon** (`tv_pump_daemon` extension): re-injects + re-arms the guard on
+   CDP reconnect and on TV relaunch; serves the audit log over the loopback API.
+4. Escalation semantics mirror nt8-riskguard: warn → block → lockout, same audit shape.
+
 ## 7. File Inventory
 
 | File | Purpose |
@@ -213,6 +282,15 @@ view restorable. Injection survives viewport abuse.
 - [ ] T2.3 Trading Brain governance badges (via pump)
 - [ ] T2.4 GEX/CBOE vendor levels as overlay zones (SVG ready via T4.1)
 - [ ] T2.5 bidirectional alerting (TV alert → webhook → stack)
+
+**L7 — Order Interception (see §9)**
+- [x] T7.1 order-path discovery (full funnel to window.fetch)
+- [x] T7.2 log-only tap (93 calls / 8s; all TV↔Tradovate REST visible)
+- [x] T7.3 VETO proof — 6/6 orders blocked pre-broker on live account
+  (limit + market + bracket, 2 instruments, 0 leaked, session unharmed)
+- [ ] T7.4 policy engine (qty/loss/allowlist/fat-finger/kill-switch + JSONL audit)
+- [ ] T7.5 persistent arm (daemon re-arms on reload/reconnect)
+- [ ] T7.6 escalation semantics (warn → block → lockout)
 
 **L3 — Chart Control via Injection**
 - [x] T3.1 `setSymbol`/`setResolution` programmatic
