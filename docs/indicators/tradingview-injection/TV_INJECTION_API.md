@@ -256,6 +256,81 @@ window.__tvConn.orders()  // same via connection layer
    CDP reconnect and on TV relaunch; serves the audit log over the loopback API.
 4. Escalation semantics mirror nt8-riskguard: warn → block → lockout, same audit shape.
 
+---
+
+## 10. TARGET ARCHITECTURE — DECIDED 2026-08-31 (user-directed)
+
+> **"Everything funneled into the same RiskGuard / copy-trader infra we have already
+> built so far. We are adding a few interception layers + a UI view."**
+
+### Principle
+TV Desktop = **button/UI layer only**. NT8 = execution + risk + copy layer. **No new
+risk engine, no new copier** — everything rides the existing, hardened stack
+(nt8-riskguard: 3170 tests; TradeCopierEngine: leader→follower ratios, quarantine,
+shadow mode).
+
+### The funnel
+```
+TV chart (any button/draw-on-chart trade)
+  → ORDER GUARD (patched fetch, §9)         ← layers being added:
+      1. INTERCEPT: capture full order intent (body parse: instrument/qty/side/price)
+      2. DECIDE:
+         a. mode=FUNNEL: block direct send (synthetic 403) + extract intent
+            → daemon → nt_place_atm_order (ATM bracket strategy)
+            → nt8-riskguard pre-trade checks (existing, hardened)
+            → TradeCopierEngine replicates leader→followers (existing)
+         b. mode=KILL-SWITCH: deny-all (panic/lockout)
+      3. AUDIT: JSONL every payload+decision (same shape as RiskGuard ledger)
+```
+
+### Component inventory (all proven where noted)
+| Component | Status |
+|---|---|
+| Fetch-layer interception + payload capture | ✅ T7.3 (6/6 live veto) |
+| TV-native-buttons disable | design: deny-all already proven; CSS toggle optional |
+| Order ticket HUD w/ brackets/OCO | To build — **ATM strategies are already server-side** in the NT8 bridge (AtrAdaptive, DrawdownShield, ScaledRunner…: stop, target, breakeven, trailing, partials → OCO for free) |
+| Pre-trade risk enforcement | ✅ existing nt8-riskguard |
+| Copy distribution | ✅ existing TradeCopierEngine |
+| Latency harness (TV-direct vs NT8-funnel) | To build — decision gate before any per-path choice; TV-direct ≈50–150ms, NT8-funnel est +100–500ms (UNMEASURED) |
+| Persistent daemon (pump + re-arm + audit server) | Pending — single daemon serves overlays, guard arm, audit API |
+
+### Constraints & context
+- TV's connected Tradovate account `D63705235` = **demo** pattern (`D` prefix, `tv-demo`
+  host). Live accounts live on the NT8/Provider31 side (TAKEPROFIT/LFE/APEX…); they are
+  addressed as copy followers — TV needs no Tradovate credentials at all.
+- All Phase-1 work on Sim101. Live enablement only after the measured decision gate.
+- Every aspect measured before final decisions (user requirement).
+
+## 6c. Financial Juice news/squawk panel (2026-08-31) — verified live
+
+**Goal:** replicate the "FinancialJuice Widget" Chrome extension inside TV Desktop.
+
+**Findings:**
+1. TV Desktop (Electron) does **not** load user Chrome extensions — no `--load-extension`
+   path via CDP, no extension session API reachable. Loading the `.crx` natively is a dead end.
+2. The official extension (`hjdgbneibikfcollclifhpdhaljfklbk`, v2.0.2, 102KiB) is just a
+   **content script that injects iframes** to FinancialJuice's public embed hosts:
+   - `https://feed.financialjuice.com/widgets/headlines.aspx` (live text squawk)
+   - `https://feed.financialjuice.com/voice-player.aspx` (voice squawk)
+   - `https://feed.financialjuice.com/widgets/ecocal.aspx` (econ calendar)
+   - `https://www.financialjuice.com/widgets/ts.aspx` (TickStrike order flow)
+   No API keys, no chrome.* dependencies beyond runtime.getURL for icons.
+   All hosts allow embedding (verified: no X-Frame-Options/CSP frame-ancestors).
+
+**Implementation (in-chart overlay `#ws-fj-panel`):**
+- Draggable (title-bar mousedown) + resizable (CSS resize)
+- Tab bar: 📰 Headlines / 📅 Econ Calendar (lazy-loaded iframe on first click)
+- Persistent voice-player bar (52px) across tabs — audio controls inside the iframe
+- Dark theme, TV-integrated styling
+- Verified rendering live headlines + calendar in-session (screenshots
+  `ws_fj_news_panel.png`, `ws_fj_econcal_tab.png`)
+
+**Note:** overlay lives in page memory — dies on TV restart until the pump daemon
+(pending task) re-injects it at startup. Panel id `ws-fj-panel`; teardown =
+`document.getElementById('ws-fj-panel').remove()`.
+Reference screenshots: `screenshots/ws_fj_news_panel.png`,
+`screenshots/ws_fj_econcal_tab.png` (this directory).
+
 ## 7. File Inventory
 
 | File | Purpose |
