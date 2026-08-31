@@ -119,6 +119,15 @@ labMode  = input.string("Most recent only", "Show labels on",
      options = ["Most recent only", "All drawn sessions", "None"], group = grpLb)
 labPrice = input.bool(true, "Include price", group = grpLb)
 labSize  = input.string("Small", "Size", options = ["Tiny", "Small", "Normal"], group = grpLb)
+// A bare "25%" names the touch rate and nothing a trade can use. Borrowed from
+// Daily NY Levels, where every level names the statistic that produced it.
+labDetail = input.string("Standard", "Detail", group = grpLb,
+     options = ["Compact", "Standard", "Full"],
+     tooltip = "Compact: rung + price. Standard: adds the distance from the " +
+     "anchor in points, which is the number a stop is actually sized in. " +
+     "Full: adds RUNS-ON — P(the next rung out is also reached | this one " +
+     "was), fitted on 887 sessions. That is the conditional a trader is " +
+     "holding, and it is NOT the rung's own touch probability.")
 
 grpR = "Rungs"
 showP80 = input.bool(false, "80%  (noise)", group = grpR)
@@ -136,6 +145,11 @@ tblSize   = input.string("Normal", "Text size", group = grpT,
      options = ["Tiny", "Small", "Normal", "Large", "Huge"])
 tablePos  = input.string("Top right", "Position", group = grpT,
      options = ["Top right", "Bottom right", "Top left", "Bottom left"])
+showRun   = input.bool(true, "Runner conversion columns", group = grpT,
+     tooltip = "P(next rung out is reached | this one was), measured LIVE on " +
+     "this chart. The fitted value from 887 sessions is on the labels at " +
+     "Detail = Full, so the two can be compared the same way the touch rates " +
+     "are. Shown for the overnight ladder when it is on, otherwise RTH.")
 
 // ──────────────────────────── palette (VISUAL_SYSTEM §2.1/2.2), theme-aware
 bgLum = color.r(chart.bg_color) * 0.299 + color.g(chart.bg_color) * 0.587 +
@@ -180,6 +194,24 @@ var cUpN = array.from(0.0931, 0.1631, 0.2381, 0.3231, 0.3983, 0.5152, 0.6024, 0.
 var cDnN = array.from(0.0766, 0.1434, 0.2259, 0.3269, 0.4317, 0.5757, 0.6843, 0.8768)
 var shown = array.from(showP80, showP65, showP50, showP35, showP25, showP15, showP10, showP05)
 
+// RUNNER CONVERSION — P(rung i+1 is reached | rung i was), 7 transitions each
+// (80->65 ... 10->5), from bracket.py on the same 887 train sessions.
+//
+// This is the number a position is actually exposed to and it is NOT the rung's
+// touch probability: reaching the 50% rung says the 35% one follows ~71% of the
+// time, which is nothing like 35%. Rungs are nested, so it is the ratio of the
+// two reach rates — that is exactly why it belongs on the chart, because the
+// ratio is the conditional and the raw rate is not.
+//
+// Beware the survivorship reading. This is P(continue | here), measured over
+// every session that reached the rung. It is NOT "of the moves that STOPPED
+// here, how many worked" — that statistic is only knowable afterwards. See
+// docs/strategies/magic_hour_analysis/master_magic_hour_report.md section 12.
+var runUpR = array.from(0.808, 0.757, 0.711, 0.720, 0.593, 0.641, 0.476)
+var runDnR = array.from(0.821, 0.753, 0.699, 0.719, 0.633, 0.662, 0.489)
+var runUpN = array.from(0.799, 0.765, 0.728, 0.710, 0.582, 0.617, 0.532)
+var runDnN = array.from(0.870, 0.718, 0.704, 0.729, 0.581, 0.689, 0.500)
+
 // ─────────────────────────────────────────────────────────── vol source
 root = syminfo.root
 autoSym = root == "ES"  or root == "MES" or root == "SPX" or root == "SPY" ? "CBOE:VIX"   :
@@ -219,6 +251,8 @@ type Sess
     array<int>   hitDn
     array<float> cUp
     array<float> cDn
+    array<float> runUp
+    array<float> runDn
     color  cu
     color  cd
     float  sUp = 1.0
@@ -227,9 +261,11 @@ type Sess
     int    lastX2 = na
 
 var rth = Sess.new("RTH", hitUp = array.new_int(N, 0), hitDn = array.new_int(N, 0),
-     cUp = cUpR, cDn = cDnR, cu = cBull, cd = cBear, sUp = evUpR, sDn = evDnR)
+     cUp = cUpR, cDn = cDnR, runUp = runUpR, runDn = runDnR,
+     cu = cBull, cd = cBear, sUp = evUpR, sDn = evDnR)
 var ovn = Sess.new("ON",  hitUp = array.new_int(N, 0), hitDn = array.new_int(N, 0),
-     cUp = cUpN, cDn = cDnN, cu = cOnUp, cd = cOnDn, sUp = evUpN, sDn = evDnN)
+     cUp = cUpN, cDn = cDnN, runUp = runUpN, runDn = runDnN,
+     cu = cOnUp, cd = cOnDn, sUp = evUpN, sDn = evDnN)
 
 var line[]  histLines = array.new_line()
 var label[] histLabs  = array.new_label()
@@ -238,9 +274,28 @@ var line[]  liveLines = array.new_line()
 var label[] liveLabs  = array.new_label()
 var box[]   liveBoxes = array.new_box()
 
-rungTxt(float p, bool up, float px) =>
-    (up ? "▲ " : "▼ ") + str.tostring(p * 100, "#") + "%" +
-     (labPrice ? "  " + str.tostring(px, format.mintick) : "")
+// A label has to say what the number MEANS for a decision, not just what it is.
+//   Compact   ▲ 25%  7751.50
+//   Standard  ▲ 25% touch · 7751.50 · 28.0 pt
+//   Full      ▲ 25% touch · 7751.50 · 28.0 pt · runs on 58%
+// "touch" is stated because the percentage is a TOUCH rate, not a probability
+// of closing there and not a probability of the trade working. "runs on" is the
+// conditional: given this rung was reached, how often the next one out follows.
+rungTxt(Sess s, int i, bool up, float px) =>
+    pct = array.get(pTarget, i)
+    head = (up ? "▲ " : "▼ ") + str.tostring(pct * 100, "#") + "%" +
+         (labDetail == "Compact" ? "" : " touch")
+    body = labPrice ? " · " + str.tostring(px, format.mintick) : ""
+    dist = labDetail == "Compact" ? "" :
+         " · " + str.tostring(math.abs(px - s.anchor), format.mintick) + " pt"
+    // The last rung has no rung beyond it, so there is nothing to run on to.
+    // Printing 0% there would read as "never extends", which is a different and
+    // false claim; the tail is labelled as the tail instead.
+    run = labDetail != "Full" ? "" :
+         i >= N - 1 ? " · tail" :
+         " · runs on " + str.tostring((up ? array.get(s.runUp, i) :
+         array.get(s.runDn, i)) * 100, "#") + "%"
+    head + body + dist + run
 
 // Draw one session's ladder between two bar indices. Pushes into the arrays it
 // is given, so the caller decides whether these are the historical or live set.
@@ -254,8 +309,18 @@ drawLadder(Sess s, int x1, int x2, bool withGeom, bool withLabels,
         array.push(lns, line.new(x1, s.anchor, x2, s.anchor, xloc = xloc.bar_index,
              color = cPivot, width = lineWid + 1))
     if showAnchor and withLabels
+        // EV is the unit every rung is quoted in, so it belongs on the anchor
+        // rather than being something you back out of the spacing. sUp/sDn are
+        // the TOTAL applied width — day-of-week multiplier and manual override
+        // together — because that product is what actually moved the lines, and
+        // showing only one factor of it would misreport the levels on screen.
+        evTxt = labDetail == "Compact" or na(s.ev) ? "" :
+             " · EV " + str.tostring(s.ev, format.mintick)
+        wTxt = labDetail != "Full" ? "" :
+             " · x" + str.tostring(s.sUp, "#.##") + "/" + str.tostring(s.sDn, "#.##")
         array.push(lbs, label.new(x2, s.anchor, "  " + s.label + " anchor" +
-             (labPrice ? "  " + str.tostring(s.anchor, format.mintick) : ""),
+             (labPrice ? " · " + str.tostring(s.anchor, format.mintick) : "") +
+             evTxt + wTxt,
              xloc = xloc.bar_index, style = label.style_label_left,
              color = color.new(cBgPri, 100), textcolor = cPivot, size = labSz))
     for i = 0 to N - 1
@@ -278,7 +343,7 @@ drawLadder(Sess s, int x1, int x2, bool withGeom, bool withLabels,
                      color = color.new(bu, trU), width = lineWid,
                      style = tu ? line.style_solid : line.style_dotted))
             if (untMode != "Hide" or tu) and withLabels
-                array.push(lbs, label.new(x2, lu, rungTxt(p, true, lu) + (tu ? " ✓" : ""),
+                array.push(lbs, label.new(x2, lu, rungTxt(s, i, true, lu) + (tu ? " ✓" : ""),
                      xloc = xloc.bar_index, style = label.style_label_left,
                      color = color.new(cBgPri, 100), textcolor = color.new(bu, trU),
                      size = labSz))
@@ -287,7 +352,7 @@ drawLadder(Sess s, int x1, int x2, bool withGeom, bool withLabels,
                      color = color.new(bd, trD), width = lineWid,
                      style = td ? line.style_solid : line.style_dotted))
             if (untMode != "Hide" or td) and withLabels
-                array.push(lbs, label.new(x2, ld, rungTxt(p, false, ld) + (td ? " ✓" : ""),
+                array.push(lbs, label.new(x2, ld, rungTxt(s, i, false, ld) + (td ? " ✓" : ""),
                      xloc = xloc.bar_index, style = label.style_label_left,
                      color = color.new(cBgPri, 100), textcolor = color.new(bd, trD),
                      size = labSz))
@@ -420,11 +485,11 @@ posT = tablePos == "Top right" ? position.top_right :
      tablePos == "Bottom right" ? position.bottom_right :
      tablePos == "Top left" ? position.top_left : position.bottom_left
 
-nCols = 1 + (useRTH ? 3 : 0) + (useON ? 3 : 0)
-var table tbl = table.new(posT, 7, N + 4, border_width = 1)
+nCols = 1 + (useRTH ? 3 : 0) + (useON ? 3 : 0) + (showRun ? 2 : 0)
+var table tbl = table.new(posT, 9, N + 4, border_width = 1)
 
 if showTable and barstate.islast
-    table.clear(tbl, 0, 0, 6, N + 3)
+    table.clear(tbl, 0, 0, 8, N + 3)
     table.cell(tbl, 0, 0, "EV Ladder · " + (volSym == "" ? "no vol" : volSym),
          text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblHdSz)
     table.merge_cells(tbl, 0, 0, nCols - 1, 0)
@@ -440,7 +505,12 @@ if showTable and barstate.islast
         table.cell(tbl, c0, 1, "ON ▲", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
         table.cell(tbl, c0 + 1, 1, "ON ▼", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
         table.cell(tbl, c0 + 2, 1, "z", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
+        c0 += 3
+    if showRun
+        table.cell(tbl, c0, 1, "run▲", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
+        table.cell(tbl, c0 + 1, 1, "run▼", text_color = cHeadTx, bgcolor = cHeadBg, text_size = tblSz)
 
+    runCol = 1 + (useRTH ? 3 : 0) + (useON ? 3 : 0)
     float worstZ = 0.0
     for i = 0 to N - 1
         p = array.get(pTarget, i)
@@ -480,6 +550,27 @@ if showTable and barstate.islast
                  text_color = na(z2) ? cTextPri : z2 <= 1.5 ? cOkTx : z2 <= 2.5 ? cWarnTx : cBadTx,
                  bgcolor = na(z2) ? cBgSec : z2 <= 1.5 ? cOkBg : z2 <= 2.5 ? cWarnBg : cBadBg,
                  text_size = tblSz)
+        if showRun
+            // Conversion from THIS rung to the next one out, measured live.
+            // Rungs are nested, so it is exactly hitUp[i+1]/hitUp[i] and needs
+            // NO new state. None may be added either: a separate counter would
+            // be a second reader of the same fact and could drift out of
+            // agreement with the touch column beside it.
+            runHu = useON ? ovn.hitUp : rth.hitUp
+            runHd = useON ? ovn.hitDn : rth.hitDn
+            runBu = array.get(runHu, i) * 1.0
+            runBd = array.get(runHd, i) * 1.0
+            // The outermost rung has nothing beyond it. Printing 0% there would
+            // read as "never extends", which is a false claim rather than an
+            // absent one.
+            runU = i >= N - 1 or runBu == 0 ? na : array.get(runHu, i + 1) / runBu
+            runD = i >= N - 1 or runBd == 0 ? na : array.get(runHd, i + 1) / runBd
+            table.cell(tbl, runCol, i + 2,
+                 na(runU) ? "—" : str.tostring(runU * 100, "#") + "%",
+                 text_color = cTextPri, bgcolor = cBgSec, text_size = tblSz)
+            table.cell(tbl, runCol + 1, i + 2,
+                 na(runD) ? "—" : str.tostring(runD * 100, "#") + "%",
+                 text_color = cTextPri, bgcolor = cBgSec, text_size = tblSz)
 
     nMin = math.min(useRTH ? rth.n : 999999, useON ? ovn.n : 999999)
     note = nMin < 40 ? "only " + str.tostring(nMin) + " sessions — load more history" :
