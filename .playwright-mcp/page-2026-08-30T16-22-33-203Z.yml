@@ -1,0 +1,156 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e3]:
+    - navigation [ref=e5]:
+      - button [ref=e6] [cursor=pointer]
+    - link "Go to the homepage" [ref=e8] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e13]:
+      - button "Search" [ref=e14] [cursor=pointer]
+      - link "Sign In" [ref=e18] [cursor=pointer]:
+        - /url: /account/login/
+  - main [ref=e19]:
+    - navigation "breadcrumb" [ref=e20]:
+      - list [ref=e21]:
+        - listitem [ref=e22]:
+          - link "Home" [ref=e23] [cursor=pointer]:
+            - /url: /
+        - button "More" [ref=e26] [cursor=pointer]
+        - listitem [ref=e34]:
+          - link "Market Statistics" [ref=e35] [cursor=pointer]:
+            - /url: /markets/us/futures/market-statistics/daily
+        - listitem [ref=e38]: Historical Data
+    - generic [ref=e42]:
+      - heading "Historical Data" [level=1] [ref=e43]
+      - generic [ref=e44]:
+        - tablist [ref=e45]:
+          - tab [ref=e46] [cursor=pointer]:
+            - tab "Futures" [selected] [ref=e47]
+          - tab [ref=e48] [cursor=pointer]:
+            - tab "Options on Futures" [ref=e49]
+        - tabpanel "Futures" [ref=e51]:
+          - heading "CFE Daily Volume and Open Interest from 2004 to Current" [level=2] [ref=e52]
+          - link "CFE Daily Volume and Open Interest by Product" [ref=e53] [cursor=pointer]:
+            - /url: https://cdn.cboe.com/data/us/futures/market_statistics/historical_data/cfevoloi.csv
+          - heading "CFE Daily Futures Settlement Window Volume Executed" [level=2] [ref=e58]
+          - link "CFE Daily Settlement Window Volume Executed" [ref=e59] [cursor=pointer]:
+            - /url: https://cdn.cboe.com/data/us/futures/market_statistics/historical_data/cfe_daily_settlement_window_executed_volume.csv
+          - heading "Historical Data Archive" [level=2] [ref=e64]
+          - paragraph [ref=e65]:
+            - text: Click
+            - link "here" [ref=e66] [cursor=pointer]:
+              - /url: /markets/us/futures/market-statistics/historical-data/settlement-archive
+            - text: for CFE Daily Volume and Open Interest by Product Archive for Select Products from 2004 - 2013. Click
+            - link "here" [ref=e67] [cursor=pointer]:
+              - /url: /us/futures/market_statistics/historical_data/margin_archive/
+            - text: for CFE Margin Archive.
+          - alert [ref=e68]:
+            - generic [ref=e69]:
+              - generic [ref=e73]:
+                - paragraph [ref=e74]: Go beyond the basics
+                - paragraph [ref=e75]: Get custom VIX options and futures historical data on-demand at Cboe DataShop
+              - link [ref=e76] [cursor=pointer]:
+                - /url: https://datashop.cboe.com/
+                - button "Learn More" [ref=e77]
+          - heading "CFE Price and Volume Detail for Select Futures Products from 2013 to Current" [level=2] [ref=e78]
+          - generic [ref=e79]:
+            - generic [ref=e80]:
+              - generic [ref=e81]: Futures Product
+              - combobox "Futures Product" [ref=e82] [cursor=pointer]:
+                - generic [ref=e83]: VX+VXT - Cboe Volatility Index (VX) Futures, Includes TAS
+            - generic [ref=e87]:
+              - generic [ref=e88]: Year
+              - combobox "Year" [ref=e89] [cursor=pointer]:
+                - generic [ref=e90]: Select a year
+  - contentinfo [ref=e94]:
+    - generic [ref=e96]:
+      - generic [ref=e97]:
+        - link "Go to the homepage" [ref=e99] [cursor=pointer]:
+          - /url: /
+        - paragraph [ref=e104]: ©2026 Cboe Exchange, Inc. All rights reserved.
+        - generic [ref=e105]:
+          - link [ref=e106] [cursor=pointer]:
+            - /url: https://www.linkedin.com/company/cboe
+            - img "LinkedIn Page" [ref=e107]
+          - link [ref=e108] [cursor=pointer]:
+            - /url: http://www.x.com/cboe
+            - img "X feed" [ref=e109]
+          - link [ref=e110] [cursor=pointer]:
+            - /url: https://www.instagram.com/cboeglobalmarkets
+            - img "Instagram Page" [ref=e111]
+          - link [ref=e112] [cursor=pointer]:
+            - /url: https://www.youtube.com/user/cboetv
+            - img "YouTube Channel" [ref=e113]
+          - link [ref=e114] [cursor=pointer]:
+            - /url: http://www.facebook.com/pages/cboe-chicago-board-options-exchange/177809058917950?ref=ts
+            - img "Facebook Page" [ref=e115]
+          - link [ref=e116] [cursor=pointer]:
+            - /url: /insights/rss/
+            - img "Insights feed" [ref=e117]
+      - generic [ref=e118]:
+        - paragraph [ref=e119]: About
+        - list [ref=e120]:
+          - listitem [ref=e121]:
+            - link "About Us" [ref=e122] [cursor=pointer]:
+              - /url: /about
+          - listitem [ref=e123]:
+            - link "Careers" [ref=e124] [cursor=pointer]:
+              - /url: https://careers.cboe.com/us/en
+          - listitem [ref=e125]:
+            - link "Cboe Empowers" [ref=e126] [cursor=pointer]:
+              - /url: /about/empowers
+          - listitem [ref=e127]:
+            - link "Corporate Stewardship" [ref=e128] [cursor=pointer]:
+              - /url: /about/corporate-stewardship
+          - listitem [ref=e129]:
+            - link "Hours & Holidays" [ref=e130] [cursor=pointer]:
+              - /url: /about/hours
+          - listitem [ref=e131]:
+            - link "Investor Relations" [ref=e132] [cursor=pointer]:
+              - /url: https://ir.cboe.com/overview/default.aspx
+          - listitem [ref=e133]:
+            - link "Press Releases" [ref=e134] [cursor=pointer]:
+              - /url: https://ir.cboe.com/news/default.aspx
+          - listitem [ref=e135]:
+            - link "Public Policy" [ref=e136] [cursor=pointer]:
+              - /url: /about/policy/
+      - generic [ref=e137]:
+        - paragraph [ref=e138]: Legal
+        - list [ref=e139]:
+          - listitem [ref=e140]:
+            - link "Accessibility" [ref=e141] [cursor=pointer]:
+              - /url: /accessibility
+          - listitem [ref=e142]:
+            - link "Biometric Information Privacy Policy" [ref=e143] [cursor=pointer]:
+              - /url: https://cdn.cboe.com/resources/aboutcboe/Biometric_Information_Privacy_Policy.pdf
+          - listitem [ref=e144]:
+            - link "California Notice at Collection" [ref=e145] [cursor=pointer]:
+              - /url: /privacy#california
+          - listitem [ref=e146]:
+            - link "Copyright, Trademark & Patents" [ref=e147] [cursor=pointer]:
+              - /url: /copyright
+          - listitem [ref=e148]:
+            - link "Disclaimers" [ref=e149] [cursor=pointer]:
+              - /url: /global-disclaimers/
+          - listitem [ref=e150]:
+            - link "Email Management" [ref=e151] [cursor=pointer]:
+              - /url: /subscriptions/
+          - listitem [ref=e152]:
+            - link "Notice of Financial Incentive" [ref=e153] [cursor=pointer]:
+              - /url: /financial-incentive-notice/
+          - listitem [ref=e154]:
+            - link "OCC & Investor Protection" [ref=e155] [cursor=pointer]:
+              - /url: https://www.theocc.com/about/publications/publication-listing.jsp
+          - listitem [ref=e156]:
+            - link "Privacy Statement" [ref=e157] [cursor=pointer]:
+              - /url: /privacy
+          - listitem [ref=e158]:
+            - link "Terms & Conditions" [ref=e159] [cursor=pointer]:
+              - /url: /terms
+          - listitem [ref=e160]:
+            - link "Use of Content" [ref=e161] [cursor=pointer]:
+              - /url: /use-of-content
+          - listitem [ref=e162]:
+            - button "Your Privacy Choices" [ref=e163] [cursor=pointer]
+          - listitem [ref=e164]:
+            - button "Do Not Sell or Share My Personal Information" [ref=e165] [cursor=pointer]
+  - alert [ref=e166]

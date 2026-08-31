@@ -124,6 +124,8 @@ local DB, Schwab API, TOS RTD):
 - CBOE: one HTTPS call = full chain (~28k SPX contracts), broker-independent,
   CBOE-computed greeks — a **methodology-independent second opinion**.
 
+Also analyzed (2026-08-30, parked): **VS3D / VolSignals** ? signed dealer-position framework with inverted wall logic (tests extend-through, balance pins) + charm-flip bias. Full analysis and revisit triggers: [VS3D_FRAMEWORK_ANALYSIS.md](VS3D_FRAMEWORK_ANALYSIS.md).
+
 Different dealer-wall definition caveat: raw max-gamma walls land on far round
 strikes (SPX raw CW=8000 vs our CW 7725 on 2026-08-28). Near-spot band ranking
 (±2%) is the comparable defintion (see §7 first results). Both definitions are
