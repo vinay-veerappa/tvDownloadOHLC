@@ -1,23 +1,3 @@
-"""Daily Wargame Playbook Generator"""
-from __future__ import annotations
-from scripts.candle_science.run_candle_science import analyze_candle_science
-from scripts.wargaming.htf_macro_levels import compute_htf_macro_levels
-from scripts.wargaming.weekly_outlook_engine import compute_weekly_outlook
-from scripts.wargaming.p12_scenario_engine import compute_p12_scenarios
-from scripts.wargaming.session_budget_engine import compute_session_budget
-from scripts.wargaming.signature_setup_scanner import scan_signature_setups
-"""Mickey & Austin Daily Wargaming Generation Engine
-
-Generates the canonical 6-Section Pre-Market Wargaming Briefing & Scenario Cards
-from live/fused 1-minute OHLCV data. Enforces zero look-ahead bias, InStat timing
-verification, P12 directional vector switches, Candle Science excursion targets,
-and Pack Trading 2-tier execution brackets.
-
-Usage:
-    python scripts/wargaming/generate_daily_wargame.py --ticker NQ1 --time 06:00
-    python scripts/wargaming/generate_daily_wargame.py --ticker NQ1 --date 2026-08-28 --time 08:30
-"""
-
 import sys
 import json
 import logging
@@ -36,6 +16,12 @@ if str(REPO_ROOT) not in sys.path:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+from scripts.candle_science.run_candle_science import analyze_candle_science
+from scripts.wargaming.htf_macro_levels import compute_htf_macro_levels
+from scripts.wargaming.weekly_outlook_engine import compute_weekly_outlook
+from scripts.wargaming.p12_scenario_engine import compute_p12_scenarios
+from scripts.wargaming.session_budget_engine import compute_session_budget
+from scripts.wargaming.signature_setup_scanner import scan_signature_setups
 from scripts.utils.fused_data_loader import load_fused_data
 from scripts.libs_py.profiler.live_prediction import compute_live_prediction
 from scripts.wargaming.wargame_trajectory_engine import compute_wargame_probabilities_and_trajectories
