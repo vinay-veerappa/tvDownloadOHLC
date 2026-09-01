@@ -3,9 +3,10 @@
  * 
  * Features:
  * - Instantaneous live P&L, position, and balance updates (< 200ms refresh)
+ * - Explicit Open Contracts Display in summary, header badge, tab, and account rows
  * - Copy-Trading Sync Grid: Leader vs Follower Expected vs Actual position validation
  * - Orphan Position Alert & Desync Warning System
- * - Emergency Fleet Flatten Action Button
+ * - Emergency Fleet Flatten Action Button with 2-click confirm & CDP bridge
  * - Live Heartbeat & Stream Latency Indicator
  * - Dual Mode Support: TradingView In-Chart HUD & Standalone Floating Desktop Widget
  */
@@ -15,12 +16,12 @@ export const hud = {
   domId: 'ws-pnl-panel',
   styleId: 'ws-pnl-panel-style',
   name: 'Fleet P&L & Copy-Trading Sync Monitor',
-  description: 'Real-time multi-account P&L, positions, and copy-trading follower synchronization validator.',
-  version: '2.1.0',
+  description: 'Real-time multi-account P&L, positions, open contracts, and copy-trading follower synchronization validator.',
+  version: '2.2.0',
   defaultPosition: {
     top: 65,
     right: 65,
-    width: 560,
+    width: 570,
     height: 640,
     minWidth: 420,
     minHeight: 280
@@ -28,7 +29,7 @@ export const hud = {
 
   getCss: (options = {}) => {
     const initOpacity = options.opacity ?? 0.96;
-    const width = options.width ?? 560;
+    const width = options.width ?? 570;
     const height = options.height ?? 640;
 
     return `
@@ -57,7 +58,7 @@ export const hud = {
       #ws-pnl-panel.minimized {
         height: 38px !important;
         min-height: 38px !important;
-        width: 380px !important;
+        width: 440px !important;
         resize: none !important;
       }
       #ws-pnl-panel.minimized .ws-pnl-body,
@@ -111,13 +112,33 @@ export const hud = {
         font-weight: 800;
         background: #2962ff;
         color: #fff;
-        padding: 1px 5px;
+        padding: 2px 6px;
         border-radius: 3px;
         letter-spacing: 0.5px;
       }
-      .ws-pnl-badge.offline {
-        background: #f7525f;
+      .ws-pnl-badge.offline { background: #f7525f; }
+      
+      .ws-pnl-contracts-badge {
+        font-size: 9px;
+        font-weight: 800;
+        padding: 2px 6px;
+        border-radius: 3px;
+        letter-spacing: 0.4px;
+        background: #2a2e39;
+        color: #787b86;
+        transition: all 0.2s ease;
       }
+      .ws-pnl-contracts-badge.active-pos {
+        background: rgba(8, 153, 129, 0.25);
+        color: #089981;
+        border: 1px solid rgba(8, 153, 129, 0.5);
+      }
+      .ws-pnl-contracts-badge.short-pos {
+        background: rgba(247, 82, 95, 0.25);
+        color: #f7525f;
+        border: 1px solid rgba(247, 82, 95, 0.5);
+      }
+
       .ws-pnl-controls { display: flex; align-items: center; gap: 4px; }
       .ws-pnl-btn {
         background: transparent; border: none; color: #787b86; cursor: pointer;
@@ -156,6 +177,9 @@ export const hud = {
         color: #f0f3fa;
         font-variant-numeric: tabular-nums;
         transition: color 0.2s ease;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .ws-pnl-stat-val.pos { color: #089981; }
       .ws-pnl-stat-val.neg { color: #f7525f; }
@@ -347,6 +371,7 @@ export const hud = {
           <div class="ws-pnl-dot" id="ws-pnl-status-dot"></div>
           <span>Fleet P&L & Copier Monitor</span>
           <span class="ws-pnl-badge" id="ws-pnl-bridge-badge">NT8 LIVE</span>
+          <span class="ws-pnl-contracts-badge" id="ws-pnl-contracts-badge">0 CONTRACTS</span>
         </div>
         <div class="ws-pnl-controls">
           <button class="ws-pnl-btn" id="ws-pnl-btn-opacity" title="Toggle Opacity (96% / 85% / 70%)">🌓</button>
@@ -368,8 +393,8 @@ export const hud = {
           <span class="ws-pnl-stat-val zero" id="ws-pnl-total-realized">$0.00</span>
         </div>
         <div class="ws-pnl-stat">
-          <span class="ws-pnl-stat-label">Fleet Exposure</span>
-          <span class="ws-pnl-stat-val" id="ws-pnl-total-pos">Flat</span>
+          <span class="ws-pnl-stat-label">Open Contracts</span>
+          <span class="ws-pnl-stat-val zero" id="ws-pnl-total-pos" title="Open contracts count and exposure breakdown">0 Contracts (Flat)</span>
         </div>
       </div>
       <div class="ws-pnl-copier-banner" id="ws-pnl-copier-banner">
@@ -381,9 +406,9 @@ export const hud = {
       </div>
       <div class="ws-pnl-toolbar">
         <div class="ws-pnl-view-tabs" id="ws-pnl-view-tabs">
-          <button class="ws-pnl-tab-btn active" data-view="active">Active (0)</button>
-          <button class="ws-pnl-tab-btn" data-view="copier">⚡ Copier (0)</button>
-          <button class="ws-pnl-tab-btn" data-view="all">All Accounts (0)</button>
+          <button class="ws-pnl-tab-btn active" data-view="active" id="ws-pnl-tab-active">Active (0)</button>
+          <button class="ws-pnl-tab-btn" data-view="copier" id="ws-pnl-tab-copier">⚡ Copier (0)</button>
+          <button class="ws-pnl-tab-btn" data-view="all" id="ws-pnl-tab-all">All Accounts (0)</button>
         </div>
         <input type="text" class="ws-pnl-search" id="ws-pnl-search-input" placeholder="Search account..." />
       </div>
@@ -392,7 +417,7 @@ export const hud = {
           <thead id="ws-pnl-thead">
             <tr>
               <th>Account</th>
-              <th>Position</th>
+              <th>Position / Qty</th>
               <th style="text-align: right;">Unrealized</th>
               <th style="text-align: right;">Realized</th>
               <th style="text-align: right;">Net Liq</th>
@@ -576,8 +601,8 @@ export const hud = {
 
         thead.innerHTML = '<tr>' +
           '<th>Relationship</th>' +
-          '<th>Expected</th>' +
-          '<th>Actual</th>' +
+          '<th>Expected Qty</th>' +
+          '<th>Actual Qty</th>' +
           '<th style="text-align:center;">Sync Status</th>' +
           '<th style="text-align:right;">Follower P&L</th>' +
         '</tr>';
@@ -611,8 +636,8 @@ export const hud = {
           const actQty = r.actualQuantity || 0;
           const actSide = r.actualSide || 'Flat';
 
-          const expStr = expSide === 'Flat' ? 'Flat' : expSide + ' ' + expQty;
-          const actStr = actSide === 'Flat' ? 'Flat' : actSide + ' ' + actQty;
+          const expStr = expSide === 'Flat' ? '0 (Flat)' : expSide + ' ' + expQty + ' ctr';
+          const actStr = actSide === 'Flat' ? '0 (Flat)' : actSide + ' ' + actQty + ' ctr';
 
           const isMatch = (expSide === actSide && expQty === actQty);
           let syncBadge = '<span class="ws-pnl-sync-badge ok">SYNCED</span>';
@@ -643,7 +668,7 @@ export const hud = {
 
         thead.innerHTML = '<tr>' +
           '<th>Account</th>' +
-          '<th>Position</th>' +
+          '<th>Position / Contracts</th>' +
           '<th style="text-align:right;">Unrealized</th>' +
           '<th style="text-align:right;">Realized</th>' +
           '<th style="text-align:right;">Net Liq</th>' +
@@ -682,17 +707,18 @@ export const hud = {
           const pos = posMap[acc.name];
           const type = getAccType(acc.name, acc.provider);
           
-          let posHtml = '<span class="ws-pnl-pos-badge ws-pnl-pos-flat">FLAT</span>';
+          let posHtml = '<span class="ws-pnl-pos-badge ws-pnl-pos-flat">0 (FLAT)</span>';
           let uPnl = Number(acc.unrealizedPnL) || 0;
 
           if (pos && pos.marketPosition && pos.marketPosition !== 'Flat') {
             const isLong = pos.marketPosition.toLowerCase() === 'long';
             const cls = isLong ? 'ws-pnl-pos-long' : 'ws-pnl-pos-short';
             const sign = isLong ? '+' : '-';
+            const qty = Math.abs(Number(pos.quantity) || 1);
             const sym = pos.symbol || pos.instrument || '';
             const price = Number(pos.avgPrice || pos.averagePrice || 0);
             const priceStr = price > 0 ? ' @ ' + price.toFixed(2) : '';
-            posHtml = '<span class="ws-pnl-pos-badge ' + cls + '">' + sign + pos.quantity + ' ' + sym + priceStr + '</span>';
+            posHtml = '<span class="ws-pnl-pos-badge ' + cls + '">' + (isLong ? 'LONG' : 'SHORT') + ' ' + qty + ' ' + sym + priceStr + '</span>';
             
             if (pos.unrealizedPnL !== undefined && pos.unrealizedPnL !== null) {
               uPnl = Number(pos.unrealizedPnL) || uPnl;
@@ -740,12 +766,14 @@ export const hud = {
         const totalLiq = data.totalNetLiquidation || 0;
         const totalUnrealized = data.totalUnrealizedPnL || 0;
         const totalRealized = data.totalRealizedPnL || 0;
-        const activeContracts = data.activeContracts || 'Flat';
+        const totalOpenContracts = data.totalOpenContracts || 0;
+        const activeContracts = data.activeContracts || '0 Contracts (Flat)';
 
         const elLiq = panel.querySelector('#ws-pnl-total-liq');
         const elUnreal = panel.querySelector('#ws-pnl-total-unrealized');
         const elReal = panel.querySelector('#ws-pnl-total-realized');
         const elPos = panel.querySelector('#ws-pnl-total-pos');
+        const elContractsBadge = panel.querySelector('#ws-pnl-contracts-badge');
 
         if (elLiq) elLiq.textContent = fmtMoney(totalLiq);
         if (elUnreal) {
@@ -756,7 +784,21 @@ export const hud = {
           elReal.textContent = fmtMoney(totalRealized);
           elReal.className = 'ws-pnl-stat-val ' + (totalRealized > 0 ? 'pos' : totalRealized < 0 ? 'neg' : 'zero');
         }
-        if (elPos) elPos.textContent = activeContracts;
+        if (elPos) {
+          elPos.textContent = activeContracts;
+          elPos.className = 'ws-pnl-stat-val ' + (totalOpenContracts > 0 ? 'pos' : 'zero');
+        }
+
+        // Header Contract Badge
+        if (elContractsBadge) {
+          if (totalOpenContracts > 0) {
+            elContractsBadge.textContent = totalOpenContracts + ' CONTRACT' + (totalOpenContracts > 1 ? 'S' : '') + ' OPEN';
+            elContractsBadge.className = 'ws-pnl-contracts-badge active-pos';
+          } else {
+            elContractsBadge.textContent = '0 CONTRACTS';
+            elContractsBadge.className = 'ws-pnl-contracts-badge';
+          }
+        }
 
         // Update Copier Banner
         const syncPill = panel.querySelector('#ws-pnl-copier-sync-pill');
@@ -786,10 +828,13 @@ export const hud = {
         }
 
         // Update Tabs count
-        const activeTab = panel.querySelector('.ws-pnl-tab-btn[data-view="active"]');
-        const allTab = panel.querySelector('.ws-pnl-tab-btn[data-view="all"]');
-        const copierTab = panel.querySelector('.ws-pnl-tab-btn[data-view="copier"]');
-        if (activeTab) activeTab.textContent = 'Active (' + (data.activeAccountsCount || 0) + ')';
+        const activeTab = panel.querySelector('#ws-pnl-tab-active');
+        const allTab = panel.querySelector('#ws-pnl-tab-all');
+        const copierTab = panel.querySelector('#ws-pnl-tab-copier');
+        if (activeTab) {
+          const ctrStr = totalOpenContracts > 0 ? ' • ' + totalOpenContracts + ' Open' : '';
+          activeTab.textContent = 'Active (' + (data.activeAccountsCount || 0) + ctrStr + ')';
+        }
         if (allTab) allTab.textContent = 'All Accounts (' + state.accounts.length + ')';
         if (copierTab) copierTab.textContent = '⚡ Copier (' + state.copierRows.length + ')';
 
@@ -804,7 +849,10 @@ export const hud = {
           bridgeBadge.textContent = 'NT8 LIVE';
           bridgeBadge.className = 'ws-pnl-badge';
         }
-        if (elFooterCount) elFooterCount.textContent = state.accounts.length + ' accounts | ' + (data.activeAccountsCount || 0) + ' active';
+        if (elFooterCount) {
+          const ctrFoot = totalOpenContracts > 0 ? ' | ' + totalOpenContracts + ' contract' + (totalOpenContracts > 1 ? 's' : '') + ' open' : ' | Flat';
+          elFooterCount.textContent = state.accounts.length + ' accounts | ' + (data.activeAccountsCount || 0) + ' active' + ctrFoot;
+        }
         if (elFooterTime) elFooterTime.textContent = 'Live \u2022 ' + new Date().toLocaleTimeString();
 
         renderTable();

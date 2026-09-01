@@ -91,19 +91,23 @@ function computeFleetSummary(accounts, positions, copierSnapshot) {
     }
   });
 
+  let totalOpenContracts = 0;
   const posCounts = {};
   positions.forEach(p => {
     if (p.marketPosition && p.marketPosition !== 'Flat') {
-      const sym = p.symbol || p.instrument || '';
-      const key = `${p.marketPosition === 'Long' ? '+' : '-'}${p.quantity} ${sym}`.trim();
+      const qty = Math.abs(Number(p.quantity) || 1);
+      totalOpenContracts += qty;
+      const sym = (p.symbol || p.instrument || '').split(' ')[0];
+      const key = `${p.marketPosition === 'Long' ? '+' : '-'}${qty} ${sym}`.trim();
       posCounts[key] = (posCounts[key] || 0) + 1;
     }
   });
 
   const activePosKeys = Object.keys(posCounts);
-  let activeContractsStr = 'Flat';
-  if (activePosKeys.length > 0) {
-    activeContractsStr = activePosKeys.map(k => `${k}${posCounts[k] > 1 ? ` (x${posCounts[k]})` : ''}`).join(', ');
+  let activeContractsStr = '0 Contracts (Flat)';
+  if (totalOpenContracts > 0) {
+    const breakdown = activePosKeys.map(k => `${k}${posCounts[k] > 1 ? ` (x${posCounts[k]})` : ''}`).join(', ');
+    activeContractsStr = `${totalOpenContracts} Contract${totalOpenContracts > 1 ? 's' : ''} (${breakdown})`;
   }
 
   return {
@@ -114,6 +118,7 @@ function computeFleetSummary(accounts, positions, copierSnapshot) {
     totalNetLiquidation: totalLiq,
     totalRealizedPnL: totalRealized,
     totalUnrealizedPnL: totalUnrealized,
+    totalOpenContracts,
     activeAccountsCount,
     activeContracts: activeContractsStr,
     timestamp: Date.now()

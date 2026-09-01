@@ -30,10 +30,13 @@ async function check() {
       totalUnrealized: document.getElementById('ws-pnl-total-unrealized')?.textContent,
       totalRealized: document.getElementById('ws-pnl-total-realized')?.textContent,
       totalLiq: document.getElementById('ws-pnl-total-liq')?.textContent,
-      activeExposure: document.getElementById('ws-pnl-total-pos')?.textContent,
+      openContracts: document.getElementById('ws-pnl-total-pos')?.textContent,
+      contractsBadge: document.getElementById('ws-pnl-contracts-badge')?.textContent,
+      activeTab: document.getElementById('ws-pnl-tab-active')?.textContent,
       footerTime: document.getElementById('ws-pnl-last-update')?.textContent,
+      footerCount: document.getElementById('ws-pnl-acc-count')?.textContent,
       accountsCount: window.__TV_PNL_STATE__?.accounts?.length,
-      firstRowText: document.querySelector('#ws-pnl-tbody tr')?.innerText
+      firstRowText: document.querySelector('#ws-pnl-tbody tr')?.innerText?.replace(/\\t/g, ' | ')
     })`,
     returnByValue: true
   });
