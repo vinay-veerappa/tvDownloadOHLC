@@ -3,6 +3,7 @@
  * 
  * Features:
  * - Instantaneous live P&L, position, and balance updates (< 200ms refresh)
+ * - Interactive Multi-Column Sorting (Account, Position/Contracts, Unrealized, Realized, Net Liq, Sync Status)
  * - Explicit Open Contracts Display in summary, header badge, tab, and account rows
  * - Copy-Trading Sync Grid: Leader vs Follower Expected vs Actual position validation
  * - Orphan Position Alert & Desync Warning System
@@ -16,8 +17,8 @@ export const hud = {
   domId: 'ws-pnl-panel',
   styleId: 'ws-pnl-panel-style',
   name: 'Fleet P&L & Copy-Trading Sync Monitor',
-  description: 'Real-time multi-account P&L, positions, open contracts, and copy-trading follower synchronization validator.',
-  version: '2.2.0',
+  description: 'Real-time multi-account P&L, positions, open contracts, and copy-trading follower synchronization validator with interactive sorting.',
+  version: '2.3.0',
   defaultPosition: {
     top: 65,
     right: 65,
@@ -298,6 +299,25 @@ export const hud = {
         z-index: 2;
         text-transform: uppercase;
       }
+      .ws-pnl-table th.sortable {
+        cursor: pointer;
+        user-select: none;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .ws-pnl-table th.sortable:hover {
+        background: #252a37;
+        color: #f0f3fa;
+      }
+      .ws-pnl-sort-icon {
+        margin-left: 4px;
+        font-size: 9px;
+        color: #5d606b;
+        display: inline-block;
+      }
+      .ws-pnl-sort-icon.active {
+        color: #2962ff;
+        font-weight: bold;
+      }
       .ws-pnl-table td {
         padding: 6px 8px;
         border-bottom: 1px solid #20242f;
@@ -416,11 +436,11 @@ export const hud = {
         <table class="ws-pnl-table">
           <thead id="ws-pnl-thead">
             <tr>
-              <th>Account</th>
-              <th>Position / Qty</th>
-              <th style="text-align: right;">Unrealized</th>
-              <th style="text-align: right;">Realized</th>
-              <th style="text-align: right;">Net Liq</th>
+              <th class="sortable" data-sort="name">Account <span class="ws-pnl-sort-icon">⇅</span></th>
+              <th class="sortable" data-sort="pos">Position / Qty <span class="ws-pnl-sort-icon active">▼</span></th>
+              <th class="sortable" data-sort="unrealized" style="text-align: right;">Unrealized <span class="ws-pnl-sort-icon">⇅</span></th>
+              <th class="sortable" data-sort="realized" style="text-align: right;">Realized <span class="ws-pnl-sort-icon">⇅</span></th>
+              <th class="sortable" data-sort="netLiq" style="text-align: right;">Net Liq <span class="ws-pnl-sort-icon">⇅</span></th>
             </tr>
           </thead>
           <tbody id="ws-pnl-tbody">
@@ -448,6 +468,8 @@ export const hud = {
         copierSystem: null,
         currentView: 'active',
         searchQuery: '',
+        sortCol: 'pos',
+        sortDir: 'desc',
         lastUpdate: Date.now()
       };
 
@@ -594,18 +616,43 @@ export const hud = {
         return 'LIVE';
       }
 
+      function getSortIcon(col) {
+        if (state.sortCol !== col) return '<span class="ws-pnl-sort-icon">⇅</span>';
+        return '<span class="ws-pnl-sort-icon active">' + (state.sortDir === 'asc' ? '▲' : '▼') + '</span>';
+      }
+
+      function attachHeaderSortListeners() {
+        const thead = panel.querySelector('#ws-pnl-thead');
+        if (!thead) return;
+        thead.querySelectorAll('th.sortable').forEach(th => {
+          th.onclick = (e) => {
+            e.stopPropagation();
+            const col = th.getAttribute('data-sort');
+            if (state.sortCol === col) {
+              state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+              state.sortCol = col;
+              state.sortDir = (col === 'name' || col === 'rel') ? 'asc' : 'desc';
+            }
+            renderTable();
+          };
+        });
+      }
+
       function renderCopierView() {
         const thead = panel.querySelector('#ws-pnl-thead');
         const tbody = panel.querySelector('#ws-pnl-tbody');
         if (!tbody || !thead) return;
 
         thead.innerHTML = '<tr>' +
-          '<th>Relationship</th>' +
-          '<th>Expected Qty</th>' +
-          '<th>Actual Qty</th>' +
-          '<th style="text-align:center;">Sync Status</th>' +
-          '<th style="text-align:right;">Follower P&L</th>' +
+          '<th class="sortable" data-sort="rel">Relationship ' + getSortIcon('rel') + '</th>' +
+          '<th class="sortable" data-sort="exp">Expected Qty ' + getSortIcon('exp') + '</th>' +
+          '<th class="sortable" data-sort="act">Actual Qty ' + getSortIcon('act') + '</th>' +
+          '<th class="sortable" data-sort="sync" style="text-align:center;">Sync Status ' + getSortIcon('sync') + '</th>' +
+          '<th class="sortable" data-sort="pnl" style="text-align:right;">Follower P&L ' + getSortIcon('pnl') + '</th>' +
         '</tr>';
+
+        attachHeaderSortListeners();
 
         const copierRows = state.copierRows || [];
         const accounts = state.accounts || [];
@@ -616,6 +663,38 @@ export const hud = {
           if (!state.searchQuery) return true;
           return (r.leaderAccountName && r.leaderAccountName.toLowerCase().includes(state.searchQuery)) ||
                  (r.followerAccountName && r.followerAccountName.toLowerCase().includes(state.searchQuery));
+        });
+
+        filtered.sort((a, b) => {
+          let diff = 0;
+          switch (state.sortCol) {
+            case 'rel':
+              diff = (a.leaderAccountName + a.followerAccountName).localeCompare(b.leaderAccountName + b.followerAccountName);
+              break;
+            case 'exp':
+              diff = (b.expectedQuantity || 0) - (a.expectedQuantity || 0);
+              break;
+            case 'act':
+              diff = (b.actualQuantity || 0) - (a.actualQuantity || 0);
+              break;
+            case 'sync': {
+              const matchA = (a.expectedSide === a.actualSide && a.expectedQuantity === a.actualQuantity);
+              const matchB = (b.expectedSide === b.actualSide && b.expectedQuantity === b.actualQuantity);
+              const scoreA = !a.isEnabled ? 1 : a.isQuarantined ? 3 : !matchA ? 4 : 2;
+              const scoreB = !b.isEnabled ? 1 : b.isQuarantined ? 3 : !matchB ? 4 : 2;
+              diff = scoreB - scoreA;
+              break;
+            }
+            case 'pnl': {
+              const pnlA = accMap[a.followerAccountName] ? Number(accMap[a.followerAccountName].unrealizedPnL || 0) : 0;
+              const pnlB = accMap[b.followerAccountName] ? Number(accMap[b.followerAccountName].unrealizedPnL || 0) : 0;
+              diff = pnlB - pnlA;
+              break;
+            }
+            default:
+              diff = 0;
+          }
+          return state.sortDir === 'asc' ? -diff : diff;
         });
 
         if (filtered.length === 0) {
@@ -667,12 +746,14 @@ export const hud = {
         if (!tbody || !thead) return;
 
         thead.innerHTML = '<tr>' +
-          '<th>Account</th>' +
-          '<th>Position / Contracts</th>' +
-          '<th style="text-align:right;">Unrealized</th>' +
-          '<th style="text-align:right;">Realized</th>' +
-          '<th style="text-align:right;">Net Liq</th>' +
+          '<th class="sortable" data-sort="name">Account ' + getSortIcon('name') + '</th>' +
+          '<th class="sortable" data-sort="pos">Position / Contracts ' + getSortIcon('pos') + '</th>' +
+          '<th class="sortable" data-sort="unrealized" style="text-align:right;">Unrealized ' + getSortIcon('unrealized') + '</th>' +
+          '<th class="sortable" data-sort="realized" style="text-align:right;">Realized ' + getSortIcon('realized') + '</th>' +
+          '<th class="sortable" data-sort="netLiq" style="text-align:right;">Net Liq ' + getSortIcon('netLiq') + '</th>' +
         '</tr>';
+
+        attachHeaderSortListeners();
 
         const accounts = state.accounts || [];
         const positions = state.positions || [];
@@ -691,10 +772,42 @@ export const hud = {
         });
 
         filtered.sort((a, b) => {
-          const posA = posMap[a.name] && posMap[a.name].marketPosition !== 'Flat' ? 1 : 0;
-          const posB = posMap[b.name] && posMap[b.name].marketPosition !== 'Flat' ? 1 : 0;
-          if (posA !== posB) return posB - posA;
-          return (b.netLiquidation || b.cashValue || 0) - (a.netLiquidation || a.cashValue || 0);
+          const posA = posMap[a.name];
+          const posB = posMap[b.name];
+          const hasPosA = posA && posA.marketPosition && posA.marketPosition !== 'Flat';
+          const hasPosB = posB && posB.marketPosition && posB.marketPosition !== 'Flat';
+          const qtyA = hasPosA ? Math.abs(Number(posA.quantity) || 1) : 0;
+          const qtyB = hasPosB ? Math.abs(Number(posB.quantity) || 1) : 0;
+
+          const uPnlA = (posA && posA.unrealizedPnL !== undefined) ? Number(posA.unrealizedPnL) : (Number(a.unrealizedPnL) || 0);
+          const uPnlB = (posB && posB.unrealizedPnL !== undefined) ? Number(posB.unrealizedPnL) : (Number(b.unrealizedPnL) || 0);
+          const rPnlA = Number(a.realizedPnL) || 0;
+          const rPnlB = Number(b.realizedPnL) || 0;
+          const liqA = Number(a.netLiquidation || a.cashValue) || 0;
+          const liqB = Number(b.netLiquidation || b.cashValue) || 0;
+
+          let diff = 0;
+          switch (state.sortCol) {
+            case 'name':
+              diff = a.name.localeCompare(b.name);
+              break;
+            case 'pos':
+              if (qtyA !== qtyB) diff = qtyB - qtyA;
+              else diff = liqB - liqA;
+              break;
+            case 'unrealized':
+              diff = uPnlB - uPnlA;
+              break;
+            case 'realized':
+              diff = rPnlB - rPnlA;
+              break;
+            case 'netLiq':
+            default:
+              diff = liqB - liqA;
+              break;
+          }
+
+          return state.sortDir === 'asc' ? -diff : diff;
         });
 
         if (filtered.length === 0) {
