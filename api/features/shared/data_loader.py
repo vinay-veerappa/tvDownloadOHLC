@@ -162,8 +162,14 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None, col
     if columns is not None:
         cache_key += "_cols_" + "_".join(sorted(columns))
         
-    if cache_key in _HISTORICAL_CACHE:
-        df = _HISTORICAL_CACHE[cache_key]
+    hist_mtime = 0.0
+    try:
+        hist_mtime = os.path.getmtime(filepath)
+    except Exception:
+        pass
+
+    if cache_key in _HISTORICAL_CACHE and _HISTORICAL_CACHE[cache_key][1] == hist_mtime:
+        df = _HISTORICAL_CACHE[cache_key][0]
     else:
         df = pd.read_parquet(filepath, columns=columns)
         
@@ -209,8 +215,8 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None, col
         
         df = df.sort_values('time').reset_index(drop=True)
         
-        # Store in cache (no copy needed as this is a fresh df)
-        _HISTORICAL_CACHE[cache_key] = df
+        # Store in cache with mtime for automatic hot-reload
+        _HISTORICAL_CACHE[cache_key] = (df, hist_mtime)
         
     # ----------------------------------------------------
     # DYNAMIC IN-MEMORY LIVE STORAGE FUSION (PHASE 2 BACKEND)
@@ -259,8 +265,8 @@ def load_parquet(ticker: str, timeframe: str, t_end: Optional[float] = None, col
                 else:
                     df_l_resampled = df_l
                 
-                # Convert resampled index back to Unix seconds
-                df_l_resampled['time'] = df_l_resampled.index.astype('int64') // 10**9
+                # Convert resampled index back to Unix seconds universally regardless of unit
+                df_l_resampled['time'] = df_l_resampled.index.astype('datetime64[s]').astype('int64')
                 
                 # Keep expected columns
                 live_cols_to_slice = columns if columns is not None else ['time', 'open', 'high', 'low', 'close', 'volume']
