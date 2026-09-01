@@ -27,6 +27,7 @@ from scripts.libs_py.profiler.live_prediction import compute_live_prediction
 from scripts.wargaming.wargame_trajectory_engine import compute_wargame_probabilities_and_trajectories
 from scripts.trader.signals.candle_science import get_candle_science_read
 from scripts.wargaming.htf_ema_analysis import compute_htf_ema_analysis
+from scripts.wargaming.economic_news_engine import compute_economic_news_context, format_economic_news_markdown
 from scripts.risk.position_sizer import calculate_position_size, load_ticker_config
 from scripts.libs_py.profiler.engine import SessionBoxEngine
 
@@ -252,6 +253,7 @@ def generate_wargame_data(
     weekly_outlook = compute_weekly_outlook(ticker=ticker, target_date=t_dt.isoformat())
     session_budget = compute_session_budget(ticker=ticker, target_date=t_dt.isoformat(), cutoff_time=cutoff_time_str)
     sig_setups = scan_signature_setups(ticker=ticker, target_date=t_dt.isoformat(), cutoff_time=cutoff_time_str)
+    news_ctx = compute_economic_news_context(target_date=t_dt)
 
     return {
         "ticker": ticker,
@@ -267,7 +269,7 @@ def generate_wargame_data(
             "bias": p12_bias,
             "diff_pts": p12_diff_pts,
             "diff_bps": p12_diff_bps,
-        },
+            },
         "anchors": {
             "midnight_open": midnight_open,
             "globex_open": globex_open,
@@ -304,6 +306,7 @@ def generate_wargame_data(
         "weekly_outlook": weekly_outlook,
         "session_budget": session_budget,
         "signature_setups": sig_setups,
+        "news_context": news_ctx,
     }
 
 
@@ -318,6 +321,7 @@ def format_wargame_markdown(data: Dict[str, Any]) -> str:
     ticker = data["ticker"]
     dt_str = data["date"]
     cutoff = data["cutoff_time"]
+    news_ctx = data.get("news_context", {})
 
     p12_pos = "ABOVE" if p12["diff_pts"] >= 0 else "BELOW"
 
@@ -336,6 +340,13 @@ def format_wargame_markdown(data: Dict[str, Any]) -> str:
         f"* **P12 Range (18:00–06:00 EST)**: High `{p12['high']:,.2f}` (@ {p12['hod_time']}) | Low `{p12['low']:,.2f}` (@ {p12['lod_time']}) | Midline `{p12['mid']:,.2f}`  ",
         f"* **P12 Directional Switch**: **{p12['bias']}** (Holding {'above' if p12['bias']=='BULLISH' else 'below'} P12 Midline targets {'P12 High' if p12['bias']=='BULLISH' else 'P12 Low'})  ",
         "",
+    ]
+
+    if news_ctx:
+        lines.append(format_economic_news_markdown(news_ctx))
+        lines.append("")
+
+    lines.extend([
         "---",
         "",
         "## 📊 2. KEY ANCHOR LEVELS & LIQUIDITY MAP",
@@ -354,6 +365,18 @@ def format_wargame_markdown(data: Dict[str, Any]) -> str:
         "",
         "## ⚔️ 3. ACTIONABLE IF-THEN SCENARIO CARDS",
         "",
+    ])
+
+    if news_ctx and (news_ctx.get("has_0945_med") or news_ctx.get("has_1000_med")):
+        lines.extend([
+            "### ⚠️ NEWS MANIPULATION PROTOCOL (09:45 & 10:00 AM CATALYSTS)",
+            "* **Pre-News Trap Warning**: Institutional algos frequently engineer false breakouts in the 09:30–09:44 window.",
+            "* **09:45 News Candle**: Do not trust early 0-5 box breakouts until the 09:45 news candle confirms direction or rejects.",
+            "* **10:00 News Candle**: When high-impact news (ISM/JOLTS) is at 10:00 AM, the true session expansion trend begins AT OR AFTER 10:00 AM.",
+            "",
+        ])
+
+    lines.extend([
         "### 🔴 SCENARIO CARD 1: THE FALSE BRANCH (Reversion / Sweeper) ── PRIMARY BIAS",
         f"* **If** 09:30 RTH Open sweeps toward `P12 Low ({p12['low']:,.2f})` or session extremes and fails to sustain a 10 bps breakout in the 0–5 Box:",
         "* **THEN** execute **Mean Reversion** back toward primary magnets:",
@@ -393,11 +416,11 @@ def format_wargame_markdown(data: Dict[str, Any]) -> str:
         "Track price action step-by-step between 09:30 and 10:30 AM:",
         "1. **[ ] Step 1**: Does price cross back over the **09:30 AM Open print**?",
         "2. **[ ] Step 2**: Does price trade through the **09:00 AM Hour 50% Midpoint**?",
-        "3. **[ ] Step 3**: Does the **10:00 AM Candle** sweep the 09:00 AM extreme?",
+        f"3. **[ ] Step 3**: Does the **10:00 AM Candle** sweep the 09:00 AM extreme?{' *(⚡ News Catalyst: ' + news_ctx['news_regime'] + ')*' if news_ctx.get('has_1000_med') else ''}",
         "4. **[ ] Step 4**: Does the **10:00 AM Q1 (10:00–10:14)** establish an instant statistical extreme?",
         "   - **4/4 Steps Completed**: Major Reversal confirmed $\\rightarrow$ Execute Scenario 1 (False Branch).",
         "   - **0–1 Steps Completed**: Trend Continuation confirmed $\\rightarrow$ Ride Scenario 2 (True Branch).",
-    ]
+    ])
 
     return "\n".join([l for l in lines if l is not None])
 
