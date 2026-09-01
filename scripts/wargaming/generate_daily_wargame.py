@@ -27,6 +27,7 @@ from scripts.libs_py.profiler.live_prediction import compute_live_prediction
 from scripts.wargaming.wargame_trajectory_engine import compute_wargame_probabilities_and_trajectories
 from scripts.trader.signals.candle_science import get_candle_science_read
 from scripts.wargaming.htf_ema_analysis import compute_htf_ema_analysis
+from scripts.wargaming.cross_asset_directive import build_cross_asset_directive, format_cross_asset_markdown
 from scripts.wargaming.economic_news_engine import compute_economic_news_context, format_economic_news_markdown
 from scripts.risk.position_sizer import calculate_position_size, load_ticker_config
 from scripts.libs_py.profiler.engine import SessionBoxEngine
@@ -255,6 +256,13 @@ def generate_wargame_data(
     sig_setups = scan_signature_setups(ticker=ticker, target_date=t_dt.isoformat(), cutoff_time=cutoff_time_str)
     news_ctx = compute_economic_news_context(target_date=t_dt)
 
+    # 10. Cross-Asset Commander's Directive (Section 0)
+    try:
+        cad = build_cross_asset_directive(focus_ticker=ticker, target_date=t_dt.isoformat())
+    except Exception as e:
+        log.warning(f"Cross-asset directive failed: {e}")
+        cad = None
+
     return {
         "ticker": ticker,
         "date": t_dt.isoformat(),
@@ -307,6 +315,7 @@ def generate_wargame_data(
         "session_budget": session_budget,
         "signature_setups": sig_setups,
         "news_context": news_ctx,
+        "cross_asset_directive": cad,
     }
 
 
@@ -325,6 +334,10 @@ def format_wargame_markdown(data: Dict[str, Any]) -> str:
 
     p12_pos = "ABOVE" if p12["diff_pts"] >= 0 else "BELOW"
 
+    # Section 0: Cross-Asset Commander's Brief (sits above everything)
+    cad = data.get("cross_asset_directive")
+    section0 = format_cross_asset_markdown(cad) if cad else ""
+
     lines = [
         f"# ⚔️ Mickey & Austin Wargaming Playbook: {ticker}",
         f"**Session Date:** {dt_str}  ",
@@ -333,6 +346,7 @@ def format_wargame_markdown(data: Dict[str, Any]) -> str:
         "",
         "---",
         "",
+        section0,
         "## 🧭 1. OVERNIGHT CONTEXT & SESSION STRUCTURE",
         f"* **Asia Session**: `{sess['asia_status']}` (Broken: `{sess['asia_broken']}`)  ",
         f"* **London Session**: `{sess['london_status']}` (Broken: `{sess['london_broken']}`)  ",

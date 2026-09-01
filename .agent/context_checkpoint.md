@@ -1,42 +1,51 @@
-# Context Checkpoint: Trading Second Brain Hardening & Implementation Plan v6.1.0
-*Timestamp: 2026-08-29T05:11:00Z*
+# Context Checkpoint: Candle Science & Multi-Decade Data Restoration
+*Timestamp: 2026-09-01T11:30:00-07:00 (Local)*
 
 ## 1. Executive Summary
-Successfully resolved and hardened all 37 engineering audit findings across the Trading Second Brain engine. All 48 tests across 22 test suites pass with 100% green status in 7.14s. The master implementation plan has been updated to Version 6.1.0, and Workstream 3 (C# Pre-Trade Interceptor) has been officially placed on hold to reflect the multi-platform execution reality across TradingView, Tradovate, and NT8.
+Successfully validated and refined the authentic **Candle Science ($C_1 \rightarrow C_2 \rightarrow C_3$)** framework on the **Daily Candle timeframe**. Restored **20–29 years of full historical daily data** across all futures tickers (expanding NQ1 from 639 bars to 6,884 bars), fixed MAE percentile magnitude sorting, corrected $C_3$ Open price ingestion to use actual Globex 18:00 prints (`29,518.25`), and resolved FastAPI caching/timestamp conversion so the Candle Science web dashboard is live with 6,884 samples across 1999–2026.
+
+---
 
 ## 2. Key Files & State
-- `scripts/trading_brain/db/schema.sql`: 23 tables, 40 immutability triggers on 20 append-only tables, added `model_deployment_events`.
-- `scripts/trading_brain/db/init_db.py`: Validates all 23 tables and WAL mode.
-- `scripts/trading_brain/plans/plan_adapter.py`: Enforces ex-ante authority (post-hoc plans cannot supersede ex-ante plans) and resolves sequential intraday amendments.
-- `scripts/trading_brain/forecast/forecast_registrar.py`: Two-phase sealed registration with fail-closed manifest validation, strict 5-class MECE probability sum validation, and standalone expired transaction isolation.
-- `scripts/trading_brain/signals/opportunity_logger.py`: Preserves `PENDING_WINDOW_OPEN` state until strategy-specific expiry (`execution_policy_json`).
-- `scripts/trading_brain/ingest/nt8_broker_adapter.py`: Globex 18:00 ET session date roll, idempotency deduplication, and position drift detection.
-- `scripts/trading_brain/evaluation/daily_process_delta.py`: Scores Brier and log loss ONLY for `LIVE_PRODUCTION` forecasts on `CLEAN` tapes; strict compliance checks for zero-trade and unpermitted executions.
-- `scripts/trading_brain/guard/deviation_annotator.py`: Strategy-aware plan deviation annotation; position-reducing exits are never flagged as contrary entries.
-- `scripts/trading_brain/practice/drill_engine.py`: Split-custody vault (`_SEALED_DRILL_VAULT`), locked answer immutability, and zero synthetic data fallbacks.
-- `scripts/trading_brain/practice/drill_generator.py`: Mines recurring deviations (>= 3 occurrences) into targeted deliberate practice curricula.
-- `scripts/trading_brain/research/walk_forward_gate.py`: Expanding purged K-fold cross-validation with embargo buffer and standard error checks.
-- `scripts/trading_brain/research/shadow_gate.py`: Preregisters holdout dataset hash, model ID, and minimum detectable effect (MDE) with terminal state locks.
-- `scripts/trading_brain/research/promotion_orchestrator.py`: 4-tier model governance writing append-only events to `model_deployment_events`.
-- `scripts/trading_brain/intake/catalog_router.py`: Strict temporal availability boundaries and immutable review transition ledger.
-- `scripts/trading_brain/testing/operational_soak_gate.py`: Verifies database integrity across all canonical tables.
-- `scripts/utils/market_calendar.py`: Added `derive_futures_session_date` (18:00 ET roll).
-- `docs/architecture/TRADING_SECOND_BRAIN_IMPLEMENTATION_PLAN.md`: Updated to v6.1.0 with Workstream 3 on hold.
+
+- [`api/features/candle_science/service.py`](file:///c:/Users/vinay/tvDownloadOHLC/api/features/candle_science/service.py):
+  - Fixed MAE percentile calculation to compute quantiles on **excursion magnitude** ($|\text{MAE}|$), ensuring **P30 MAE** represents shallow pullbacks and **P70/P90 MAE** represents deep adverse bounds.
+- [`scripts/trader/signals/candle_science.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trader/signals/candle_science.py):
+  - Updated open mode to extract the actual **$C_3$ Globex Open price (18:00 EST)** from 1-minute fused storage (`29,518.25`) rather than relying on yesterday's $C_2$ close proxy.
+  - Aligned negative percentile extraction with magnitude ordering.
+- [`api/features/shared/data_loader.py`](file:///c:/Users/vinay/tvDownloadOHLC/api/features/shared/data_loader.py):
+  - Added automatic file modification time (`mtime`) checking to `_HISTORICAL_CACHE` so disk updates instantly hot-reload without stale server state.
+  - Fixed live fusion timestamp conversion to use universal `astype('datetime64[s]').astype('int64')`, eliminating epoch sentinel rows (`1970`).
+- [`data/{ticker}_1d.parquet`](file:///c:/Users/vinay/tvDownloadOHLC/data):
+  - Restored multi-decade datasets merging `_unadjusted.parquet` (1997/1999) with live 2024–2026 storage.
+  - `NQ1`: 6,884 sessions (27.2 years)
+  - `ES1`: 7,445 sessions (29.0 years)
+  - `YM1`: 3,330 sessions (13.2 years)
+  - `CL1`: 3,330 sessions (13.2 years)
+  - `GC1`: 3,330 sessions (13.2 years)
+  - `RTY1`: 2,317 sessions (9.1 years)
+- [`docs/SecondBrain_Trading.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/SecondBrain_Trading.md) & [`docs/profiler/daily_profiler_wargaming.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/daily_profiler_wargaming.md):
+  - Added Section 9.3 / Section 8 documenting the **Daily Profiler Adjusted Data Note** for future re-evaluation during major retrain cycles.
+
+---
 
 ## 3. Critical Decisions & Invariants
-- **Multi-Platform Execution & Non-Blocking Telemetry**: Because discretionary orders originate across TradingView, Tradovate, and NT8, synchronous pre-trade interception in NT8 is unfeasible and introduces fatal execution latency in NQ/MNQ. Workstream 3 is on hold; future focus is on post-fill asynchronous deviation classification (`DeviationAnnotator`) and instant non-blocking alerts (Discord / Desktop).
-- **Clean Production Forecast Scoring Only**: Brier and log loss calibration metrics are derived exclusively from `LIVE_PRODUCTION` forecasts evaluated against `CLEAN` or `SCHEDULED_SHORT_SESSION` tapes.
-- **Split Custody Drill Engine**: Blinded drills expose only an opaque `drill_id` and masked bars to the client; true ground truth is sealed in `_SEALED_DRILL_VAULT` until after immutable answer lock-in.
-- **Ex-Ante Plan Primacy**: `POST_HOC_RECONSTRUCTION` plans are strictly prevented from emitting `SUPERSEDED` lifecycle events against `EX_ANTE` plans.
+
+1. **Candle Science Reference Anchors**:
+   - Timeframe: Strictly the **Daily Candle** ($C_1 = T-2$, $C_2 = T-1$, $C_3 = \text{Current Day}$).
+   - Anchors: Excursions and targets are strictly calculated relative to **$C_2$ Daily OHLC** ($C_2$ Open = Line in the Sand, $C_2$ High = Bullish Extension Benchmark, $C_2$ Low = Bearish Expansion Benchmark).
+2. **Unadjusted vs. Adjusted Invariance**:
+   - Verified that unadjusted raw contract data is 99.23% structurally identical across consecutive 3-bar sequences and avoids additive percentage compression in historical eras.
+3. **Settlement Close Standard**:
+   - Daily futures sessions strictly observe **18:00 EST Globex Open $\longrightarrow$ 17:00 EST CME Settlement Close**.
+
+---
 
 ## 4. Current Blockers & Unresolved Items
-- None. Core database, adapters, evaluation engines, drill harness, and research gates are 100% operational and green.
+- **None**: FastAPI backend running on port 8000, Next.js frontend on port 3000, Candle Science web interface verified with 6,884 samples and 1999–2026 year filters.
+
+---
 
 ## 5. Next Actions
-1. **Workstream 1: Daily Operational Orchestration Pipelines (Priority 1)**:
-   - `WS-1.1`: Pre-Market Pipeline Runner (`scripts/trading_brain/orchestration/pre_market_pipeline.py` @ 08:40 ET).
-   - `WS-1.2`: Post-Market Pipeline Runner (`scripts/trading_brain/orchestration/post_market_pipeline.py` @ 16:15 ET).
-2. **Workstream 2: Live Feature Wiring (Priority 2)**:
-   - Wire `generate_daily_wargame.py` and Next.js Prisma TradePlan submissions to `ForecastRegistrar` and `PlanAdapter`.
-3. **Workstream 4: Next.js / Tailwind Web UI (Priority 3)**:
-   - Build 4-way reconciliation scorecard, deliberate practice terminal, and review queue UI in `web/`.
+1. Complete independent verification of any remaining morning wargaming modules (Session Volatility Budget, HTF Moving Averages, Expected Moves).
+2. Run daily wargaming scenarios or live trade analysis for upcoming sessions.
