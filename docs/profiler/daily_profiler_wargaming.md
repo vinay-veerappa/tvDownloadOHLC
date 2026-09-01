@@ -137,4 +137,14 @@ Economic news releases act as major algorithmic liquidity magnets and volatility
   - *Golden Rule*: Do not front-run 10:00 AM news. Let the news candle clear the liquidity pool and commit only after the displacement candle closes.
 
 ---
-*Last Updated: 2026-09-01. Enhanced with 09:45 & 10:00 AM Economic News Manipulation Protocols.*
+
+## 8. Data Architecture & Future Review Notes
+
+> [!NOTE]
+> **Daily Profiler Historical Data Note (Future Re-Evaluation)**:
+> The Daily Profiler engine and historical lookup matrices were originally compiled from back-adjusted data (initial bulk download).
+> - **Current Status**: The Daily Profiler is functioning smoothly in live production and generating highly accurate scenario bounds and hit rates. It remains active as-is with no immediate changes required.
+> - **Future Review Directive**: When scheduling a major retrain or overhaul of the Profiler matrices, perform a controlled A/B comparison testing whether switching from back-adjusted to unadjusted front-month matrices improves or alters HOD/LOD percentile precision across multi-decade regimes.
+
+---
+*Last Updated: 2026-09-01. Enhanced with 09:45 & 10:00 AM Economic News Manipulation Protocols and Data Architecture Notes.*

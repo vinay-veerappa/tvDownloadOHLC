@@ -178,6 +178,11 @@ This protocol is the absolute rule for all time-based calculations and data proc
 ### 9.2 Data Fusion Protocol
 All analytical services (Profiler, NQStats) must use the `data_loader.py` fusion layer to merge `data/` (History) and `data/live/` (Recent) into a single contiguous timeline.
 
+### 9.3 Daily Profiler Historical Base Note (Future Review)
+*   **Current State**: The Daily Profiler engine and historical probability matrices were originally compiled using back-adjusted continuous data from initial downloads.
+*   **Operational Policy**: The Profiler is working reliably in production and generating accurate scenario bounds and hit rates. It remains unchanged for now.
+*   **Future Re-evaluation**: When a future retrain/overhaul of the Profiler matrices is scheduled, conduct a side-by-side comparison of back-adjusted vs. unadjusted front-month matrices to evaluate any potential impact on extreme percentile precision.
+
 ---
 
 ## 10. TradingView Direct Workflow Reference
