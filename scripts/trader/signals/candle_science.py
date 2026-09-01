@@ -329,10 +329,15 @@ def _extract_percentiles(values: list[float] | None, pcts: list[int], direction:
         return {}
     if direction == "positive":
         s = s[s > 0]
+        if s.empty:
+            return {}
+        return {f"p{p}": round(float(s.quantile(p / 100.0)), 2) for p in pcts}
     elif direction == "negative":
         s = s[s < 0]
-    if s.empty:
-        return {}
+        if s.empty:
+            return {}
+        s_mag = s.abs()
+        return {f"p{p}": round(-float(s_mag.quantile(p / 100.0)), 2) for p in pcts}
     return {f"p{p}": round(float(s.quantile(p / 100.0)), 2) for p in pcts}
 
 

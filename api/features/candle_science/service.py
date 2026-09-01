@@ -165,15 +165,16 @@ class CandleScienceService:
                 "p90": round(float(dist_above.quantile(0.9)), 4) if len(dist_above) > 0 else 0
             }
             
-            # Detailed Stats for Below
+            # Detailed Stats for Below (order by magnitude so P30 is shallow and P70/P90 are deep)
             dist_below = pct_diff[mask_below]
+            dist_below_mag = dist_below.abs() if len(dist_below) > 0 else dist_below
             below_stats = {
                 "count": int(len(dist_below)),
                 "mean": round(float(dist_below.mean()), 4) if len(dist_below) > 0 else 0,
-                "p30": round(float(dist_below.quantile(0.3)), 4) if len(dist_below) > 0 else 0,
+                "p30": round(-float(dist_below_mag.quantile(0.3)), 4) if len(dist_below_mag) > 0 else 0,
                 "median": round(float(dist_below.median()), 4) if len(dist_below) > 0 else 0,
-                "p70": round(float(dist_below.quantile(0.7)), 4) if len(dist_below) > 0 else 0,
-                "p90": round(float(dist_below.quantile(0.9)), 4) if len(dist_below) > 0 else 0
+                "p70": round(-float(dist_below_mag.quantile(0.7)), 4) if len(dist_below_mag) > 0 else 0,
+                "p90": round(-float(dist_below_mag.quantile(0.9)), 4) if len(dist_below_mag) > 0 else 0
             }
 
             return {
