@@ -62,6 +62,14 @@ STRATEGY_DETAILS = {
     "EARNINGS_STRANGLE": {
         "description": "Selling strangles 5 days before earnings to capture rapid implied volatility crush.",
         "color": "#795548"
+    },
+    "BEN_CSP": {
+        "description": "Ben PatternProfits quantitative 100-pt Cash-Secured Put with multi-quarter trajectory review.",
+        "color": "#2ECC71"
+    },
+    "BEN_SPREAD": {
+        "description": "Ben PatternProfits quantitative Defined-Risk Bull Put Spread with multi-quarter trajectory review.",
+        "color": "#3498DB"
     }
 }
 

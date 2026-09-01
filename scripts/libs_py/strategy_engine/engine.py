@@ -28,7 +28,8 @@ from scripts.libs_py.strategy_engine.strategies import (
     IncomeCcStrategy,
     EarningsStrangleStrategy,
     StockRepairStrategy,
-    CollarStrategy
+    CollarStrategy,
+    CspRankedStrategy
 )
 from scripts.libs_py.strategy_engine.strategies.base import StrategyParams, Signal, LegSpec
 from scripts.libs_py.strategy_engine.paper_exec import PaperExecutor
@@ -122,12 +123,21 @@ STRATEGY_CLASSES = {
     "INCOME_CC": IncomeCcStrategy,
     "EARNINGS_STRANGLE": EarningsStrangleStrategy,
     "STOCK_REPAIR": StockRepairStrategy,
-    "COLLAR": CollarStrategy
+    "COLLAR": CollarStrategy,
+    "BEN_CSP": CspRankedStrategy,
+    "BEN_SPREAD": CspRankedStrategy
 }
 
-INDEX_TICKERS = {"SPY", "SPX", "QQQ", "IWM"}
-STOCK_TICKERS = {"NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "AMZN", "RIVN"}
-DAILY_STRATEGY_CODES = {"WHEEL", "EARNINGS_STRANGLE", "INCOME_CC", "LONG_DTE_CREDIT", "STOCK_REPAIR", "COLLAR"}
+from scripts.utils.universe_manager import (
+    get_index_tickers,
+    get_stock_tickers,
+    get_strategy_tickers,
+    get_active_options_tickers,
+)
+
+INDEX_TICKERS = get_index_tickers()
+STOCK_TICKERS = get_stock_tickers()
+DAILY_STRATEGY_CODES = {"WHEEL", "EARNINGS_STRANGLE", "INCOME_CC", "LONG_DTE_CREDIT", "STOCK_REPAIR", "COLLAR", "BEN_CSP", "BEN_SPREAD"}
 
 class Engine:
     """

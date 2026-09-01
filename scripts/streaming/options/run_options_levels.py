@@ -2160,12 +2160,40 @@ def run_scheduled(enable_discord: "bool | None" = None, narratives_only: bool = 
             "Multi-Expiry TOS Expected Moves"
         ) if _is_trading_day() else None,
         trigger=CronTrigger(day_of_week='mon-fri', hour=16, minute=14, timezone=tz),
-        id="daily_multi_expiry_tos_em",
+        id="tos_expected_moves_daily",
         replace_existing=True,
         misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
         coalesce=True,
     )
-    log.info("Scheduled Multi-Expiry TOS EM: 16:14 ET (Mon-Fri)")
+    log.info("Scheduled Multi-Expiry TOS EM Extraction: 16:14 ET (Mon-Fri)")
+
+    # 7. Pre-Market Master Scanner Suite (08:15 ET Mon-Fri)
+    scheduler.add_job(
+        lambda: _run_subprocess(
+            ["python", "-m", "scripts.screener.run_all_scans"],
+            "Pre-Market Master Scanner Suite"
+        ) if _is_trading_day() else None,
+        trigger=CronTrigger(day_of_week='mon-fri', hour=8, minute=15, timezone=tz),
+        id="premarket_master_scans",
+        replace_existing=True,
+        misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
+        coalesce=True,
+    )
+    log.info("Scheduled Pre-Market Master Scanners: 08:15 ET (Mon-Fri)")
+
+    # 8. Post-Market EOD Master Scanner Suite (16:30 ET Mon-Fri)
+    scheduler.add_job(
+        lambda: _run_subprocess(
+            ["python", "-m", "scripts.screener.run_all_scans"],
+            "Post-Market Master Scanner Suite"
+        ) if _is_trading_day() else None,
+        trigger=CronTrigger(day_of_week='mon-fri', hour=16, minute=30, timezone=tz),
+        id="postmarket_master_scans",
+        replace_existing=True,
+        misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,
+        coalesce=True,
+    )
+    log.info("Scheduled Post-Market Master Scanners: 16:30 ET (Mon-Fri)")
 
 
     log.info("APScheduler started (timezone=%s). Press Ctrl-C to stop.", SCHEDULE_TIMEZONE)

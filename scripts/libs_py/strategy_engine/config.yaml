@@ -210,6 +210,35 @@ strategies:
         profit_target_pct: 0.50
         stop_loss_pct: 0.30
 
+  # ── Ben Quantitative Cash-Secured Put (CSP) ──────────────────────────────
+  BEN_CSP:
+    tickers: [BE, AXTI, NBIS, ALAB, COHR, SMCI, TEM, BB]
+    variants:
+      "TIER1_CSP_30DTE":
+        enabled: true
+        mode: "CSP"
+        short_delta: 0.20
+        dte: 30
+        min_score: 90.0
+        profit_target_pct: 0.50   # 50% Profit Take
+        stop_loss_mult: 99.0      # Held for assignment / Wheel
+        roll_at_dte: 14
+
+  # ── Ben Quantitative Bull Put Spread (Defined Risk) ──────────────────────
+  BEN_SPREAD:
+    tickers: [BE, AXTI, NBIS, ALAB, COHR, SMCI, TEM, BB]
+    variants:
+      "TIER1_SPREAD_30DTE":
+        enabled: true
+        mode: "SPREAD"
+        short_delta: 0.20
+        spread_width: 10.0
+        dte: 30
+        min_score: 90.0
+        profit_target_pct: 0.50   # 50% Profit Take
+        stop_loss_mult: 2.0       # 2x Credit Stop
+        roll_at_dte: 14
+
 # ── Discord Integration ──────────────────────────────────────────────────────
 discord:
   enabled: true

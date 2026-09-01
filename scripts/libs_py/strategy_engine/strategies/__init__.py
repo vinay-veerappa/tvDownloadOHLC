@@ -21,6 +21,7 @@ from scripts.libs_py.strategy_engine.strategies.income_cc import IncomeCcStrateg
 from scripts.libs_py.strategy_engine.strategies.earnings_strangle import EarningsStrangleStrategy
 from scripts.libs_py.strategy_engine.strategies.stock_repair import StockRepairStrategy
 from scripts.libs_py.strategy_engine.strategies.collar import CollarStrategy
+from scripts.libs_py.strategy_engine.strategies.csp_ranked import CspRankedStrategy
 
 __all__ = [
     "Strategy",
@@ -32,5 +33,6 @@ __all__ = [
     "IncomeCcStrategy",
     "EarningsStrangleStrategy",
     "StockRepairStrategy",
-    "CollarStrategy"
+    "CollarStrategy",
+    "CspRankedStrategy"
 ]

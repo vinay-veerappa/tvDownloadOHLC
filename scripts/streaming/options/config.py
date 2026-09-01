@@ -46,28 +46,13 @@ YM_FUTURES_SYMBOL: str = "/YM"
 RTY_FUTURES_SYMBOL: str = "/RTY"
 
 
-# Tickers to process in the daily pipeline.
-# All tickers listed here will be calculated and included in the Discord update.
-# Indices (SPX, QQQ, etc.) are translated to futures if a mapping exists below.
-# Single stocks (AAPL, NVDA, etc.) are calculated as cash levels.
-ACTIVE_TICKERS: list[str] = [
-    "SPX",
-    "SPY",
-    "NDX",
-    "QQQ",
-    "NQ",
-    "ES",
-    "IWM",
-    "DIA",
-    "AAPL",
-    "MSFT",
-    "NVDA",
-    "TSLA",
-    "META",
-    "GOOGL",
-    "AMZN",
-    "AVGO",
-]
+from scripts.utils.universe_manager import (
+    get_active_options_tickers,
+    get_priority_options_tickers,
+)
+
+# Tickers to process in the daily pipeline (Dynamically hot-reloaded from data/universe/scan_universe.json)
+ACTIVE_TICKERS: list[str] = get_active_options_tickers()
 
 # ---------------------------------------------------------------------------
 # Ticker Profiles — per-instrument microstructure parameters
@@ -240,14 +225,7 @@ STRUCTURAL_PROGRAMS: dict[str, StructuralProgram] = {
 PRIORITY_TICKERS_FILE: Path = REPO_ROOT / "priority_tickers.json"
 
 def get_priority_tickers() -> list[str]:
-    import json
-    if PRIORITY_TICKERS_FILE.exists():
-        try:
-            with open(PRIORITY_TICKERS_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return ["SPX", "SPY", "QQQ"]
+    return get_priority_options_tickers()
 
 PRIORITY_TICKERS: list[str] = get_priority_tickers()
 TIER2_INTERVAL_SECONDS: int = 600   # 10 minutes for lower-priority tickers
