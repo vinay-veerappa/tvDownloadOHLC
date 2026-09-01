@@ -1,4 +1,7 @@
 {
+  "name": "tv-download-ohlc",
+  "version": "1.0.0",
+  "type": "module",
   "dependencies": {
     "lightweight-charts": "^5.2.0"
   }

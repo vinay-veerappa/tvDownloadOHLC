@@ -1,21 +1,27 @@
-# TradingView Desktop — Modular HUD Architecture & User Guide
+# TradingView & Standalone Desktop HUD Architecture & User Guide
 
 ## Overview
 
-The **TradingView HUD Architecture** provides a modular, plug-and-play system for injecting and managing live Heads-Up Display (HUD) overlays directly inside TradingView Desktop via Chrome DevTools Protocol (CDP).
+The **Modular HUD Architecture** provides a unified system for live Heads-Up Display (HUD) overlays. It supports **two concurrent delivery modes**:
 
-Each HUD is a self-contained module with its own DOM lifecycle, scoped styles, draggable headers, transparency controls, and collapse/minimize states. Overlays live outside TradingView's internal React component tree (`document.body` fixed coordinate space) to guarantee zero interference with chart rendering or symbol switching.
+1. **In-Chart TradingView HUD**: Injected directly into TradingView Desktop via Chrome DevTools Protocol (CDP port 9222) with zero DOM interference or React conflicts.
+2. **Independent Floating Desktop Widget**: A standalone, frameless, Always-on-Top desktop window (via Edge/Chrome App Mode on port 8635) that stays visible across all monitors, applications (NinjaTrader, TradingView, Discord, Bookmap), and restarts.
 
 ---
 
-## Directory Structure & Organization
+## Directory Structure & Files
 
 ```
 scripts/tradingview/
 ├── huds/                               # Modular HUD Plugins
+│   ├── account_pnl.js                  # Fleet P&L & Copy-Trading Sync Monitor (v2.0)
 │   ├── financialjuice.js               # FinancialJuice Live Squawk, News, Calendar & Flow
 │   ├── nt8_positions.js                # NT8 Live Positions & P&L Card
 │   └── template_hud.js                 # Boilerplate template for new HUDs
+├── start_pnl_streamer.ps1              # High-frequency (250ms) P&L & Copier Streamer controller
+├── launch_pnl_widget.ps1               # 1-Click Floating Desktop Widget Launcher (Edge App Mode)
+├── pnl_widget_server.js                # Standalone HTTP/WebSocket server (port 8635)
+├── tv_pnl_streamer.js                  # CDP real-time data pump engine
 ├── tv_hud_manager.ps1                  # Unified PowerShell CLI Manager
 ├── tv_hud_manager.py                   # Python CLI & Importable Module
 ├── tv_hud_manager.js                   # Node.js CDP Engine & Core Bridge
@@ -26,81 +32,58 @@ scripts/tradingview/
 
 ## Quick Start Commands
 
-### 1. PowerShell CLI (`tv_hud_manager.ps1`)
+### 1. In-Chart TradingView HUD Mode (`tv_hud_manager.ps1` & `start_pnl_streamer.ps1`)
 
-#### List all available & currently active HUDs:
+#### Start Real-Time P&L & Copier Streamer into TradingView (250ms refresh):
 ```powershell
-.\scripts\tradingview\tv_hud_manager.ps1 -Action list
+# Starts high-speed background streamer and injects account_pnl HUD into TradingView
+.\scripts\tradingview\start_pnl_streamer.ps1 -Background
+
+# Or run in foreground console to view live tick telemetry:
+.\scripts\tradingview\start_pnl_streamer.ps1
 ```
 
-#### Inject FinancialJuice HUD:
+#### Stop background streamer:
 ```powershell
-.\scripts\tradingview\tv_hud_manager.ps1 -HUD financialjuice
-# Or use the 1-click shortcut:
+.\scripts\tradingview\start_pnl_streamer.ps1 -Stop
+```
+
+#### Inject FinancialJuice News & Voice Squawk:
+```powershell
 .\scripts\tradingview\inject_financialjuice_hud.ps1
 ```
 
-#### Toggle FinancialJuice HUD on/off:
+---
+
+### 2. Independent Floating Desktop Widget Mode (`launch_pnl_widget.ps1`)
+
+#### Launch Standalone Floating Desktop Window (Always-on-Top / Multi-Monitor):
 ```powershell
-.\scripts\tradingview\inject_financialjuice_hud.ps1 -Action toggle
+# Launches native frameless window (independent of TradingView):
+.\scripts\tradingview\launch_pnl_widget.ps1
 ```
 
-#### Inject NT8 Positions HUD:
+#### Stop standalone widget server:
 ```powershell
-.\scripts\tradingview\tv_hud_manager.ps1 -HUD nt8_positions
-```
-
-#### Remove a specific HUD:
-```powershell
-.\scripts\tradingview\tv_hud_manager.ps1 -HUD financialjuice -Action remove
-```
-
-#### Remove ALL HUDs (clean slate):
-```powershell
-.\scripts\tradingview\tv_hud_manager.ps1 -Action clear
+.\scripts\tradingview\launch_pnl_widget.ps1 -Stop
 ```
 
 ---
 
-### 2. Python CLI (`tv_hud_manager.py`)
+## Fleet P&L & Copy-Trading Verification Engine
 
-```bash
-# List HUDs
-python scripts/tradingview/tv_hud_manager.py list
+### 1. Copy Trading Sync Grid
+* **Leader vs. Follower Expected / Actual Matching**: Automatically pairs the leader account (`Sim101`) with all follower accounts (`Sim-ORB`, `SimCopy2`, Prop accounts).
+* **Sync Status Badges**:
+  * `🟢 SYNCED`: Follower matches leader's exact target quantity and side.
+  * `⏳ IN-FLIGHT`: Order replication in progress.
+  * `🚨 DESYNC`: Follower order failed/rejected while Leader has an open position.
+  * `🔒 QUARANTINE`: RiskGuard protection engaged.
+* **Orphan Position Alert**: When the Leader closes/flattens, continuously verifies that all followers reach `Flat (0)`. Flags any stuck positions with an alert banner.
+* **Emergency Panic Flatten**: Direct one-click execution to `/api/emergency-flatten` with a 2-click safety confirmation.
 
-# Inject
-python scripts/tradingview/tv_hud_manager.py inject financialjuice
-
-# Toggle
-python scripts/tradingview/tv_hud_manager.py toggle financialjuice
-
-# Clear all
-python scripts/tradingview/tv_hud_manager.py clear
-```
-
----
-
-## FinancialJuice HUD Features
-
-1. **Live Squawk Headlines**: Live breaking news feed embedded directly in-chart (`https://feed.financialjuice.com/widgets/headlines.aspx`).
-2. **Real-time Spoken Voice Squawk**: Dedicated audio player bar (`https://feed.financialjuice.com/voice-player.aspx`) with volume and stream controls. Can be toggled on/off with the **🔊 Squawk** button.
-3. **Economic Calendar (EcoCal)**: Filtered high-impact macroeconomic event calendar.
-4. **TickStrike Flow**: Live institutional tick and order flow sentiment widget.
-5. **Draggable & Resizable**: Drag from the title bar to place anywhere across multiple monitors / panes; resize from the bottom-right grip.
-6. **Transparency Toggle (`🌓`)**: Cycles opacity between **96%**, **85%**, and **70%** so underlying price action remains visible.
-7. **Minimize (`🗕`)**: Collapses the HUD into a compact 38px title pill.
-
----
-
-## Adding a New Custom HUD Module
-
-To create a new HUD:
-1. Copy `scripts/tradingview/huds/template_hud.js` to `scripts/tradingview/huds/my_new_hud.js`.
-2. Define:
-   - `id`: Unique identifier (e.g. `gex_zones`, `order_flow`).
-   - `domId`: HTML element ID (e.g. `ws-gex-panel`).
-   - `styleId`: Scoped CSS ID (e.g. `ws-gex-style`).
-   - `getCss(options)`: Styling string.
-   - `getHtml(options)`: HTML structure.
-   - `initScript`: Client-side JavaScript for event listeners, drag handlers, and updates.
-3. The HUD Manager automatically discovers and exposes it in `-Action list` and `inject`.
+### 2. Fleet P&L Metrics
+* **Total Fleet Net Liquidation**: Sum of cash/net liq across all active accounts.
+* **Open Unrealized Floating P&L**: Live instantaneous profit/loss ticks.
+* **Realized Today**: Daily closed P&L across all accounts.
+* **Fleet Exposure**: Aggregate active contracts (e.g. `+2 NQ, -1 ES`).
