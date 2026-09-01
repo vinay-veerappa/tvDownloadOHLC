@@ -13,7 +13,7 @@ from typing import Any
 
 import pandas as pd
 import pytz
-from datetime import datetime
+from datetime import datetime, time, timedelta
 
 log = logging.getLogger(__name__)
 _REPO = Path(__file__).parent.parent.parent.parent
@@ -293,12 +293,29 @@ def get_candle_science_read(ticker: str = "NQ1", mode: str = "open", target_date
             )
             result["scenarios"][name] = sc_res
     else:
-        # Open mode: Predict today's candle (C3). Use yesterday's close as the open price proxy.
-        c3o_price = c2["close"]
+        # Open mode: Predict today's candle (C3). Use actual C3 Globex Open (18:00 prior evening) if available.
+        c3o_price = float(c2["close"])
+        try:
+            from scripts.utils.fused_data_loader import load_fused_data
+            df_1m = load_fused_data(ticker, timeframe="1m", require_historical=False)
+            if df_1m.index.tz is None:
+                df_1m.index = df_1m.index.tz_localize("US/Eastern")
+            else:
+                df_1m.index = df_1m.index.tz_convert("US/Eastern")
+            
+            # Find the 18:00 ET bar on requested_trade_date - 1 day
+            prior_eve_start = pd.Timestamp(datetime.combine(requested_trade_date - timedelta(days=1), time(18, 0)), tz="America/New_York")
+            c3_open_bars = df_1m[(df_1m.index >= prior_eve_start) & (df_1m.index <= prior_eve_start + timedelta(minutes=5))]
+            if not c3_open_bars.empty:
+                c3o_price = float(c3_open_bars["open"].iloc[0])
+        except Exception as e:
+            log.debug("[cs] Could not load 1m Globex open, using C2 close fallback: %s", e)
+
         res = _process_stats_endpoint(
             ticker, c1, c2, c3o_price, active_dims, pcts_mfe, pcts_mae
         )
         result.update(res)
+        result["c3_open_price"] = round(c3o_price, 2)
 
     return result
 
