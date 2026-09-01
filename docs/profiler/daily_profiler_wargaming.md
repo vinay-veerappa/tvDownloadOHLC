@@ -112,4 +112,23 @@ To verify if a major trend reversal has locked in a 3-to-7 hour pivot:
 - *False Breakout Rule*: Failing to reach the basis-point threshold and returning inside the 0-5 box flags a false breakout, establishing a temporary "InStat (instantaneous statistical) High/Low".
 
 ---
-*Last Updated: 2026-08-05. Additional rules and live case studies will be appended here.*
+
+## 7. Economic News Catalysts & Manipulation Windows (09:45 & 10:00 AM EST)
+
+Economic news releases act as major algorithmic liquidity magnets and volatility catalysts. Market makers routinely exploit the pre-news window to accumulate positions and sweep retail stops.
+
+### Key Macro Timing Windows
+1. **08:30 AM EST (Pre-Market Macro)**: CPI, PPI, NFP, Unemployment Claims, Retail Sales, GDP. Sets the overnight expansion baseline before RTH opens.
+2. **09:45 AM EST (Open Drive Catalyst)**: S&P Global Flash Manufacturing / Services PMI.
+3. **10:00 AM EST (Morning Institutional Anchor)**: ISM Manufacturing / Services PMI, JOLTS Job Openings, CB Consumer Confidence, New Home Sales, Michigan Sentiment.
+4. **14:00 PM EST (Afternoon Macro)**: FOMC Rate Decision, FOMC Minutes, Fed Chair Press Conference (14:30).
+
+### Core Tactical Rules for Trading with 09:45 / 10:00 AM News
+* ⚠️ **The 09:30–09:44 Liquidity Trap**: When 09:45 or 10:00 AM high-impact news is scheduled, the initial 09:30 RTH open is frequently a manipulation/chop zone. Institutional algos engineer false breakouts to both sides of the 0-5 box.
+* 🎯 **09:45 AM News Rule**: Do NOT assume an early 09:30–09:35 breakout is authentic. Wait for the 09:45 news candle to establish whether price confirms displacement or produces an instant mean-reversion V-spike.
+* 🚀 **10:00 AM News Rule (Institutional Ignition)**: When high-impact news (e.g., ISM PMI, JOLTS) prints at 10:00 AM, the true session expansion trend almost always begins **at or after 10:00 AM**.
+  - **Reversal Counter Step 3 & 4 Synergy**: The 10:00 AM news candle provides the exact catalyst for **Step 3 (10:00 AM Candle sweeping 09:00 AM extreme)** and **Step 4 (establishing the 10:00 Q1 InStat direction)**.
+  - *Golden Rule*: Do not front-run 10:00 AM news. Let the news candle clear the liquidity pool and commit only after the displacement candle closes.
+
+---
+*Last Updated: 2026-09-01. Enhanced with 09:45 & 10:00 AM Economic News Manipulation Protocols.*
