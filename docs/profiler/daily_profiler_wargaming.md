@@ -105,11 +105,17 @@ To verify if a major trend reversal has locked in a 3-to-7 hour pivot:
 - **Step 4**: 10:00 AM candle creates an "InStat (instantaneous statistical) High/Low" in its first 15 mins (Q1).
 - *Rule*: **All 4 steps met** = Major Reversal confirmed. **0 steps met** = Trend Continuation locked in.
 
-### 3. 0-5 Box Breakout Thresholds
-- **0-5 Box**: The high-to-low range of the first 5 minutes of an hourly candle.
-- **RTH Momentum Threshold**: Price must breach the 0-5 box by **10 basis points (0.10%)** in Quarter 1 (Q1) to confirm true, sustainable momentum.
-- **Overnight Threshold**: Requires **5 basis points (0.05%)**.
-- *False Breakout Rule*: Failing to reach the basis-point threshold and returning inside the 0-5 box flags a false breakout, establishing a temporary "InStat (instantaneous statistical) High/Low".
+### 3. The 1-Minute RTH Opening Range (09:30 OR) & 14:00 0-5 Box
+- **1-Minute RTH Opening Range (09:30:00 – 09:30:59 AM EST)**:
+  - The foundational reference frame for RTH open is the **first 1-minute candle**.
+  - **Range Filter (Sweet Spot vs. Toxic Cutoff)**:
+    - **Sweet Spot (0.10% – 0.18% / 10–18 bps)**: Optimal liquidity and momentum balance; highest probability of clean expansion.
+    - **Toxic / Skip (> 0.25% / > 25 bps)**: Excessive opening chop/volatility; mandates DO NOT TRADE (SKIP).
+  - **Strict 0% Fakeout Invalidation**: If price breaks out but any subsequent 1m candle closes **back inside the 1m Opening Range**, exit immediately.
+  - **Selective MAE Stop**: Ultra-tight stop of **0.05% of price (~10–12 pts on NQ)**.
+  - **Golden Timing Window**: 09:30–09:40 AM ET (peak edge at 09:32 AM; hard time-based exit at 09:44 AM ET).
+- **14:00 (2:00 PM) Afternoon 0-5 Box Strategy**:
+  - The **0-5 Box** (minutes 14:00:00 to 14:05:00) is a specialized setup specifically for the **14:00 afternoon session**. Entries occur between 14:06 and 14:45.
 
 ---
 
