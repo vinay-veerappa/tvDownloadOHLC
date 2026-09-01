@@ -151,6 +151,14 @@ async function ensureTvConnection() {
 
     ws.onclose = () => { if (tvWs === ws) tvWs = null; };
     ws.onerror = () => { if (tvWs === ws) tvWs = null; };
+    ws.onmessage = (event) => {
+      try {
+        const res = JSON.parse(event.data);
+        if (res.result?.value?.panicRequested) {
+          triggerEmergencyFlatten('TradingView In-Chart HUD');
+        }
+      } catch {}
+    };
 
     tvWs = ws;
     return tvWs;
@@ -220,19 +228,8 @@ async function pushToTradingView(payload) {
         })()
       `;
 
-      const curId = id;
-      const onMsg = (event) => {
-        try {
-          const res = JSON.parse(event.data);
-          if (res.id === curId && res.result?.value?.panicRequested) {
-            triggerEmergencyFlatten('TradingView In-Chart HUD');
-          }
-        } catch {}
-      };
-
-      ws.addEventListener('message', onMsg, { once: true });
       ws.send(JSON.stringify({
-        id: curId,
+        id,
         method: 'Runtime.evaluate',
         params: { expression: pushScript, returnByValue: true }
       }));

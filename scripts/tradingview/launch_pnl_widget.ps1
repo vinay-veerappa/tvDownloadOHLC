@@ -58,8 +58,9 @@ if (-not $serverRunning) {
     Write-Host "[+] Starting background widget server on port $Port..." -ForegroundColor Cyan
     $env:PNL_WIDGET_PORT = $Port.ToString()
     $nodeExe = (Get-Command node).Source
-    $serverProc = Start-Process -FilePath $nodeExe -ArgumentList $ServerScript -WorkingDirectory $ScriptDir -PassThru
-    Start-Sleep -Milliseconds 800
+    $wsh = New-Object -ComObject WScript.Shell
+    $wsh.Run("`"$nodeExe`" `"$ServerScript`"", 0, $false)
+    Start-Sleep -Milliseconds 600
 }
 
 # Locate Edge or Chrome for App Mode (frameless native window)

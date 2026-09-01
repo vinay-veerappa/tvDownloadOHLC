@@ -57,10 +57,12 @@ if (Test-Path $ManagerPs) {
 $env:POLL_INTERVAL_MS = $IntervalMs.ToString()
 
 if ($Background) {
-    Write-Host "[+] Launching P&L Streamer in background (Poll: ${IntervalMs}ms)..." -ForegroundColor Cyan
+    Write-Host "[+] Launching Unified P&L Engine in background (Poll: ${IntervalMs}ms)..." -ForegroundColor Cyan
     $nodeExe = (Get-Command node).Source
-    $proc = Start-Process -FilePath $nodeExe -ArgumentList $StreamerScript -WorkingDirectory $ScriptDir -PassThru
-    Write-Host "[OK] P&L Streamer running persistently in background (PID: $($proc.Id))." -ForegroundColor Green
+    $wsh = New-Object -ComObject WScript.Shell
+    $wsh.Run("`"$nodeExe`" `"$StreamerScript`"", 0, $false)
+    Start-Sleep -Milliseconds 600
+    Write-Host "[OK] Unified P&L Engine running persistently in background on port 8635." -ForegroundColor Green
 } else {
     Write-Host "[+] Starting P&L Streamer in foreground (Press Ctrl+C to stop)..." -ForegroundColor Cyan
     & node $StreamerScript
