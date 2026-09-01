@@ -2,7 +2,7 @@
  * Trading Account P&L, Position & Copy-Trading Fleet Monitor HUD.
  * 
  * Features:
- * - Instantaneous live P&L, position, and balance updates (< 250ms refresh)
+ * - Instantaneous live P&L, position, and balance updates (< 200ms refresh)
  * - Copy-Trading Sync Grid: Leader vs Follower Expected vs Actual position validation
  * - Orphan Position Alert & Desync Warning System
  * - Emergency Fleet Flatten Action Button
@@ -16,7 +16,7 @@ export const hud = {
   styleId: 'ws-pnl-panel-style',
   name: 'Fleet P&L & Copy-Trading Sync Monitor',
   description: 'Real-time multi-account P&L, positions, and copy-trading follower synchronization validator.',
-  version: '2.0.0',
+  version: '2.1.0',
   defaultPosition: {
     top: 65,
     right: 65,
@@ -52,7 +52,7 @@ export const hud = {
         font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
         color: #d1d4dc;
         backdrop-filter: blur(14px);
-        transition: opacity 0.2s ease, width 0.15s ease;
+        transition: opacity 0.2s ease;
       }
       #ws-pnl-panel.minimized {
         height: 38px !important;
@@ -94,7 +94,7 @@ export const hud = {
         background: #089981;
         border-radius: 50%;
         box-shadow: 0 0 8px #089981;
-        animation: ws-pnl-pulse 2s infinite;
+        animation: ws-pnl-pulse 1.5s infinite;
       }
       .ws-pnl-dot.offline {
         background: #f7525f;
@@ -114,6 +114,9 @@ export const hud = {
         padding: 1px 5px;
         border-radius: 3px;
         letter-spacing: 0.5px;
+      }
+      .ws-pnl-badge.offline {
+        background: #f7525f;
       }
       .ws-pnl-controls { display: flex; align-items: center; gap: 4px; }
       .ws-pnl-btn {
@@ -152,7 +155,7 @@ export const hud = {
         font-weight: 700;
         color: #f0f3fa;
         font-variant-numeric: tabular-nums;
-        transition: color 0.3s ease;
+        transition: color 0.2s ease;
       }
       .ws-pnl-stat-val.pos { color: #089981; }
       .ws-pnl-stat-val.neg { color: #f7525f; }
@@ -301,8 +304,8 @@ export const hud = {
         font-size: 10px;
         display: inline-block;
       }
-      .ws-pnl-pos-long { background: rgba(8, 153, 129, 0.2); color: #089981; }
-      .ws-pnl-pos-short { background: rgba(247, 82, 95, 0.2); color: #f7525f; }
+      .ws-pnl-pos-long { background: rgba(8, 153, 129, 0.25); color: #089981; border: 1px solid rgba(8, 153, 129, 0.4); }
+      .ws-pnl-pos-short { background: rgba(247, 82, 95, 0.25); color: #f7525f; border: 1px solid rgba(247, 82, 95, 0.4); }
       .ws-pnl-pos-flat { color: #5d606b; }
 
       .ws-pnl-sync-badge {
@@ -378,8 +381,8 @@ export const hud = {
       </div>
       <div class="ws-pnl-toolbar">
         <div class="ws-pnl-view-tabs" id="ws-pnl-view-tabs">
-          <button class="ws-pnl-tab-btn active" data-view="copier">⚡ Copier Sync</button>
-          <button class="ws-pnl-tab-btn" data-view="active">Active (0)</button>
+          <button class="ws-pnl-tab-btn active" data-view="active">Active (0)</button>
+          <button class="ws-pnl-tab-btn" data-view="copier">⚡ Copier (0)</button>
           <button class="ws-pnl-tab-btn" data-view="all">All Accounts (0)</button>
         </div>
         <input type="text" class="ws-pnl-search" id="ws-pnl-search-input" placeholder="Search account..." />
@@ -418,10 +421,9 @@ export const hud = {
         positions: [],
         copierRows: [],
         copierSystem: null,
-        currentView: 'copier',
+        currentView: 'active',
         searchQuery: '',
-        lastUpdate: Date.now(),
-        lastTickTime: null
+        lastUpdate: Date.now()
       };
 
       const state = window.__TV_PNL_STATE__;
@@ -481,14 +483,21 @@ export const hud = {
             }, 4000);
           } else {
             btnFlatten.textContent = 'FLATTENING FLEET...';
+            flattenConfirm = false;
+            // Signal to CDP poller
+            panel.setAttribute('data-panic-flatten', Date.now().toString());
             try {
-              // Trigger emergency flatten
               if (window.__TV_PNL_FLATTEN_HOOK) {
                 window.__TV_PNL_FLATTEN_HOOK();
               }
             } catch (err) {
               console.error('Flatten failed:', err);
             }
+            setTimeout(() => {
+              btnFlatten.textContent = '🚨 PANIC FLATTEN';
+              btnFlatten.style.background = 'rgba(247, 82, 95, 0.15)';
+              btnFlatten.style.color = '#f7525f';
+            }, 2500);
           }
         });
       }
@@ -657,8 +666,8 @@ export const hud = {
         });
 
         filtered.sort((a, b) => {
-          const posA = posMap[a.name] ? 1 : 0;
-          const posB = posMap[b.name] ? 1 : 0;
+          const posA = posMap[a.name] && posMap[a.name].marketPosition !== 'Flat' ? 1 : 0;
+          const posB = posMap[b.name] && posMap[b.name].marketPosition !== 'Flat' ? 1 : 0;
           if (posA !== posB) return posB - posA;
           return (b.netLiquidation || b.cashValue || 0) - (a.netLiquidation || a.cashValue || 0);
         });
@@ -674,14 +683,22 @@ export const hud = {
           const type = getAccType(acc.name, acc.provider);
           
           let posHtml = '<span class="ws-pnl-pos-badge ws-pnl-pos-flat">FLAT</span>';
+          let uPnl = Number(acc.unrealizedPnL) || 0;
+
           if (pos && pos.marketPosition && pos.marketPosition !== 'Flat') {
             const isLong = pos.marketPosition.toLowerCase() === 'long';
             const cls = isLong ? 'ws-pnl-pos-long' : 'ws-pnl-pos-short';
             const sign = isLong ? '+' : '-';
-            posHtml = '<span class="ws-pnl-pos-badge ' + cls + '">' + sign + pos.quantity + ' ' + (pos.instrument || '') + '</span>';
+            const sym = pos.symbol || pos.instrument || '';
+            const price = Number(pos.avgPrice || pos.averagePrice || 0);
+            const priceStr = price > 0 ? ' @ ' + price.toFixed(2) : '';
+            posHtml = '<span class="ws-pnl-pos-badge ' + cls + '">' + sign + pos.quantity + ' ' + sym + priceStr + '</span>';
+            
+            if (pos.unrealizedPnL !== undefined && pos.unrealizedPnL !== null) {
+              uPnl = Number(pos.unrealizedPnL) || uPnl;
+            }
           }
 
-          const uPnl = Number(acc.unrealizedPnL) || 0;
           const rPnl = Number(acc.realizedPnL) || 0;
           const netLiq = Number(acc.netLiquidation || acc.cashValue) || 0;
 
@@ -708,7 +725,7 @@ export const hud = {
         }
       }
 
-      // External Update Hook called by background data streamer
+      // External Update Hook called by background data streamer or local widget poller
       window.__TV_HUDS__ = window.__TV_HUDS__ || {};
       window.__TV_HUDS__.update = function(hudId, data) {
         if (hudId !== 'account_pnl' || !data) return;
@@ -779,6 +796,14 @@ export const hud = {
         // Update Footer
         const elFooterCount = panel.querySelector('#ws-pnl-acc-count');
         const elFooterTime = panel.querySelector('#ws-pnl-last-update');
+        const statusDot = panel.querySelector('#ws-pnl-status-dot');
+        const bridgeBadge = panel.querySelector('#ws-pnl-bridge-badge');
+
+        if (statusDot) statusDot.classList.remove('offline');
+        if (bridgeBadge) {
+          bridgeBadge.textContent = 'NT8 LIVE';
+          bridgeBadge.className = 'ws-pnl-badge';
+        }
         if (elFooterCount) elFooterCount.textContent = state.accounts.length + ' accounts | ' + (data.activeAccountsCount || 0) + ' active';
         if (elFooterTime) elFooterTime.textContent = 'Live \u2022 ' + new Date().toLocaleTimeString();
 

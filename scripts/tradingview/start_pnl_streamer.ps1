@@ -36,11 +36,11 @@ param(
 )
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$StreamerScript = Join-Path $ScriptDir "tv_pnl_streamer.js"
+$StreamerScript = Join-Path $ScriptDir "pnl_widget_server.js"
 
 if ($Stop) {
-    Write-Host "[+] Stopping any running tv_pnl_streamer processes..." -ForegroundColor Cyan
-    Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*tv_pnl_streamer.js*" } | ForEach-Object {
+    Write-Host "[+] Stopping any running P&L streamer processes..." -ForegroundColor Cyan
+    Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*pnl_widget_server.js*" -or $_.CommandLine -like "*tv_pnl_streamer.js*" } | ForEach-Object {
         Stop-Process -Id $_.ProcessId -Force
         Write-Host "  * Stopped process $($_.ProcessId)" -ForegroundColor Green
     }
