@@ -306,8 +306,15 @@ class TOSRTDAdapter:
                     log.error("RTD worker error: %s", data["error"])
                     self._worker_errors = getattr(self, "_worker_errors", 0) + 1
                     continue
+                now = time.time()
+                # Per-topic freshness: OI flows must not mask a frozen LAST.
+                # Record the arrival time of every key we merge so per-key
+                # staleness is answerable later.
                 with self._latest_lock:
                     self._latest_data.update(data)
+                    if getattr(self, "_topic_time", None) is None:
+                        self._topic_time = {}
+                    self._topic_time.update({k: now for k in data})
             except Empty:
                 continue
             except EOFError:
@@ -356,16 +363,27 @@ class TOSRTDAdapter:
         if self._drain_dead:
             return None
 
-        if max_age is not None and self._last_data_time > 0:
-            silent_for = time.time() - self._last_data_time
-            if silent_for > max_age:
-                log.debug(
-                    "RTD data path silent for %.0fs (>%s) — refusing stale price for %s",
-                    silent_for, max_age, symbol,
-                )
-                return None
+        # Drain thread died → the cache below is frozen. Refuse.
+        if self._drain_dead:
+            return None
 
         snapshot = self.get_snapshot()
+
+        # Per-topic staleness: the specific LAST topic must have arrived
+        # within max_age. OI/other topics flowing must NOT refresh LAST's
+        # freshness — a frozen LAST behind a live OI scan is exactly the
+        # failure this guard exists for.
+        if max_age is not None:
+            exchange = OptionSymbolBuilder.FUTURES_EXCHANGES.get(symbol, "XCBT")
+            with self._latest_lock:
+                tt = getattr(self, "_topic_time", {}) or {}
+                t = tt.get(f"{symbol}:{exchange}:LAST") or tt.get(f"{symbol}:LAST", 0.0)
+            if t <= 0 or (time.time() - t) > max_age:
+                log.info(
+                    "RTD LAST for %s stale (no topic update in %.0fs, max %ss) — refusing",
+                    symbol, (time.time() - t) if t else -1, max_age,
+                )
+                return None
 
         # Try with exchange suffix
         exchange = OptionSymbolBuilder.FUTURES_EXCHANGES.get(symbol, "XCBT")

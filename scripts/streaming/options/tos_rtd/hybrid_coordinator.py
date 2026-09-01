@@ -1126,14 +1126,21 @@ class HybridCoordinator:
             if rtd_price is not None and rtd_price > 0:
                 # Divergence watchdog: a live RTD feed must track the market.
                 # If a fresh Schwab quote disagrees materially, RTD is frozen.
+                # Reference price: Schwab if available, else the last 1m
+                # futures parquet close (local, always available while the
+                # streaming hub writes it). Without this, off-hours cycles
+                # have NO divergence reference and a frozen RTD LAST sails
+                # through unchecked (the 2026-08-31 Monday failure).
                 cached_schwab = self._schwab_prices.get(symbol)
+                if not (cached_schwab and cached_schwab > 0):
+                    cached_schwab = self._recent_parquet_close(symbol)
                 if (cached_schwab is not None and cached_schwab > 0
                         and abs(rtd_price - cached_schwab) / cached_schwab > RTD_SPOT_DIVERGENCE_PCT):
                     self._divergence_count[symbol] = self._divergence_count.get(symbol, 0) + 1
                     if self._divergence_count[symbol] <= 3 or self._divergence_count[symbol] % 20 == 0:
                         log.warning(
-                            "RTD LAST for %s (%.2f) diverges from Schwab (%.2f) by %.2f%% "
-                            "(count=%d) — using Schwab price",
+                            "RTD LAST for %s (%.2f) diverges from reference (%.2f) by %.2f%% "
+                            "(count=%d) — using reference price",
                             symbol, rtd_price, cached_schwab,
                             abs(rtd_price - cached_schwab) / cached_schwab * 100,
                             self._divergence_count[symbol],
@@ -1141,7 +1148,7 @@ class HybridCoordinator:
                     return HybridFuturesQuote(
                         symbol=symbol,
                         price=cached_schwab,
-                        source="schwab",
+                        source="schwab" if self._schwab_prices.get(symbol) else "parquet_fallback",
                     )
                 # Prices agree — reset the divergence counter.
                 if self._divergence_count.get(symbol):
@@ -1166,6 +1173,29 @@ class HybridCoordinator:
     # ------------------------------------------------------------------
     # Greeks validation — compare RTD native vs BSM computed
     # ------------------------------------------------------------------
+
+    def _recent_parquet_close(self, symbol: str) -> float | None:
+        """Last 1m bar close for a futures symbol from live storage.
+
+        Independent truth for the divergence watchdog when Schwab is not
+        being polled (off-hours cycles). Returns the close of the most
+        recent bar only if it is fresh (<10 min old) — an old close is not
+        a reference for divergence checking.
+        """
+        import os
+        sym = symbol.replace("/", "")
+        path = os.path.join("data", "live", f"live_storage_-{sym}.parquet")
+        try:
+            if not os.path.exists(path) or time.time() - os.path.getmtime(path) > 600:
+                return None
+            import pandas as pd
+            df = pd.read_parquet(path, columns=["close"])  # tail only
+            if df.empty:
+                return None
+            v = float(df["close"].iloc[-1])
+            return v if v > 0 else None
+        except Exception:
+            return None
 
     def validate_greeks(
         self,

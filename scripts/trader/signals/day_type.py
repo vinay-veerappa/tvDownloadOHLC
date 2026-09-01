@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 _CPI_PATTERNS = ["CPI", "CORE CPI", "CONSUMER PRICE"]
 _NFP_PATTERNS = ["NON-FARM PAYROLL", "NFP", "NONFARM PAYROLL"]
 _FOMC_PATTERNS = ["FOMC", "FEDERAL OPEN MARKET", "INTEREST RATE DECISION"]
-_JACKSON_HOLE_PATTERNS = ["JACKSON HOLE", "JACKSONHOLE"]
+_JACKSON_HOLE_PATTERNS = ["JACKSON HOLE", "JACKSONHOLE", "ECONOMIC POLICY SYMPOSIUM", "FED SYMPOSIUM"]
 _SPECIAL_PATTERNS = ["POWELL", "TREASURY AUCTION", "OPEC", "GEOPOLITICAL"]
 _HOLIDAY_PATTERNS = ["HOLIDAY", "CLOSED", "EARLY CLOSE"]
 
@@ -112,7 +112,7 @@ def classify_day_type(events: list[dict], today: date) -> dict:
             return result
 
     # Check for Jackson Hole (treat as FOMC-class event)
-    for e in high_events:
+    for e in todays_events:
         name = e.get("name", "").upper()
         if any(p in name for p in _JACKSON_HOLE_PATTERNS):
             result["day_type"] = "jackson_hole"

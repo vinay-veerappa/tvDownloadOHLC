@@ -29,6 +29,7 @@ GENERAL RULES (all sessions):
 - Probability Grounding: Use only probabilities already provided by the cheat sheet (Herman/IB/noon-curve/FTFC/classification stats). If none is present for a claim, write "probability not explicitly quantified in cheat sheet".
 - Risk Grounding (day trader): For each outcome bullet, anchor invalidation to a concrete level and express risk distance from current price in points and percent.
 - No-Trade Condition: If neither scenario validates in its window, explicitly state "no-trade / wait for confirmation".
+- Weekly Red Folder Events: Inspect "WEEKLY RED FOLDER RISK (HIGH IMPACT)" to monitor upcoming high-impact catalysts for today and later in the week. Note how upcoming red folder events influence intraday volatility risk and afternoon positioning.
 - NFP Week Playbook: If WEEKLY EVENT TIMELINE indicates NFP week, include a short section titled "NFP Week Playbook" that states Thursday/Friday session priorities, 08:30 handling, fakeout risk, and preferred windows (09:50-10:10, 10:00-11:00).
 - FOMC Label Guard: Only refer to "FOMC week" when the current week includes statement/rate decision/press conference events, not Fed speakers alone.
 - Use the numbers from the cheat sheet. Don't invent prices.

@@ -1873,6 +1873,9 @@ CRITICAL_EVENT_KEYWORDS = [
     "FOMC MEETING MINUTES",
     "FEDERAL OPEN MARKET COMMITTEE MINUTES",
     "FOMC MINUTES",
+    "JACKSON HOLE",
+    "ECONOMIC POLICY SYMPOSIUM",
+    "FED SYMPOSIUM",
 ]
 
 def _is_market_moving_medium(name: str) -> bool:
@@ -3377,6 +3380,55 @@ def _format_scheduled_risk_block(econ_releases: list[dict]) -> str:
             lines.append(f"  {time_et} [{impact}] {name}")
     return "\n".join(lines)
 
+
+def _format_weekly_red_folder_block(week_econ_releases: list[dict], target_date: date) -> str:
+    """Format all HIGH impact (Red Folder) economic events scheduled for the current week."""
+    if not week_econ_releases:
+        return ""
+
+    red_events: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for e in week_econ_releases:
+        name = e.get("name", "")
+        impact = (e.get("impact") or "").upper()
+        if impact != "HIGH" and not _is_critical_event(name):
+            continue
+        dt_ms = e.get("datetime", 0)
+        if not dt_ms:
+            continue
+        evt_dt = datetime.fromtimestamp(dt_ms / 1000.0, tz=ET)
+        day_str = evt_dt.strftime("%A")
+        date_str = evt_dt.strftime("%m/%d")
+        time_str = evt_dt.strftime("%H:%M ET")
+        name = e.get("name", "")
+        key = (date_str, time_str, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        red_events.append({
+            "dt": evt_dt,
+            "day": day_str,
+            "date": date_str,
+            "time": time_str,
+            "name": name,
+            "forecast": e.get("forecast"),
+            "previous": e.get("previous"),
+        })
+
+    if not red_events:
+        return "== WEEKLY RED FOLDER RISK (HIGH IMPACT) ==\nNone scheduled this week (Clean Macro Week)."
+
+    red_events.sort(key=lambda x: x["dt"])
+    lines = ["== WEEKLY RED FOLDER RISK (HIGH IMPACT) =="]
+    for r in red_events:
+        is_today = r["dt"].date() == target_date
+        today_tag = " [TODAY]" if is_today else ""
+        fc_str = f" (Forecast: {r['forecast']} | Prev: {r['previous']})" if r.get("forecast") or r.get("previous") else ""
+        lines.append(f"🔴 {r['day']} {r['date']} @ {r['time']}: {r['name']}{fc_str}{today_tag}")
+
+    return "\n".join(lines)
+
 def _format_earnings_block(earnings: list[dict]) -> str:
     """Format earnings catalysts ordered by weight."""
     if not earnings:
@@ -3830,8 +3882,9 @@ def build_premarket_context(
             broker = BrokerService()
             
             # Fetch econ events
-            from scripts.trader.signals.econ_calendar import get_econ_releases
+            from scripts.trader.signals.econ_calendar import get_econ_releases, get_week_econ_releases
             econ_releases = await get_econ_releases(target_date, db)
+            week_econ_releases = await get_week_econ_releases(target_date, db)
             
             # Fetch earnings
             from scripts.trader.signals.earnings import fetch_earnings_events
@@ -3839,13 +3892,13 @@ def build_premarket_context(
             earnings_list = await fetch_earnings_events(target_date, db_path, broker)
         finally:
             await db.disconnect()
-        return econ_releases, earnings_list
+        return econ_releases, week_econ_releases, earnings_list
 
     try:
-        econ_releases, earnings_data = run_async_safely(run_async_signals())
+        econ_releases, week_econ_releases, earnings_data = run_async_safely(run_async_signals())
     except Exception as e:
         log.warning("[premarket] Failed to fetch econ/earnings signals: %s", e)
-        econ_releases, earnings_data = [], []
+        econ_releases, week_econ_releases, earnings_data = [], [], []
 
     # Fetch news
     from scripts.trader.utils.news_scraper import get_macro_headlines
@@ -3866,6 +3919,9 @@ def build_premarket_context(
 
     # Format blocks
     sections.append(_format_scheduled_risk_block(econ_releases))
+    _weekly_red = _format_weekly_red_folder_block(week_econ_releases, target_date)
+    if _weekly_red:
+        sections.append(_weekly_red)
     sections.append(_format_earnings_block(earnings_data))
     sections.append(_format_news_block(headlines))
     sections.append(_format_caution_score_block(caution))
@@ -3876,7 +3932,7 @@ def build_premarket_context(
     # today's calendar state. Falls back to plain day_type block if KB is down.
     _calendar_kb_ids: set[str] = set()
     try:
-        _cal_block, _calendar_kb_ids = build_calendar_context_block(target_date, econ_releases)
+        _cal_block, _calendar_kb_ids = build_calendar_context_block(target_date, week_econ_releases)
         if _cal_block:
             sections.append(_cal_block)
             log.info("[premarket] Calendar context block appended (%d chars, %d KB units)",
@@ -3892,8 +3948,8 @@ def build_premarket_context(
 
     # ── Weekly event timeline + ICT time map (premarket = full) ──
     try:
-        _modifiers = get_weekly_modifiers(target_date, econ_releases)
-        _timeline = build_weekly_event_timeline(target_date, econ_releases, _modifiers, mode="premarket")
+        _modifiers = get_weekly_modifiers(target_date, week_econ_releases)
+        _timeline = build_weekly_event_timeline(target_date, week_econ_releases, _modifiers, mode="premarket")
         if _timeline:
             sections.append(_timeline)
         _dt = classify_day_type(econ_releases, target_date)
@@ -4078,6 +4134,7 @@ def get_weekly_modifiers(target_date: date, events: list[dict]) -> dict:
     days_to_friday = 4 - target_date.weekday()
     friday = target_date + timedelta(days=days_to_friday)
     
+    is_first_friday = 1 <= friday.day <= 7
     is_third_friday = 15 <= friday.day <= 21
     is_opex = is_third_friday
     is_triple_witching = is_third_friday and friday.month in [3, 6, 9, 12]
@@ -4106,12 +4163,17 @@ def get_weekly_modifiers(target_date: date, events: list[dict]) -> dict:
                      "CONSUMER PRICE INDEX", "CONSUMER PRICE M/M", "CONSUMER PRICE Y/Y"]
     )
     is_nfp_week = (
-        "NFP" in week_event_names
+        is_first_friday
+        or "NFP" in week_event_names
         or "NON-FARM" in week_event_names
         or "NONFARM" in week_event_names
         or "NONFARM PAYROLLS" in week_event_names
+        or "EMPLOYMENT SITUATION" in week_event_names
     )
-    is_jackson_hole = "JACKSON HOLE" in week_event_names
+    is_jackson_hole = any(
+        p in week_event_names
+        for p in ["JACKSON HOLE", "JACKSONHOLE", "ECONOMIC POLICY SYMPOSIUM", "FED SYMPOSIUM"]
+    )
     has_treasury_auction = "TREASURY AUCTION" in week_event_names or "BOND AUCTION" in week_event_names
     
     return {
@@ -4419,6 +4481,24 @@ def build_weekly_event_timeline(
     events = events or []
     weekly_modifiers = weekly_modifiers or {}
 
+    # Map high/medium events to each day of the week
+    monday = target_date - timedelta(days=target_date.weekday())
+    day_events_map: dict[int, list[str]] = {i: [] for i in range(5)}
+    if events:
+        for e in events:
+            impact = (e.get("impact") or "").upper()
+            if impact not in ("HIGH", "MEDIUM"):
+                continue
+            dt_ms = e.get("datetime", 0)
+            if not dt_ms:
+                continue
+            evt_dt = datetime.fromtimestamp(dt_ms / 1000.0, tz=ET)
+            evt_day_idx = (evt_dt.date() - monday).days
+            if 0 <= evt_day_idx < 5:
+                time_str = evt_dt.strftime("%H:%M")
+                name_str = e.get("name", "")
+                day_events_map[evt_day_idx].append(f"{time_str} {name_str} [{impact}]")
+
     # Determine the week type
     if weekly_modifiers.get("is_triple_witching_week"):
         week_type = "triple_witching"
@@ -4436,9 +4516,6 @@ def build_weekly_event_timeline(
         week_type = "clean"
 
     pattern = _WEEKLY_PATTERNS.get(week_type, _WEEKLY_PATTERNS["clean"])
-
-    # Find Monday of the target week
-    monday = target_date - timedelta(days=target_date.weekday())
 
     if mode == "intraday":
         # Just the weekly position line
@@ -4461,7 +4538,9 @@ def build_weekly_event_timeline(
             day_name, expectation, regime = pattern[tomorrow_idx]
         else:
             expectation, regime = "No specific pattern data.", ""
-        lines = ["== TOMORROW'S PREVIEW =="]
+        mod_str = _format_modifiers_short(weekly_modifiers)
+        header_tag = f" ({mod_str})" if mod_str != "Clean Week" else ""
+        lines = [f"== TOMORROW'S PREVIEW{header_tag} =="]
         lines.append(f"Tomorrow: {tomorrow.strftime('%A')}")
         lines.append(f"  ICT Read: {expectation} {regime}")
         # Weekly position context
@@ -4470,9 +4549,12 @@ def build_weekly_event_timeline(
         if today_idx < len(pattern):
             _, today_exp, _ = pattern[today_idx]
             lines.append(f"Today was: {dow} — {today_exp}")
-        mod_str = _format_modifiers_short(weekly_modifiers)
         if mod_str != "Clean Week":
-            lines.append(f"Week context: {mod_str}")
+            friday_note = f" (Friday is {pattern[4][0]} — {pattern[4][1]})" if len(pattern) >= 5 else ""
+            lines.append(f"Week context: {mod_str}{friday_note}")
+        tomorrow_evts = day_events_map.get(tomorrow_idx, [])
+        if tomorrow_evts:
+            lines.append(f"  Tomorrow's Scheduled Catalysts: {', '.join(tomorrow_evts)}")
         return "\n".join(lines)
 
     # Full timeline (premarket or weekly mode)
@@ -4508,7 +4590,9 @@ def build_weekly_event_timeline(
         day_date = monday + timedelta(days=i)
         is_today = day_date == target_date
         marker = " ← TODAY" if is_today else ""
-        lines.append(f"{day_name}{marker}: {expectation} {regime}")
+        evts_for_day = day_events_map.get(i, [])
+        evt_str = f" | Catalysts: {', '.join(evts_for_day)}" if evts_for_day else ""
+        lines.append(f"{day_name}{marker}: {expectation} {regime}{evt_str}")
 
     return "\n".join(lines)
 
@@ -4705,8 +4789,9 @@ def build_ticker_cheat_sheet(
             broker = BrokerService()
             
             # Fetch econ events
-            from scripts.trader.signals.econ_calendar import get_econ_releases
+            from scripts.trader.signals.econ_calendar import get_econ_releases, get_week_econ_releases
             econ_releases = await get_econ_releases(target_date, db)
+            week_econ_releases = await get_week_econ_releases(target_date, db)
             
             # Fetch earnings
             from scripts.trader.signals.earnings import fetch_earnings_events
@@ -4714,13 +4799,13 @@ def build_ticker_cheat_sheet(
             earnings_list = await fetch_earnings_events(target_date, db_path, broker)
         finally:
             await db.disconnect()
-        return econ_releases, earnings_list
+        return econ_releases, week_econ_releases, earnings_list
 
     try:
-        econ_releases, earnings_data = run_async_safely(run_async_signals())
+        econ_releases, week_econ_releases, earnings_data = run_async_safely(run_async_signals())
     except Exception as e:
         log.warning("[cheat_sheet] Failed to fetch econ/earnings signals: %s", e)
-        econ_releases, earnings_data = [], []
+        econ_releases, week_econ_releases, earnings_data = [], [], []
 
     # Fetch news
     from scripts.trader.utils.news_scraper import get_macro_headlines
@@ -4741,6 +4826,9 @@ def build_ticker_cheat_sheet(
 
     # Format blocks
     sections.append(_format_scheduled_risk_block(econ_releases))
+    _weekly_red = _format_weekly_red_folder_block(week_econ_releases, target_date)
+    if _weekly_red:
+        sections.append(_weekly_red)
     sections.append(_format_earnings_block(earnings_data))
     sections.append(_format_news_block(headlines))
     sections.append(_format_caution_score_block(caution))
@@ -5161,14 +5249,20 @@ def build_ticker_cheat_sheet(
 
     # Bias Consensus Matrix
     try:
-        modifiers = get_weekly_modifiers(target_date, econ_releases)
+        modifiers = get_weekly_modifiers(target_date, week_econ_releases if 'week_econ_releases' in locals() and week_econ_releases else econ_releases)
         mod_strings = []
-        if modifiers["is_triple_witching_week"]:
+        if modifiers.get("is_triple_witching_week"):
             mod_strings.append("TRIPLE WITCHING WEEK")
-        elif modifiers["is_opex_week"]:
+        elif modifiers.get("is_opex_week"):
             mod_strings.append("OPEX WEEK")
-        if modifiers["is_fomc_week"]:
+        if modifiers.get("is_fomc_week"):
             mod_strings.append("FOMC WEEK")
+        if modifiers.get("is_cpi_week"):
+            mod_strings.append("CPI WEEK")
+        if modifiers.get("is_nfp_week"):
+            mod_strings.append("NFP WEEK")
+        if modifiers.get("is_jackson_hole_week"):
+            mod_strings.append("JACKSON HOLE WEEK")
         mod_str = " | ".join(mod_strings) if mod_strings else "Standard Week"
         
         im_chg_nq = nq_ctx.get('change_pct', 0) if nq_ctx else 0
@@ -5457,7 +5551,7 @@ def build_eod_context(
         log.warning("[eod] GEX regime shift failed: %s", e)
 
     # ── Next Session Econ Releases & Earnings ──
-    async def run_async_eod_signals(next_day: date):
+    async def run_async_eod_signals(target_d: date, next_d: date):
         from prisma import Prisma
         _ensure_database_url()
         db = Prisma()
@@ -5467,28 +5561,33 @@ def build_eod_context(
             broker = BrokerService()
             
             # Fetch econ events
-            from scripts.trader.signals.econ_calendar import get_econ_releases
-            econ_releases = await get_econ_releases(next_day, db)
+            from scripts.trader.signals.econ_calendar import get_econ_releases, get_week_econ_releases
+            next_econ_releases = await get_econ_releases(next_d, db)
+            week_econ_releases = await get_week_econ_releases(target_d, db)
             
             # Fetch earnings
             from scripts.trader.signals.earnings import fetch_earnings_events
             db_path = str(REPO_ROOT / "web" / "prisma" / "dev.db")
-            earnings_list = await fetch_earnings_events(next_day, db_path, broker)
+            earnings_list = await fetch_earnings_events(next_d, db_path, broker)
         finally:
             await db.disconnect()
-        return econ_releases, earnings_list
+        return next_econ_releases, week_econ_releases, earnings_list
 
     try:
         next_trading_day = target_date + timedelta(days=1)
         while next_trading_day.weekday() in (5, 6):
             next_trading_day += timedelta(days=1)
             
-        econ_releases, earnings_data = run_async_safely(run_async_eod_signals(next_trading_day))
+        econ_releases, week_econ_releases, earnings_data = run_async_safely(run_async_eod_signals(target_date, next_trading_day))
         
         sections.append(_format_scheduled_risk_block(econ_releases).replace("== SCHEDULED RISK ==", "== NEXT SESSION SCHEDULED RISK =="))
+        _weekly_red = _format_weekly_red_folder_block(week_econ_releases, target_date)
+        if _weekly_red:
+            sections.append(_weekly_red)
         sections.append(_format_earnings_block(earnings_data).replace("== EARNINGS CATALYSTS ==", "== NEXT SESSION EARNINGS CATALYSTS =="))
     except Exception as e:
         log.warning("[eod] Next session signals failed: %s", e)
+        econ_releases, week_econ_releases, earnings_data = [], [], []
 
     # ── Tomorrow's setup ──
     try:
@@ -5675,8 +5774,9 @@ def build_eod_context(
 
     # ── Tomorrow's preview + weekly position (close mode) ──
     try:
-        _modifiers = get_weekly_modifiers(target_date, [])
-        _tomorrow_preview = build_weekly_event_timeline(target_date, [], _modifiers, mode="close")
+        _econ_for_mod = week_econ_releases if "week_econ_releases" in locals() and week_econ_releases else (econ_releases if "econ_releases" in locals() and econ_releases else [])
+        _modifiers = get_weekly_modifiers(target_date, _econ_for_mod)
+        _tomorrow_preview = build_weekly_event_timeline(target_date, _econ_for_mod, _modifiers, mode="close")
         if _tomorrow_preview:
             sections.append(_tomorrow_preview)
         _tomorrow_times = build_ict_time_map("clean", target_date, mode="close")

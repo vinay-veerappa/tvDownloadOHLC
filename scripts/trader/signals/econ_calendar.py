@@ -83,3 +83,60 @@ async def get_econ_releases(target_date: date, db: Prisma) -> List[Dict[str, Any
         })
 
     return releases
+
+
+async def get_week_econ_releases(target_date: date, db: Prisma) -> List[Dict[str, Any]]:
+    """Retrieve full week's economic releases (Monday 00:00 ET to Sunday 23:59 ET)."""
+    monday = target_date - timedelta(days=target_date.weekday())
+    sunday = monday + timedelta(days=6)
+    start_dt = datetime.combine(monday, datetime.min.time(), tzinfo=ET)
+    end_dt = datetime.combine(sunday, datetime.max.time(), tzinfo=ET)
+
+    try:
+        events = await db.economicevent.find_many(
+            where={
+                "datetime": {
+                    "gte": start_dt,
+                    "lte": end_dt
+                },
+                "country": "USD"
+            },
+            order={"datetime": "asc"}
+        )
+    except Exception as e:
+        logger.error(f"Failed to fetch weekly economic events from DB: {e}")
+        return []
+
+    releases = []
+    for e in events:
+        impact = (e.impact or "").upper()
+        
+        try:
+            from scripts.trader.briefing_core import _is_non_us_event, _is_us_event
+            if _is_non_us_event(e.name) and not _is_us_event(e.name):
+                continue
+        except ImportError:
+            pass
+        
+        if e.datetime.tzinfo:
+            evt_dt = e.datetime.astimezone(ET)
+        else:
+            evt_dt = e.datetime.replace(tzinfo=timezone.utc).astimezone(ET)
+
+        evt_time_et = evt_dt.time()
+        conflict, window_name = check_time_conflict(evt_time_et)
+
+        releases.append({
+            "name": e.name,
+            "impact": impact or "UNKNOWN",
+            "time_et": evt_dt.strftime("%H:%M ET"),
+            "datetime": int(evt_dt.timestamp() * 1000),
+            "date": evt_dt.date().isoformat(),
+            "macro_window_conflict": conflict,
+            "conflict_window": window_name,
+            "forecast": e.forecast,
+            "previous": e.previous,
+            "actual": e.actual
+        })
+
+    return releases

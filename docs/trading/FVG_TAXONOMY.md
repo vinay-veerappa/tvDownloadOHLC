@@ -123,8 +123,8 @@ device for a liquidity sweep, not a fade level.
 
 | Qualifier | Rule | Type |
 |---|---|---|
-| Breakaway gap | First FVG after dealing-range break (BOS) | spatial |
-| Measuring gap | Unfilled FVG ≈ midpoint of inception→terminus move | spatial |
+| Breakaway gap (BAG) | Candle-anatomy (Arjo/MK definition, no swings needed): bearish = `c1.low <= c2.open` AND `c3.high >= c2.close` AND `c3.close < c2.low` → void spans c1.low↔c3.high around the origin displacement candle c2 (bullish mirror). Satisfies VI by construction (c3 body clears c2 body). c2 IS the dealing-range origin, so "first FVG of the dealing range" emerges naturally. Weak-c3 variant = same anchoring but c3 closes back inside c2's range. | spatial |
+| Measuring gap | Unfilled FVG ≈ midpoint of inception→terminus move (CE within ~15% of swing midpoint) | spatial |
 | OD wick | FVG overlaps adjacent candle wick → sub-level inside | anatomy |
 | Opposite c3 | candle 3 closes against displacement direction | anatomy |
 | FPFVG | first FVG 9:30–10:00 NY | time |

@@ -1,254 +1,385 @@
 //@version=6
-// ─────────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
 //  FVG Taxonomy — High-Probability Gap Qualifiers (HPG)
 //  Companion to docs/trading/FVG_TAXONOMY.md
 //
-//  Qualifiers implemented:
-//   SPATIAL   Breakaway gap (first FVG after BOS), Measuring gap (mid-trend)
-//   ANATOMY   Overlapping-wick (OD) refinement, Opposite-direction candle 3
-//   TIME      RTH First Presented FVG (9:30–10:00 NY), Midnight 1st FVG,
-//             hourly 1st FVG, Friday/Monday First Presentation carry-forward
-//   CONFLUENCE BPR (opposing FVG overlap), IFVG (with relevance filter),
-//             MTF stack (LTF FVG inside HTF FVG, via request.security)
-// ─────────────────────────────────────────────────────────────────────────────
+//  v6 — LIBRARY-READY STRUCTURE
+//   [L1] CORE (library-extract target): GapKind/GapState enums, Gap UDT,
+//        PURE anatomy detectors (parameterized floats; n1..n6 positional
+//        params — Pine parser mishandles 3-char c1l/c2o-style names).
+//   [L2] ENGINE: registry, one-BAG-per-leg slot (uid-based: Pine has no
+//        '==' on UDT refs), 1m First-Presented scanner (largest 1m FVG in
+//        RTH 9:30-10:00 / midnight 00:00-01:00 windows), Fri/Mon anchors,
+//        OD / measuring / BPR / IFVG / MTF-stack.
+//  Verified: compiles clean in TradingView Desktop (Pine v6), 2026-08-31.
+// ---------------------------------------------------------------------------
+// ═══════════════════════════════════════════════════════════════════════════
+// [L1] CORE — pure types + functions (library-extract target)
+// ═══════════════════════════════════════════════════════════════════════════
 indicator("FVG Taxonomy — HPG Qualifiers", "FVG-Tax", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
-
-// ── Session / clock helpers (ET semantics; charts take UTC per ADR-001 — Pine handles via tz) ──
-NY_TZ = "America/New York"
+enum GapKind
+    PLAIN
+    BAG
+    WEAK_C3
+    FPFVG
+    MIDNIGHT
+    HOURLY
+enum GapState
+    ACTIVE
+    MITIGATED
+    INVERTED
+type Gap
+    float top
+    float bot
+    bool  isBull
+    GapKind kind
+    GapState state = GapState.ACTIVE
+    bool  isMeasuring = false
+    bool  hasOD       = false
+    float odLevel     = na
+    bool  bprChecked  = false
+    int   bornBar     = na
+    int   uid         = 0
+    box   bx          = na
+    line  ceLn        = na
+    line  odLn        = na
+f_isBearBag(float n1, float n2, float n3, float n4, float n5, float n6) =>
+    n1 <= n2 and n4 >= n3 and n6 < n5 and n1 > n4
+f_isBullBag(float n1, float n2, float n3, float n4, float n5, float n6) =>
+    n1 >= n2 and n5 <= n3 and n6 > n3 and n5 > n1
+f_isBearWeak(float n1, float n2, float n3, float n4, float n5, float n6) =>
+    n1 <= n2 and n4 >= n3 and n6 > n3 and n1 > n4
+f_isBullWeak(float n1, float n2, float n3, float n4, float n5, float n6) =>
+    n1 >= n2 and n5 <= n3 and n6 < n3 and n5 > n1
+f_hasVI(float o1, float c1, float o2, float c2, float o3, float c3, bool isBull) =>
+    float b1T = math.max(o1, c1)
+    float b1B = math.min(o1, c1)
+    float b2T = math.max(o2, c2)
+    float b2B = math.min(o2, c2)
+    float b3T = math.max(o3, c3)
+    float b3B = math.min(o3, c3)
+    isBull ? (b2B > b1T or b3B > b2T) : (b1B > b2T or b2B > b3T)
+NY_TZ   = "America/New_York"
 int nyHour   = hour(time, NY_TZ)
 int nyMinute = minute(time, NY_TZ)
 int nyDow    = dayofweek(time, NY_TZ)
-bool newHour = nyHour != nyHour[1]
-bool newDay  = ta.change(time("D")) != 0
-bool newWeek = ta.change(time("W")) != 0
-
-inRTHOpen(nyHour, nyMinute) =>
-    (nyHour == 9 and nyMinute >= 30 and nyMinute <= 59) or (nyHour == 10 and nyMinute == 0)
-
-// ── Inputs ──
-grpQ = "Qualifiers"
-showBreakaway  = input.bool(true, "Breakaway gap (first FVG after BOS)", group = grpQ)
-showMeasuring  = input.bool(true, "Measuring gap (unfilled, mid-move)", group = grpQ)
-showOD         = input.bool(true, "Overlapping-wick (OD) marker", group = grpQ)
-showOppC3      = input.bool(true, "Opposite 3rd-candle marker", group = grpQ)
-showFPFVG      = input.bool(true, "RTH First Presented FVG (9:30–10:00)", group = grpQ)
-showMidnight   = input.bool(true, "Midnight 1st FVG", group = grpQ)
-showHourly1st  = input.bool(true, "1st FVG of each hour", group = grpQ)
-showFriMon     = input.bool(true, "Fri/Mon First Presentation carry-forward", group = grpQ)
-showBPR        = input.bool(true, "BPR (opposing FVG overlap)", group = grpQ)
-showIFVG       = input.bool(true, "IFVG (relevance-filtered)", group = grpQ)
-showStack      = input.bool(true, "MTF stack (LTF FVG inside HTF FVG)", group = grpQ)
-
+grpQ = "Qualifiers (draw only these)"
+showBreakaway    = input.bool(true,  "Breakaway gap (one per leg)",            group = grpQ)
+showContinuation = input.bool(false, "Continuation gaps (2nd+ anatomy of a leg)", group = grpQ)
+showMeasuring    = input.bool(true,  "Measuring gap (unfilled, mid-move)",     group = grpQ)
+showOD           = input.bool(true,  "OD wick pierce (marks sub-level)",       group = grpQ)
+showWeakC3       = input.bool(false, "Weak 3rd-candle FVGs",                   group = grpQ)
+showFPFVG        = input.bool(true,  "RTH First Presented FVG (largest 1m FVG, 9:30-10:00)", group = grpQ)
+showMidnight     = input.bool(true,  "Midnight First Presented FVG (largest 1m FVG, 00:00-01:00)", group = grpQ)
+showHourly1st    = input.bool(true,  "First FVG of each hour (chart TF)",      group = grpQ)
+showFriMon       = input.bool(true,  "Fri/Mon First Presentation anchors",     group = grpQ)
+showBPR          = input.bool(true,  "BPR (opposing FVG overlap)",             group = grpQ)
+showIFVG         = input.bool(true,  "IFVG (significant gaps only)",           group = grpQ)
+showStack        = input.bool(true,  "MTF stack (gap inside HTF FVG)",         group = grpQ)
+showAll          = input.bool(false, "DEBUG: draw all raw FVGs",               group = grpQ)
 grpD = "Detection"
-minGapTicks   = input.float(0.0, "Min gap size (ticks, 0 = off)", group = grpD)
-bosLen        = input.int(5, "BOS pivot length (breakaway)", group = grpD)
-htfTF         = input.timeframe("60", "HTF for stacking", group = grpD)
-maxZones      = input.int(30, "Max active zones per side", group = grpD, minval = 5, maxval = 100)
-extendZones   = input.bool(true, "Extend zones right until mitigated", group = grpD)
-
+requireVI    = input.bool(true, "Require VI (body gap) inside plain FVGs", group = grpD)
+measPivotLen = input.int(8,     "Swing pivot length (measuring)", group = grpD, minval = 2)
+htfTF        = input.timeframe("60", "HTF for stacking", group = grpD)
+maxGaps      = input.int(30,    "Max tracked gaps", group = grpD, minval = 10, maxval = 100)
+extendGaps   = input.bool(true, "Extend gaps right until mitigated", group = grpD)
 grpC = "Colors"
-colBullFVG   = input.color(color.new(#26a69a, 80), "Bull FVG", group = grpC)
-colBearFVG   = input.color(color.new(#ef5350, 80), "Bear FVG", group = grpC)
-colBreakaway = input.color(color.new(#2196f3, 70), "Breakaway", group = grpC)
-colMeasuring = input.color(color.new(#9c27b0, 75), "Measuring", group = grpC)
-colTime      = input.color(color.new(#ffc107, 70), "Time-anchored", group = grpC)
-colAnchor    = input.color(color.new(#ff9800, 55), "Fri/Mon anchor", group = grpC)
-colBPR       = input.color(color.new(#7e57c2, 65), "BPR", group = grpC)
-colIFVGBull  = input.color(color.new(#26a69a, 60), "Bull IFVG", group = grpC)
-colIFVGBear  = input.color(color.new(#ef5350, 60), "Bear IFVG", group = grpC)
+colBullFVG   = input.color(color.new(#26a69a, 82), "Bull FVG",        group = grpC)
+colBearFVG   = input.color(color.new(#ef5350, 82), "Bear FVG",        group = grpC)
+colBreakaway = input.color(color.new(#2196f3, 72), "Breakaway (BAG)",  group = grpC)
+colWeakC3    = input.color(color.new(#cddc39, 75), "Weak c3",          group = grpC)
+colMeasuring = input.color(color.new(#9c27b0, 72), "Measuring",       group = grpC)
+colTime      = input.color(color.new(#ffc107, 72), "Time-anchored",   group = grpC)
+colAnchor    = input.color(color.new(#ff9800, 55), "Fri/Mon anchor",  group = grpC)
+colBPR       = input.color(color.new(#7e57c2, 68), "BPR",             group = grpC)
+colIFVGBull  = input.color(color.new(#26a69a, 62), "Bull IFVG",       group = grpC)
+colIFVGBear  = input.color(color.new(#ef5350, 62), "Bear IFVG",       group = grpC)
+// keep-largest helper: returns [newH, newTop, newBot, newIsBull]; new values only when larger
+f_updLargest(float hCur, float nTop, float nBot, bool nBl) =>
+    float h2 = hCur
+    float t2 = na
+    float b2 = na
+    bool l2 = nBl
+    if na(hCur) or (nTop - nBot) > hCur
+        h2 := nTop - nBot
+        t2 := nTop
+        b2 := nBot
+        l2 := nBl
+    [h2, t2, b2, l2]
 
-// ── Zone model ──
-type Zone
-    float top
-    float bot
-    int   startBar
-    float ce          // consequent encroachment (gap midpoint)
-    bool  isBull
-    bool  isBreakaway = false
-    bool  isMeasuring = false
-    bool  isTime      = false  // FPFVG / midnight / hourly
-    bool  isAnchor    = false  // Fri/Mon first presentation
-    bool  hasOD       = false
-    bool  oppC3       = false
-    bool  mitigated   = false
-    bool  inverted    = false
-    bool  bprChecked  = false
-    box   bx
-    line  ceLn
+// 1m FVG event → (top, bot, isBull) or N/A if not a VI-confirmed FVG this bar
+f_fpSignal() =>
+    bool f1 = low > high[2] and close > high[2]
+    bool f2 = high < low[2] and close < low[2]
+    float sT = na
+    float sB = na
+    bool sBl = false
+    if f1 and f_hasVI(open[2], close[2], open[1], close[1], open, close, true)
+        sT := low
+        sB := high[2]
+        sBl := true
+    else if f2 and f_hasVI(open[2], close[2], open[1], close[1], open, close, false)
+        sT := low[2]
+        sB := high
+        sBl := false
+    [sT, sB, sBl]
 
-var array<Zone> zones = array.new<Zone>()
-
-// ── FVG detection (close-confirmed displacement, per house convention) ──
-tickSize = syminfo.mintick
-bool rawBull = low > high[2] and close > high[2]
-bool rawBear = high < low[2] and close < low[2]
-if minGapTicks > 0
-    rawBull := rawBull and (low - high[2]) >= minGapTicks * tickSize
-    rawBear := rawBear and (low[2] - high) >= minGapTicks * tickSize
-
-// BOS detection via pivots (breakaway context)
-float ph = ta.pivothigh(high, bosLen, bosLen)
-float pl = ta.pivotlow(low, bosLen, bosLen)
-var float lastSwingHigh = na
-var float lastSwingLow  = na
-var bool  bosUp   = false
-var bool  bosDown = false
-if not na(ph)
-    lastSwingHigh := ph
-    bosDown := false
-if not na(pl)
-    lastSwingLow := pl
-    bosUp := false
-// structure break: close beyond last swing
-bosUp   := bosUp   or (not na(lastSwingHigh) and close > lastSwingHigh)
-bosDown := bosDown or (not na(lastSwingLow)  and close < lastSwingLow)
-
-// time-window flags for the *origin* of the gap (candle 2 of the 3) 
-bool bullOriginInRTHOpen = inRTHOpen(nyHour[2], nyMinute[2])
-bool bullStartNewHour    = nyHour[2] != nyHour[3]
-bool bullOriginNearMid   = nyHour[2] == 0 and nyMinute[2] < 60
-bool bearOriginInRTHOpen = inRTHOpen(nyHour[2], nyMinute[2])
-bool bearStartNewHour    = nyHour[2] != nyHour[3]
-bool bearOriginNearMid   = nyHour[2] == 0 and nyMinute[2] < 60
-
-// ── Anchor store: Fri/Mon First Presentation carry-forward ──
-type Anchor
+scanFP() =>
+    var float rthTop = na
+    var float rthBot = na
+    var float rthH   = na
+    var bool   rthBl = false
+    var float midTop = na
+    var float midBot = na
+    var float midH   = na
+    var bool   midBl = false
+    int hh = hour(time, NY_TZ)
+    int mm = minute(time, NY_TZ)
+    bool rthWin = hh == 9 and mm >= 30
+    bool midWin = hh == 0
+    if rthWin and not rthWin[1]
+        rthH := na
+    if midWin and not midWin[1]
+        midH := na
+    [sT, sB, sBl] = f_fpSignal()
+    if rthWin and not na(sT)
+        [h1, t1, b1, l1] = f_updLargest(rthH, sT, sB, sBl)
+        if not na(b1)
+            rthH   := h1
+            rthTop := t1
+            rthBot := b1
+            rthBl  := l1
+    if midWin and not na(sT)
+        [h2, t2, b2, l2] = f_updLargest(midH, sT, sB, sBl)
+        if not na(b2)
+            midH   := h2
+            midTop := t2
+            midBot := b2
+            midBl  := l2
+    bool rthHas = not na(rthH) and not rthWin
+    bool midHas = not na(midH) and not midWin
+    [rthHas, rthTop, rthBot, rthBl, midHas, midTop, midBot, midBl]
+[rthHas, rthATop, rthABot, rthABull, midHas, midATop, midABot, midABull] = request.security(syminfo.tickerid, "1", scanFP(), lookahead = barmerge.lookahead_on)
+type FPAnchor
     float top
     float bot
     float ce
     bool  isBull
-    bool  active
-    box   bx
-var array<Anchor> anchors = array.new<Anchor>()
-
-// remember first presented FVG on Friday and Monday (both sessions of those days)
-if (nyDow == dayofweek.friday or nyDow == dayofweek.monday)
-    if (rawBull or rawBear) and not newWeek
-        bool have = false
-        for a in anchors
-            if dayofweek(time) == nyDow and math.abs(a.top - (rawBull ? low : low[2])) < tickSize * 2
-                have := true
-        if not have and anchors.size() < 12
-            float aTop = rawBull ? low : low[2]
-            float aBot = rawBull ? high[2] : high
-            Anchor an = Anchor.new(aTop, aBot, (aTop + aBot) / 2, rawBull, true,
-                 box.new(bar_index - 2, aTop, bar_index, aBot, bgcolor = na, border_color = na))
-            array.push(anchors, an)
-            box.set_bgcolor(an.bx, colAnchor)
-            box.set_border_color(an.bx, colAnchor)
-
-// ── OD (overlapping wick) detection helper ──
-odCheck(float gTop, float gBot, bool isBull) =>
-    // overlapping defense: candle 1 or candle 3 wick reaches back into the gap
-    bool od = false
-    if isBull
-        od := high[2] > gBot and high[2] < gTop
-    else
-        od := low[2] < gTop and low[2] > gBot
-    od
-
-// opposite 3rd candle: candle 3 closes against displacement
-bool bullOppC3 = rawBull and close[2] > close[1] // c1 bearish → c3 close above c1 close, weak-form check refined below
-bool bearOppC3 = rawBear and close[2] < close[1]
-
-// ── Create zones ──
-addZone(bool isBull, float gTop, float gBot) =>
-    bool isBreakaway = (isBull and bosUp and close[1] <= lastSwingHigh) or (not isBull and bosDown and close[1] >= lastSwingLow)
-    bool isFirstHour  = bullStartNewHour or bearStartNewHour
-    bool isTime = showFPFVG and inRTHOpen(nyHour[2], nyMinute[2])
-    bool isMid  = (bullOriginNearMid or bearOriginNearMid)
-    color zcol = isBull ? colBullFVG : colBearFVG
-    if showBreakaway and isBreakaway
-        zcol := colBreakaway
-    if isTime or isMid or (showHourly1st and isFirstHour)
-        zcol := colTime
-    box bx = box.new(bar_index - 2, gTop, extendZones ? bar_index : bar_index, gBot,
-         bgcolor = zcol, border_color = color.new(zcol, 40), extend = extendZones ? extend.right : extend.none)
-    line cl = line.new(bar_index - 2, (gTop + gBot) / 2, bar_index, (gTop + gBot) / 2,
-         color = color.new(color.purple, 30), style = line.style_dashed, extend = extendZones ? extend.right : extend.none)
-    Zone z = Zone.new(gTop, gBot, bar_index - 2, (gTop + gBot) / 2, isBull,
-         isBreakaway, false, isTime or isMid or (showHourly1st and isFirstHour), false,
-         odCheck(gTop, gBot, isBull), isBull ? bullOppC3 : bearOppC3,
-         false, false, false, bx, cl)
-    if z.hasOD and showOD
-        label.new(bar_index - 1, isBull ? gBot : gTop, "OD", style = label.style_label_left,
-             color = color.new(color.blue, 60), textcolor = color.white, size = size.tiny)
-    if z.oppC3 and showOppC3
-        label.new(bar_index - 1, isBull ? gTop : gBot, "c3↓", style = label.style_label_left,
-             color = color.new(color.gray, 60), textcolor = color.white, size = size.tiny)
-    array.push(zones, z)
-    if zones.size() > maxZones * 2
-        Zone old = array.shift(zones)
+    int   dayId
+    bool  active = true
+    box   bx     = na
+var array<Gap>    gaps    = array.new<Gap>()
+var array<FPAnchor> anchors = array.new<FPAnchor>()
+var int bagBullUid = 0
+var int bagBearUid = 0
+f_zoneColor(GapKind kind, bool isBull, bool isMeasuring) =>
+    color c = isBull ? colBullFVG : colBearFVG
+    if kind == GapKind.BAG
+        c := colBreakaway
+    if kind == GapKind.WEAK_C3
+        c := colWeakC3
+    if kind == GapKind.FPFVG or kind == GapKind.MIDNIGHT or kind == GapKind.HOURLY
+        c := colTime
+    if isMeasuring
+        c := colMeasuring
+    c
+f_drawGap(Gap g) =>
+    if na(g.bx)
+        color c = f_zoneColor(g.kind, g.isBull, g.isMeasuring)
+        g.bx   := box.new(g.bornBar - 2, g.top, g.bornBar, g.bot, bgcolor = c,
+             border_color = color.new(c, 35), extend = extendGaps ? extend.right : extend.none)
+        g.ceLn := line.new(g.bornBar - 2, (g.top + g.bot) / 2, g.bornBar, (g.top + g.bot) / 2,
+             color = color.new(color.purple, 30), style = line.style_dashed,
+             extend = extendGaps ? extend.right : extend.none)
+f_freezeGap(Gap g) =>
+    box.set_extend(g.bx, extend.none)
+    box.set_right(g.bx, bar_index)
+    line.set_extend(g.ceLn, extend.none)
+    line.set_x2(g.ceLn, bar_index)
+f_gcOldest() =>
+    Gap old = array.shift(gaps)
+    if not na(old.bx)
         box.delete(old.bx)
+    if not na(old.ceLn)
         line.delete(old.ceLn)
+    if not na(old.odLn)
+        line.delete(old.odLn)
+f_addGap(float gTop, float gBot, bool isBull, GapKind kind) =>
+    Gap g = Gap.new(gTop, gBot, isBull, kind, GapState.ACTIVE, false, false, na, false, bar_index, bar_index * 2 + (isBull ? 1 : 0))
+    array.push(gaps, g)
+    if gaps.size() > maxGaps * 2
+        f_gcOldest()
+    g
+inRTHTime(int h, int m) =>
+    (h == 9 and m >= 30) or (h == 10 and m == 0)
+float phv = ta.pivothigh(high, measPivotLen, measPivotLen)
+float plv = ta.pivotlow(low, measPivotLen, measPivotLen)
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(phv)
+    lastSwingHigh := phv
+if not na(plv)
+    lastSwingLow := plv
+int  hourId  = int(math.floor(time / 3600000))
+int  todayId = int(math.floor(time / 86400000))
+var int  lastHourId    = -1
+var bool hourCaptured  = false
+var int  lastDayIdFP   = -1
+if hourId != lastHourId
+    hourCaptured := false
+bool newHour = hourId != lastHourId
+bool presRTH = inRTHTime(nyHour, nyMinute)
+bool chartBagBear  = f_isBearBag(low[2], open[1], close[1], high, low, close)
+bool chartBagBull  = f_isBullBag(high[2], open[1], close[1], high, low, close)
+bool chartWeakBear = f_isBearWeak(low[2], open[1], close[1], high, low, close)
+bool chartWeakBull = f_isBullWeak(high[2], open[1], close[1], high, low, close)
+bool chartFvgBear  = high < low[2] and close < low[2] and (not requireVI or f_hasVI(open[2], close[2], open[1], close[1], open, close, false))
+bool chartFvgBull  = low > high[2] and close > high[2] and (not requireVI or f_hasVI(open[2], close[2], open[1], close[1], open, close, true))
 
-if rawBull
-    addZone(true, low, high[2])
-if rawBear
-    addZone(false, low[2], high)
+// ── unified creation: classify the bar's gap once, apply side-effects once ──
+// Returns [create, isBull, top, bot, kind]
+f_classifyCreate(bool sigBear, bool sigBull, bool weakBear, bool weakBull, bool bearLegOpen, bool bullLegOpen) =>
+    float cT = na
+    float cB = na
+    bool  cBull = false
+    GapKind k = GapKind.PLAIN
+    bool create = false
+    if sigBear or weakBear
+        create := true
+        cT := low[2]
+        cB := high
+        cBull := false
+        k := weakBear ? GapKind.WEAK_C3 : showBreakaway and not bearLegOpen ? GapKind.BAG : GapKind.PLAIN
+    else if sigBull or weakBull
+        create := true
+        cT := low
+        cB := high[2]
+        cBull := true
+        k := weakBull ? GapKind.WEAK_C3 : showBreakaway and not bullLegOpen ? GapKind.BAG : GapKind.PLAIN
+    else if chartFvgBear and (showAll or (showHourly1st and newHour and not presRTH and not hourCaptured))
+        create := true
+        cT := low[2]
+        cB := high
+        k := showHourly1st and newHour and not presRTH and not hourCaptured ? GapKind.HOURLY : GapKind.PLAIN
+    else if chartFvgBull and (showAll or (showHourly1st and newHour and not presRTH and not hourCaptured))
+        create := true
+        cT := low
+        cB := high[2]
+        cBull := true
+        k := showHourly1st and newHour and not presRTH and not hourCaptured ? GapKind.HOURLY : GapKind.PLAIN
+    // filter by toggles: BAG/continuation gate, weak-c3 toggle
+    if create and k == GapKind.WEAK_C3 and not (showWeakC3 or showAll)
+        create := false
+    if create and k == GapKind.BAG and not (showBreakaway or showAll)
+        create := false
+    if create and k == GapKind.PLAIN and not showAll and not showContinuation
+        create := false
+    [create, cBull, cT, cB, k]
 
-// ── Mitigation / inversion / BPR over active zones ──
+[bagCreate, bagBull_, bagTop, bagBot, bagKind] = f_classifyCreate(chartBagBear or chartWeakBear, chartBagBull or chartWeakBull, chartWeakBear, chartWeakBull, bagBearUid != 0, bagBullUid != 0)
+if bagCreate
+    Gap g = f_addGap(bagTop, bagBot, bagBull_, bagKind)
+    f_drawGap(g)
+    if bagKind == GapKind.BAG
+        if bagBull_
+            bagBullUid := g.uid
+        else
+            bagBearUid := g.uid
+    hourCaptured := true
+if hourId != lastHourId
+    lastHourId := hourId
+if todayId != lastDayIdFP
+    lastDayIdFP := todayId
+var int rthDrawnDayId = -1
+var int midDrawnDayId = -1
+if showFPFVG and rthHas and todayId != rthDrawnDayId
+    Gap g = f_addGap(rthATop, rthABot, rthABull, GapKind.FPFVG)
+    f_drawGap(g)
+    rthDrawnDayId := todayId
+if showMidnight and midHas and todayId != midDrawnDayId
+    Gap g = f_addGap(midATop, midABot, midABull, GapKind.MIDNIGHT)
+    f_drawGap(g)
+    midDrawnDayId := todayId
+bool anchorDay = nyDow == dayofweek.friday or nyDow == dayofweek.monday
+bool inMorningWin = (nyHour == 9 and nyMinute >= 30) or nyHour == 10
+var int anchorDayId = -1
+if showFriMon and anchorDay and (chartFvgBull or chartFvgBear) and inMorningWin and todayId != anchorDayId
+    float aTop = chartFvgBull ? low : low[2]
+    float aBot = chartFvgBull ? high[2] : high
+    FPAnchor an = FPAnchor.new(aTop, aBot, (aTop + aBot) / 2, chartFvgBull, todayId, true,
+         box.new(bar_index - 2, aTop, bar_index, aBot, bgcolor = colAnchor,
+         border_color = color.new(colAnchor, 30), extend = extend.right))
+    array.push(anchors, an)
+    anchorDayId := todayId
+    if anchors.size() > 8
+        FPAnchor oldA = array.shift(anchors)
+        if not na(oldA.bx)
+            box.delete(oldA.bx)
 var float lastBullTop = na
 var float lastBullBot = na
 var float lastBearTop = na
 var float lastBearBot = na
-
-for i = zones.size() - 1 to 0
-    if zones.size() == 0
-        break
-    Zone z = array.get(zones, i)
-    if not z.mitigated
-        bool touched = (z.isBull ? low <= z.ce and high >= z.bot : high >= z.ce and low <= z.top)
-        bool closedThrough = (z.isBull ? close < z.bot : close > z.top)
-        if closedThrough
-            z.mitigated := true
-            if showIFVG and z.isTime or showIFVG
-                // IFVG: flip only if the gap was significant (time-anchored, breakaway, stacked or CE-tested)
-                bool significant = z.isTime or z.isBreakaway or touched
-                if significant
-                    z.inverted := true
-                    box.set_bgcolor(z.bx, z.isBull ? colIFVGBear : colIFVGBull)
-                    box.set_extend(z.bx, extend.right)
-            if extendZones
-                box.set_extend(z.bx, extend.none)
-                box.set_right(z.bx, bar_index)
-                line.set_extend(z.ceLn, extend.none)
-                line.set_x2(z.ceLn, bar_index)
-        else if touched
-            box.set_extend(z.bx, extend.none)
-            box.set_right(z.bx, bar_index)
-            line.set_extend(z.ceLn, extend.none)
-            line.set_x2(z.ceLn, bar_index)
-    // Measuring-gap classification: unfilled gap whose CE sits ~midway between origin swing and last swing
-    if showMeasuring and not z.mitigated and not z.isMeasuring
-        if not na(lastSwingHigh) and not na(lastSwingLow) and lastSwingHigh > lastSwingLow
-            float mid = (lastSwingHigh + lastSwingLow) / 2
-            if math.abs(z.ce - mid) <= (lastSwingHigh - lastSwingLow) * 0.15
-                z.isMeasuring := true
-                box.set_bgcolor(z.bx, colMeasuring)
-    // BPR: overlap with last opposing FVG
-    if showBPR and not z.bprChecked
-        z.bprChecked := true
-        if z.isBull and not na(lastBearTop)
-            float oTop = math.min(z.top, lastBearTop)
-            float oBot = math.max(z.bot, lastBearBot)
-            if oTop > oBot
-                box.new(bar_index - 2, oTop, bar_index + 10, oBot, bgcolor = colBPR,
-                     border_color = color.new(colBPR, 30), extend = extend.right)
-        if not z.isBull and not na(lastBullTop)
-            float oTop = math.min(z.top, lastBullTop)
-            float oBot = math.max(z.bot, lastBullBot)
-            if oTop > oBot
-                box.new(bar_index - 2, oTop, bar_index + 10, oBot, bgcolor = colBPR,
-                     border_color = color.new(colBPR, 30), extend = extend.right)
-    if z.isBull
-        lastBullTop := z.top
-        lastBullBot := z.bot
-    else
-        lastBearTop := z.top
-        lastBearBot := z.bot
-
-// ── MTF stacking: LTF zone inside HTF FVG ──
+var bool  lastBullTopSet = false
+var bool  lastBearTopSet = false
+if gaps.size() > 0
+    for i = gaps.size() - 1 to 0
+        Gap g = array.get(gaps, i)
+        float gMid = (g.top + g.bot) / 2
+        if g.state == GapState.ACTIVE
+            bool closedThrough = g.isBull ? close < g.bot : close > g.top
+            if closedThrough
+                g.state := GapState.MITIGATED
+                bool sig = g.kind != GapKind.PLAIN or (showOD and g.hasOD)
+                if showIFVG and sig
+                    g.state := GapState.INVERTED
+                    if not na(g.bx)
+                        box.set_bgcolor(g.bx, g.isBull ? colIFVGBear : colIFVGBull)
+                f_freezeGap(g)
+                if g.uid == bagBullUid
+                    bagBullUid := 0
+                if g.uid == bagBearUid
+                    bagBearUid := 0
+            else
+                bool odWick = g.isBull ? (low <= gMid and low > g.bot) : (high >= gMid and high < g.top)
+                if showOD and not g.hasOD and odWick
+                    g.hasOD   := true
+                    g.odLevel := g.isBull ? low : high
+                    if not na(g.bx)
+                        g.odLn := line.new(bar_index, g.odLevel, bar_index + 20, g.odLevel,
+                             color = color.new(color.blue, 20), style = line.style_dotted, extend = extend.right)
+                        label.new(bar_index, g.odLevel, "OD", style = label.style_label_left,
+                             color = color.new(color.blue, 55), textcolor = color.white, size = size.tiny)
+                bool ceHit = g.isBull ? low <= gMid : high >= gMid
+                if not na(g.bx) and ceHit
+                    box.set_right(g.bx, bar_index)
+                    line.set_x2(g.ceLn, bar_index)
+        if showMeasuring and g.state == GapState.ACTIVE and not g.isMeasuring
+            if not na(lastSwingHigh) and not na(lastSwingLow) and lastSwingHigh > lastSwingLow
+                float m = (lastSwingHigh + lastSwingLow) / 2
+                if math.abs(gMid - m) <= (lastSwingHigh - lastSwingLow) * 0.15
+                    g.isMeasuring := true
+                    f_drawGap(g)
+                    if not na(g.bx)
+                        box.set_bgcolor(g.bx, colMeasuring)
+        if showBPR and not g.bprChecked
+            g.bprChecked := true
+            bool oppSet  = g.isBull ? lastBearTopSet : lastBullTopSet
+            float oppTop = g.isBull ? lastBearTop : lastBullTop
+            float oppBot = g.isBull ? lastBearBot : lastBullBot
+            if oppSet and not na(oppTop)
+                float oT = math.min(g.top, oppTop)
+                float oB = math.max(g.bot, oppBot)
+                if oT > oB
+                    box.new(g.bornBar - 2, oT, bar_index + 10, oB, bgcolor = colBPR,
+                         border_color = color.new(colBPR, 30), extend = extend.right)
+        if g.isBull
+            lastBullTop := g.top
+            lastBullBot := g.bot
+            lastBullTopSet := true
+        else
+            lastBearTop := g.top
+            lastBearBot := g.bot
+            lastBearTopSet := true
 htfFVG() =>
     bool hBull = low > high[2] and close > high[2]
     bool hBear = high < low[2] and close < low[2]
@@ -256,15 +387,21 @@ htfFVG() =>
     float hBot = hBull ? high[2] : hBear ? high : na
     [hBull or hBear, hTop, hBot]
 [htfHas, htfTop, htfBot] = request.security(syminfo.tickerid, htfTF, htfFVG(), lookahead = barmerge.lookahead_on)
-if showStack and htfHas and zones.size() > 0
-    for i = zones.size() - 1 to math.max(0, zones.size() - 4)
-        Zone z = array.get(zones, i)
-        if not na(htfTop) and z.top <= htfTop and z.bot >= htfBot
-            label.new(bar_index, z.top, "⧉HTF", style = label.style_none, textcolor = color.new(colTime, 0), size = size.tiny)
-
-// ── Fri/Mon anchor reaction markers: price returns into anchor CE ──
-if showFriMon
+if showStack and htfHas and gaps.size() > 0
+    for i = gaps.size() - 1 to math.max(0, gaps.size() - 4)
+        Gap g = array.get(gaps, i)
+        if not na(g.bx) and not na(htfTop) and g.top <= htfTop and g.bot >= htfBot
+            label.new(bar_index, g.top, "HTF", style = label.style_none,
+                 textcolor = color.new(colTime, 0), size = size.tiny)
+if showFriMon and anchors.size() > 0
     for a in anchors
-        if a.active and low <= a.ce and high >= a.ce
-            label.new(bar_index, a.ce, "⟲", style = label.style_label_up,
-                 color = color.new(colAnchor, 20), textcolor = color.white, size = size.tiny)
+        if a.active
+            if low <= a.ce and high >= a.ce
+                label.new(bar_index, a.ce, "R", style = label.style_label_up,
+                     color = color.new(colAnchor, 20), textcolor = color.white, size = size.tiny)
+            bool aClosed = a.isBull ? close < a.bot : close > a.top
+            if aClosed
+                a.active := false
+                if not na(a.bx)
+                    box.set_extend(a.bx, extend.none)
+                    box.set_right(a.bx, bar_index)

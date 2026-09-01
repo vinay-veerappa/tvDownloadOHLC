@@ -54,7 +54,8 @@ Rules:
 - Probability Grounding: Use only explicit probabilities present in the cheat sheet (classification R1/R2, candle science stats, Herman/IB/noon-curve/FTFC model confidence). If unavailable, write "probability not explicitly quantified in cheat sheet".
 - Risk Grounding (day trader): For each tomorrow outcome, anchor invalidation to close-snapshot structural levels and express risk distance from current/close price in points and percent.
 - No-Trade Condition: If neither tomorrow validation condition is met at the relevant window, explicitly state "no-trade / wait for confirmation".
-- NFP Week Playbook: If WEEKLY EVENT TIMELINE indicates NFP week, include a short section titled "NFP Week Playbook" for next session/day planning (Thursday/Friday priorities, 08:30 handling, fakeout risk, preferred windows).
+- Weekly Red Folder Events: Inspect "WEEKLY RED FOLDER RISK (HIGH IMPACT)" to identify upcoming high-impact catalysts for tomorrow and the remainder of the week. Explain how upcoming red folder events (e.g. ISM, ADP, Claims, Services PMI, NFP) affect tomorrow's setup and weekly expectations.
+- NFP Week Playbook: If the week is an NFP week (indicated by NFP in Week context, Tomorrow's Preview, or Weekly Event Timeline), include a short section titled "NFP Week Playbook" for next session/day planning (Thursday/Friday priorities, 08:30 handling, fakeout risk, preferred windows). If it is NOT an NFP week, omit the "NFP Week Playbook" section completely.
 - FOMC Label Guard: Only refer to "FOMC week" when the current week includes statement/rate decision/press conference events, not Fed speakers alone.
 - No word limit. Write as much as needed to cover the forward-looking read. The close narrative is the setup for tomorrow — it should be thorough, not compressed.
 - If the morning bias was wrong, say why. Be honest.
