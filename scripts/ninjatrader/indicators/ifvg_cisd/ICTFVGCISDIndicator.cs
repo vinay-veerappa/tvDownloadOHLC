@@ -365,18 +365,32 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             double target2 = double.NaN;
             double limitPrice = double.NaN;
 
-            // Check External Sweep Context in last 5 bars
+            // Check External Sweep Context in last 10 bars (PDH/PDL, London H/L, Asia H/L, 20-bar Swing H/L)
             double recentLow = l0;
             double recentHigh = h0;
-            for (int k = 1; k <= 5; k++) { recentLow = Math.Min(recentLow, Low[k]); recentHigh = Math.Max(recentHigh, High[k]); }
+            for (int k = 1; k <= 10; k++)
+            {
+                recentLow = Math.Min(recentLow, Low[k]);
+                recentHigh = Math.Max(recentHigh, High[k]);
+            }
+
+            double swingLow20 = double.MaxValue;
+            double swingHigh20 = double.MinValue;
+            for (int k = 5; k <= 25; k++)
+            {
+                swingLow20 = Math.Min(swingLow20, Low[k]);
+                swingHigh20 = Math.Max(swingHigh20, High[k]);
+            }
 
             bool hasExtSweepBull = (!double.IsNaN(prevDayL) && recentLow < prevDayL) ||
                                    (!double.IsNaN(lastLondonL) && recentLow < lastLondonL) ||
-                                   (!double.IsNaN(lastAsiaL) && recentLow < lastAsiaL);
+                                   (!double.IsNaN(lastAsiaL) && recentLow < lastAsiaL) ||
+                                   (recentLow < swingLow20);
 
             bool hasExtSweepBear = (!double.IsNaN(prevDayH) && recentHigh > prevDayH) ||
                                    (!double.IsNaN(lastLondonH) && recentHigh > lastLondonH) ||
-                                   (!double.IsNaN(lastAsiaH) && recentHigh > lastAsiaH);
+                                   (!double.IsNaN(lastAsiaH) && recentHigh > lastAsiaH) ||
+                                   (recentHigh > swingHigh20);
 
             bool inLunch = FilterLunch && (hhmm >= 1200 && hhmm <= 1330);
 

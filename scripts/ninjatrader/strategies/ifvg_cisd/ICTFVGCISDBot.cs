@@ -112,7 +112,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             UseStage2Distribution = false;
             UseHtfFilter = true;           // Pro-Trend 4H Orderflow
             FilterLunch = true;            // Blackout 12:00-13:30
-            RequireExternalSweep = false;  // Modular toggle
+            RequireExternalSweep = true;   // Mandatory Turtle Soup Liquidity Sweep Filter
             QueenTargetBps = 10.0;         // +10 Basis Points (0.10%)
             RunnerTargetBps = 30.0;        // +30 Basis Points (0.30%)
             StopLossBps = 5.0;             // 5.0 Basis Points default stop ceiling

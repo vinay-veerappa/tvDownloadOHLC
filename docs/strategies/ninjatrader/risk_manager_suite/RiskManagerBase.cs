@@ -4,15 +4,30 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Windows;
+using System.Windows.Media;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
 using NinjaTrader.NinjaScript.Strategies;
 #endregion
 
 namespace NinjaTrader.NinjaScript.Strategies.Vinay
 {
+    public enum TradePolicyType
+    {
+        CoverTheQueen,
+        BreakevenTrail,
+        FixedTarget,
+        BaseHits,
+        SupertrendTrail,
+        FixedTP1TP2   // Python parity: TP1=custom (BB mid, scale 50%), TP2=custom (opp band), EOD flatten
+    }
+
     public abstract class RiskManagerBase : Strategy
     {
         // ──────────────────────────────────────────────────────────────
@@ -81,8 +96,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public int AtrPeriod { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Policy (BreakevenTrail / FixedTarget)", Order = 3, GroupName = "Trade Management")]
-        public string TradePolicy { get; set; }
+        [Display(Name = "Trade Policy", Description = "Trade management and profit target policy", Order = 3, GroupName = "Trade Management")]
+        public TradePolicyType TradePolicy { get; set; }
 
         [NinjaScriptProperty]
         [Display(Name = "BE Trigger (R-multiple)", Order = 4, GroupName = "Trade Management")]
@@ -107,6 +122,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [NinjaScriptProperty]
         [Display(Name = "Add Secondary Timeframe (5m)", Order = 0, GroupName = "Timeframe")]
         public bool AddSecondaryTimeframe { get; set; }
+
+        /// <summary>
+        /// When true, emits verbose [DBG]/[DIAG] Log() diagnostics for every gate in
+        /// OnBarUpdate/CanEnterTrade/CheckForSignal. Set false for production/live.
+        /// </summary>
+        [NinjaScriptProperty]
+        [Display(Name = "Debug Mode (verbose logging)", Order = 1, GroupName = "Timeframe")]
+        public bool DebugMode { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Draw Visuals on Chart", Order = 2, GroupName = "Visuals")]
+        public bool DrawVisuals { get; set; } = true;
         #endregion
 
         // ──────────────────────────────────────────────────────────────
@@ -124,6 +151,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected bool   breakevenMoved;
         protected bool   tradeIsActive;
         protected string tradeDirection;
+        protected string entrySignalName;  // set by EnterWithRangeStop / EnterTrade
+        protected bool   trailFirstBar;     // SupertrendTrail: skip ratchet on entry bar (Python parity)
 
         // Backtest-only account state (not used in live mode — RiskGatekeeper owns this)
         protected double accountEquity;
@@ -150,7 +179,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 Description                  = "Risk Manager Base — inherited by all strategies";
                 Name                         = "RiskManagerBase";
                 Calculate                    = Calculate.OnBarClose;
-                EntriesPerDirection          = 1;
+                EntriesPerDirection          = 2; // Allow multi-bracket entries (Queen + Runner)
                 EntryHandling                = EntryHandling.AllEntries;
                 IsExitOnSessionCloseStrategy = true;
                 ExitOnSessionCloseSeconds    = 60;
@@ -158,7 +187,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 TraceOrders                  = false;
                 BarsRequiredToTrade          = 1;   // FIX: was 50 — blocked IB entries for 250 min on 5-min secondary
                 BarsRequiredToTradeParam     = 1;   // exposed as NinjaScriptProperty so SA params can override
-                StartBehavior                = StartBehavior.WaitUntilFlat;
+                StartBehavior                = StartBehavior.AdoptAccountPosition;
                 RealtimeErrorHandling        = RealtimeErrorHandling.StopCancelClose;
 
                 // Risk defaults
@@ -180,7 +209,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 // Trade management defaults
                 StopAtrMult         = 2.0;
                 AtrPeriod           = 14;
-                TradePolicy         = "BreakevenTrail";
+                TradePolicy         = TradePolicyType.CoverTheQueen;
                 BreakevenTriggerR   = 1.0;
                 TrailAtrMult        = 2.0;
                 TargetRMultiple     = 2.0;
@@ -189,10 +218,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 // Range-based strategies (IB/ORB) override to false in SetStrategyDefaults().
                 AddSecondaryTimeframe = true;
 
+                // DebugMode — default true for backtest diagnostics. Set false for live.
+                DebugMode = true;
+
                 SetStrategyDefaults();
             }
             else if (State == State.Configure)
             {
+                // Apply BarsRequiredToTradeParam here — NT8 does NOT allow setting
+                // BarsRequiredToTrade from OnBarUpdate (throws "cannot be set from this state").
+                if (BarsRequiredToTradeParam > 0)
+                    BarsRequiredToTrade = BarsRequiredToTradeParam;
+
                 ConfigureStrategy();
 
                 // Only add the 5-min secondary when the strategy actually uses it.
@@ -240,27 +277,48 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
             // Only process the primary (1-min) series
             if (BarsInProgress != 0)
+            {
+                if (DebugMode && CurrentBar % 200 == 0) Log($"[DBG] BIP!=0 skipping: BarsInProgress={BarsInProgress} bar={CurrentBar}", LogLevel.Information);
                 return;
+            }
 
-            // Apply BarsRequiredToTradeParam (NinjaScriptProperty — SA params can override)
-            if (BarsRequiredToTradeParam > 0)
-                BarsRequiredToTrade = BarsRequiredToTradeParam;
+            // NOTE: BarsRequiredToTrade is now set in State.Configure (not here — NT8 throws
+            // "cannot be set from this state" if set during OnBarUpdate).
 
             // Gate on primary series always; gate on secondary only when it exists.
             // When AddSecondaryTimeframe=false, there is no BarsArray[1] to check.
             if (CurrentBars[0] < BarsRequiredToTrade)
+            {
+                if (DebugMode && CurrentBar % 200 == 0) Log($"[DBG] BarsRequired gate: CurrentBars[0]={CurrentBars[0]} < BRT={BarsRequiredToTrade}", LogLevel.Information);
                 return;
+            }
             if (AddSecondaryTimeframe && CurrentBars[1] < BarsRequiredToTrade)
+            {
+                if (DebugMode && CurrentBar % 200 == 0) Log($"[DBG] Secondary BRT gate: CurrentBars[1]={CurrentBars[1]} < BRT={BarsRequiredToTrade}", LogLevel.Information);
                 return;
+            }
 
             // ── New session detection ──
             DateTime barDate = Times[0][0].Date;
             if (barDate != currentTradingDate)
                 OnNewSession(barDate);
 
-            // ── End-of-day flatten ──
+            // ── End-of-day / End-of-session flatten ──
             int currentTime = ToTime(Times[0][0]);
-            if (currentTime >= FlattenBy * 100 && Position.MarketPosition != MarketPosition.Flat)
+            bool isOvernightSession = EarliestEntry > LatestEntry || EarliestEntry >= 1700;
+            bool shouldFlatten;
+            if (!isOvernightSession)
+            {
+                shouldFlatten = (currentTime >= FlattenBy * 100);
+            }
+            else
+            {
+                // Overnight session (e.g. FlattenBy = 155 for 01:55 AM, EarliestEntry = 1930)
+                // Flatten when time is past FlattenBy in the post-midnight morning and before new session open
+                shouldFlatten = (currentTime >= FlattenBy * 100 && currentTime < EarliestEntry * 100);
+            }
+
+            if (shouldFlatten && Position.MarketPosition != MarketPosition.Flat)
             {
                 FlattenPosition("Flatten by time");
                 return;
@@ -279,21 +337,40 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             // ── Entry gate ──
             if (!CanEnterTrade(currentTime))
+            {
+                if (DebugMode)
+                {
+                    int h = Time[0].Hour;
+                    bool inWindow = (h >= 10 && h <= 14);
+                    if ((inWindow && CurrentBar % 10 == 0) || CurrentBar % 100 == 0)
+                        Log($"[DBG] CanEnterTrade BLOCKED bar={CurrentBar} time={Time[0]:HH:mm} currentTime={currentTime} Earliest={EarliestEntry*100} Latest={LatestEntry*100} atr={GetCurrentATR()}", LogLevel.Information);
+                }
                 return;
+            }
 
             int signal = CheckForSignal();
             if (signal == 0)
+            {
+                if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CheckForSignal=0 bar={CurrentBar} time={Time[0]:HH:mm}", LogLevel.Information);
                 return;
+            }
 
             double atr = GetCurrentATR();
             if (atr <= 0)
                 return;
 
-            double stopDistance = StopAtrMult * atr;
+            double stopPrice = GetCustomStopPrice(signal, Closes[0][0]);
+            double stopDistance = Math.Abs(Closes[0][0] - stopPrice);
+            if (double.IsNaN(stopPrice) || stopDistance <= 0)
+            {
+                stopDistance = StopAtrMult * atr;
+                stopPrice = signal == 1 ? Closes[0][0] - stopDistance : Closes[0][0] + stopDistance;
+            }
+
             if (signal == 1)
-                EnterTrade("Long",  Closes[0][0], Closes[0][0] - stopDistance, stopDistance);
+                EnterTrade("Long",  Closes[0][0], stopPrice, stopDistance);
             else if (signal == -1)
-                EnterTrade("Short", Closes[0][0], Closes[0][0] + stopDistance, stopDistance);
+                EnterTrade("Short", Closes[0][0], stopPrice, stopDistance);
         }
 
         // ──────────────────────────────────────────────────────────────
@@ -352,6 +429,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             tradeIsActive    = false;
             breakevenMoved   = false;
             tradeDirection   = null;
+            entrySignalName  = null;
             entryPrice       = 0;
             initialStopPrice = 0;
             currentStopPrice = 0;
@@ -367,39 +445,75 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         private bool CanEnterTrade(int currentTime)
         {
+            string acctName = Account?.Name ?? "null";
+
+            // ── Backtest / Historical mode bypass ──
+            // In Strategy Analyzer or when processing historical chart bars (State == State.Historical),
+            // Account.Name is "Backtest" or a Sim account. Skip gatekeeper live lockout checks.
+            bool isBacktest = (State == State.Historical)
+                           || acctName.IndexOf("backtest", StringComparison.OrdinalIgnoreCase) >= 0
+                           || acctName.IndexOf("Playback", StringComparison.OrdinalIgnoreCase) >= 0;
+
             // ── RiskGatekeeper check (live/sim mode — cross-strategy, cross-session) ──
-            // When the AddOn is running, all account-level gates (blown, done-for-day,
-            // pause, max-trades) are owned by RiskGatekeeper.  The local backtest flags
-            // below act as a fallback when no AddOn is present.
-            if (!RiskGatekeeper.CanTrade(Account.Name))
+            if (!isBacktest && !RiskGatekeeper.CanTrade(acctName))
+            {
+                if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL gatekeeper: acct={acctName} bar={CurrentBar}", LogLevel.Information);
                 return false;
+            }
 
             // ── Local backtest / fallback gates ──
-            // These kick in when RiskGatekeeper has no registration for this account
-            // (i.e. the AddOn is not loaded), preserving backward-compatible behaviour.
-            if (!RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
-                    StringComparer.OrdinalIgnoreCase))
+            bool registered = !isBacktest && RiskGatekeeper.RegisteredAccounts.Contains(acctName,
+                    StringComparer.OrdinalIgnoreCase);
+            if (registered)
             {
                 if (accountBlown && StopOnAccountBlown)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL accountBlown: bar={CurrentBar}", LogLevel.Information);
                     return false;
+                }
 
                 if (isDoneForDay)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL doneForDay: bar={CurrentBar}", LogLevel.Information);
                     return false;
+                }
 
                 if (isPaused)
                 {
                     if (Times[0][0] < pauseUntil)
+                    {
+                        if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL paused: bar={CurrentBar} until={pauseUntil}", LogLevel.Information);
                         return false;
+                    }
                     isPaused = false;
                 }
 
                 if (todayTradeCount >= MaxTradesPerDay)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL maxTrades: bar={CurrentBar} {todayTradeCount}/{MaxTradesPerDay}", LogLevel.Information);
                     return false;
+                }
             }
 
             // Time fence — always enforced locally (strategy-specific windows)
-            if (currentTime < EarliestEntry * 100 || currentTime > LatestEntry * 100)
-                return false;
+            // Supports both daytime (Earliest <= Latest) and overnight (Earliest > Latest)
+            if (EarliestEntry <= LatestEntry)
+            {
+                if (currentTime < EarliestEntry * 100 || currentTime > LatestEntry * 100)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL timeFence: currentTime={currentTime} Earliest={EarliestEntry*100} Latest={LatestEntry*100} bar={CurrentBar}", LogLevel.Information);
+                    return false;
+                }
+            }
+            else
+            {
+                // Overnight session (e.g. EarliestEntry = 1930, LatestEntry = 130)
+                if (currentTime < EarliestEntry * 100 && currentTime > LatestEntry * 100)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL timeFence: currentTime={currentTime} Earliest={EarliestEntry*100} Latest={LatestEntry*100} bar={CurrentBar}", LogLevel.Information);
+                    return false;
+                }
+            }
 
             // NOTE: The GetCurrentATR()>0 sanity gate was REMOVED from here.
             // It created a circular deadlock: CanEnterTrade needs GetCurrentATR()>0,
@@ -416,14 +530,20 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // loss limits. See GetPotentialLoss() / GetEstimatedRiskDistance().
             double potentialLoss = GetPotentialLoss();
             if (!isBacktest && RiskGatekeeper.WouldBreachDailyMaxLoss(Account.Name, potentialLoss))
+            {
+                if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL gatekeeperDailyMaxLoss: bar={CurrentBar} potentialLoss={potentialLoss}", LogLevel.Information);
                 return false;
+            }
 
             // Local fallback for daily max loss (only when NOT registered with gatekeeper AND not backtest)
             if (!isBacktest && !RiskGatekeeper.RegisteredAccounts.Contains(Account.Name,
                     StringComparer.OrdinalIgnoreCase))
             {
                 if (sessionPnL - potentialLoss < -DailyMaxLoss)
+                {
+                    if (DebugMode && CurrentBar % 100 == 0) Log($"[DBG] CanEnterTrade FAIL localDailyMaxLoss: bar={CurrentBar} sessionPnL={sessionPnL} potentialLoss={potentialLoss} DailyMaxLoss={DailyMaxLoss}", LogLevel.Information);
                     return false;
+                }
             }
 
             return true;
@@ -433,9 +553,64 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         // TRADE ENTRY
         // ──────────────────────────────────────────────────────────────
 
+        protected virtual (double stopPts, double tp1Pts, double tp2Pts) GetBaseHitsTargets()
+        {
+            string inst = (Instrument != null && Instrument.MasterInstrument != null) ? Instrument.MasterInstrument.Name.ToUpper() : "NQ";
+            if (inst.Contains("NQ") || inst.Contains("MNQ"))
+                return (10.0, 10.0, 20.0);
+            if (inst.Contains("ES") || inst.Contains("MES"))
+                return (2.50, 2.50, 5.00);
+            if (inst.Contains("YM") || inst.Contains("MYM"))
+                return (15.0, 15.0, 30.0);
+            if (inst.Contains("RTY") || inst.Contains("M2K"))
+                return (1.00, 1.25, 2.50);
+            if (inst.Contains("CL") || inst.Contains("MCL"))
+                return (0.10, 0.15, 0.30);
+            if (inst.Contains("GC") || inst.Contains("MGC"))
+                return (1.00, 1.25, 2.50);
+            return (10.0, 10.0, 20.0); // Default to NQ
+        }
+
         private void EnterTrade(string direction, double entry, double stop, double stopDist)
         {
             string signalName = GetSignalName(direction);
+
+            // ── P1-149 sub-task 2: pre-trade contract-size refusal (strategy-side half) ──
+            // The one enforcement gap RiskManagerBase strategies had: the per-account contract cap
+            // (MaxContractsPerAccount) was configured, reported in the UI and enforced reactively by the
+            // guard's MAX_SIZE_BREACH flatten -- but nothing on THIS entry path said no BEFORE the fill.
+            // The decision lives in the pure, mutation-tested ContractCapGate; RiskGatekeeper.CanTradeSize
+            // supplies this account's cap and delegates, so the strategy path and the bridge/order path
+            // enforce the SAME rule. INERT unless an operator has set MaxContractsPerAccount > 0 (cap <= 0
+            // allows everything), and a strictly-reducing order is NEVER refused, so this can only block a
+            // size-INCREASING entry that would leave the account over its cap. Position.Quantity is an
+            // ABSOLUTE magnitude and MarketPosition carries the side -- there is no sign to misread.
+            {
+                string sizeAcct = (Account != null) ? Account.Name : "";
+                bool sizeIsBacktest = (State == State.Historical)
+                                   || sizeAcct.IndexOf("backtest", StringComparison.OrdinalIgnoreCase) >= 0
+                                   || sizeAcct.IndexOf("Playback", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (!sizeIsBacktest)
+                {
+                    string orderSide = direction == "Long" ? "buy" : "sell";
+                    var sizeDecision = RiskGatekeeper.CanTradeSize(
+                        sizeAcct, 1, orderSide,
+                        Position.MarketPosition.ToString(), Position.Quantity);
+                    if (!sizeDecision.Allowed)
+                    {
+                        Log(string.Format("[RiskManagerBase] entry refused by contract cap: {0}",
+                            sizeDecision.Reason), LogLevel.Warning);
+                        return;
+                    }
+                }
+            }
+
+            if (TradePolicy == TradePolicyType.BaseHits)
+            {
+                var targets = GetBaseHitsTargets();
+                stopDist = targets.stopPts;
+                stop = direction == "Long" ? entry - targets.stopPts : entry + targets.stopPts;
+            }
 
             entryPrice        = entry;
             initialStopPrice  = stop;
@@ -444,29 +619,182 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             breakevenMoved    = false;
             tradeIsActive     = true;
             tradeDirection    = direction;
+            entrySignalName   = signalName;
+            trailFirstBar     = true;  // skip ratchet on entry bar (Python parity)
 
-            if (direction == "Long")
+            double customLimit = GetCustomLimitPrice(direction == "Long" ? 1 : -1, entry);
+            bool isLimit = !double.IsNaN(customLimit) && customLimit > 0;
+            double effectiveEntry = isLimit ? customLimit : entry;
+
+            if (TradePolicy == TradePolicyType.CoverTheQueen)
+            {
+                double queenPts = effectiveEntry * 0.0010; // 10 Basis Points (approx 20-30 pts on NQ)
+                double runnerPts = Math.Max(TargetRMultiple * riskPoints, queenPts * 3.0); // 30 bps runner target
+
+                if (direction == "Long")
+                {
+                    if (isLimit)
+                    {
+                        EnterLongLimit(1, customLimit, signalName + "_Queen");
+                        EnterLongLimit(1, customLimit, signalName + "_Runner");
+                    }
+                    else
+                    {
+                        EnterLong(1, signalName + "_Queen");
+                        EnterLong(1, signalName + "_Runner");
+                    }
+                    SetStopLoss(signalName + "_Queen", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Queen", CalculationMode.Price, effectiveEntry + queenPts);
+
+                    SetStopLoss(signalName + "_Runner", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Runner", CalculationMode.Price, effectiveEntry + runnerPts);
+                }
+                else
+                {
+                    if (isLimit)
+                    {
+                        EnterShortLimit(1, customLimit, signalName + "_Queen");
+                        EnterShortLimit(1, customLimit, signalName + "_Runner");
+                    }
+                    else
+                    {
+                        EnterShort(1, signalName + "_Queen");
+                        EnterShort(1, signalName + "_Runner");
+                    }
+                    SetStopLoss(signalName + "_Queen", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Queen", CalculationMode.Price, effectiveEntry - queenPts);
+
+                    SetStopLoss(signalName + "_Runner", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Runner", CalculationMode.Price, effectiveEntry - runnerPts);
+                }
+            }
+            else if (TradePolicy == TradePolicyType.FixedTP1TP2)
+            {
+                // Python parity: TP1 = GetCustomProfitTarget (BB middle), TP2 = GetCustomTP2 (opposite band)
+                // 2 contracts: leg1 scales 50% at TP1, leg2 runs to TP2 or EOD
+                double tp1 = GetCustomProfitTarget(direction == "Long" ? 1 : -1, effectiveEntry, stopDist);
+                double tp2 = GetCustomTP2(direction == "Long" ? 1 : -1, effectiveEntry);
+
+                if (double.IsNaN(tp1) || double.IsNaN(tp2))
+                {
+                    // Fallback to single contract if custom targets not provided
+                    if (direction == "Long")
+                    {
+                        EnterLong(1, signalName);
+                        SetStopLoss(signalName, CalculationMode.Price, stop, false);
+                    }
+                    else
+                    {
+                        EnterShort(1, signalName);
+                        SetStopLoss(signalName, CalculationMode.Price, stop, false);
+                    }
+                }
+                else if (direction == "Long")
+                {
+                    if (isLimit)
+                    {
+                        EnterLongLimit(1, customLimit, signalName + "_Leg1");
+                        EnterLongLimit(1, customLimit, signalName + "_Leg2");
+                    }
+                    else
+                    {
+                        EnterLong(1, signalName + "_Leg1");
+                        EnterLong(1, signalName + "_Leg2");
+                    }
+                    SetStopLoss(signalName + "_Leg1", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Leg1", CalculationMode.Price, tp1);
+
+                    SetStopLoss(signalName + "_Leg2", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Leg2", CalculationMode.Price, tp2);
+                }
+                else
+                {
+                    if (isLimit)
+                    {
+                        EnterShortLimit(1, customLimit, signalName + "_Leg1");
+                        EnterShortLimit(1, customLimit, signalName + "_Leg2");
+                    }
+                    else
+                    {
+                        EnterShort(1, signalName + "_Leg1");
+                        EnterShort(1, signalName + "_Leg2");
+                    }
+                    SetStopLoss(signalName + "_Leg1", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Leg1", CalculationMode.Price, tp1);
+
+                    SetStopLoss(signalName + "_Leg2", CalculationMode.Price, stop, false);
+                    SetProfitTarget(signalName + "_Leg2", CalculationMode.Price, tp2);
+                }
+            }
+            else if (direction == "Long")
             {
                 EnterLong(1, signalName);
                 SetStopLoss(signalName, CalculationMode.Price, stop, false);
 
-                if (TradePolicy == "FixedTarget")
+                double customTarget = GetCustomProfitTarget(1, entry, stopDist);
+                if (!double.IsNaN(customTarget) && customTarget > entry)
+                    SetProfitTarget(signalName, CalculationMode.Price, customTarget);
+                else if (TradePolicy == TradePolicyType.FixedTarget)
                     SetProfitTarget(signalName, CalculationMode.Price, entry + TargetRMultiple * riskPoints);
+                else if (TradePolicy == TradePolicyType.BaseHits)
+                    SetProfitTarget(signalName, CalculationMode.Price, entry + GetBaseHitsTargets().tp1Pts);
             }
             else
             {
                 EnterShort(1, signalName);
                 SetStopLoss(signalName, CalculationMode.Price, stop, false);
 
-                if (TradePolicy == "FixedTarget")
+                double customTarget = GetCustomProfitTarget(-1, entry, stopDist);
+                if (!double.IsNaN(customTarget) && customTarget < entry)
+                    SetProfitTarget(signalName, CalculationMode.Price, customTarget);
+                else if (TradePolicy == TradePolicyType.FixedTarget)
                     SetProfitTarget(signalName, CalculationMode.Price, entry - TargetRMultiple * riskPoints);
+                else if (TradePolicy == TradePolicyType.BaseHits)
+                    SetProfitTarget(signalName, CalculationMode.Price, entry - GetBaseHitsTargets().tp1Pts);
             }
 
             todayTradeCount++;
 
-            Print(string.Format("[{0}] ENTRY {1} @ {2:F2} | Stop {3:F2} | Risk {4:C} | Trade #{5}",
+            if (DrawVisuals)
+            {
+                string tag = "Trade_" + CurrentBar;
+                if (direction == "Long")
+                {
+                    Draw.ArrowUp(this, tag + "_Arrow", false, 0, entry - (4 * TickSize), Brushes.LimeGreen);
+                    Draw.Line(this, tag + "_Entry", false, 0, entry, -10, entry, Brushes.DodgerBlue, DashStyleHelper.Solid, 2);
+                    Draw.Line(this, tag + "_Stop", false, 0, stop, -10, stop, Brushes.Crimson, DashStyleHelper.Dash, 2);
+                    Draw.Text(this, tag + "_Txt", false, string.Format("BUY @ {0:F2}\nSL: {1:F2}", entry, stop), 0, entry - (10 * TickSize), 0, Brushes.LimeGreen, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+
+                    if (TradePolicy == TradePolicyType.CoverTheQueen)
+                    {
+                        double bpsPts = entry * 0.0010;
+                        double queenPts = Math.Max(bpsPts, riskPoints);
+                        double runnerPts = Math.Max(TargetRMultiple * riskPoints, queenPts * 2.5);
+                        Draw.Line(this, tag + "_TP1", false, 0, entry + queenPts, -10, entry + queenPts, Brushes.Gold, DashStyleHelper.Solid, 2);
+                        Draw.Line(this, tag + "_TP2", false, 0, entry + runnerPts, -10, entry + runnerPts, Brushes.SpringGreen, DashStyleHelper.Solid, 2);
+                    }
+                }
+                else
+                {
+                    Draw.ArrowDown(this, tag + "_Arrow", false, 0, entry + (4 * TickSize), Brushes.OrangeRed);
+                    Draw.Line(this, tag + "_Entry", false, 0, entry, -10, entry, Brushes.DodgerBlue, DashStyleHelper.Solid, 2);
+                    Draw.Line(this, tag + "_Stop", false, 0, stop, -10, stop, Brushes.Crimson, DashStyleHelper.Dash, 2);
+                    Draw.Text(this, tag + "_Txt", false, string.Format("SELL @ {0:F2}\nSL: {1:F2}", entry, stop), 0, entry + (10 * TickSize), 0, Brushes.OrangeRed, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+
+                    if (TradePolicy == TradePolicyType.CoverTheQueen)
+                    {
+                        double bpsPts = entry * 0.0010;
+                        double queenPts = Math.Max(bpsPts, riskPoints);
+                        double runnerPts = Math.Max(TargetRMultiple * riskPoints, queenPts * 2.5);
+                        Draw.Line(this, tag + "_TP1", false, 0, entry - queenPts, -10, entry - queenPts, Brushes.Gold, DashStyleHelper.Solid, 2);
+                        Draw.Line(this, tag + "_TP2", false, 0, entry - runnerPts, -10, entry - runnerPts, Brushes.SpringGreen, DashStyleHelper.Solid, 2);
+                    }
+                }
+            }
+
+            Print(string.Format("[{0}] ENTRY {1} @ {2:F2} | Stop {3:F2} | Risk {4:C} | Trade #{5} | Policy {6}",
                 GetStrategyName(), direction, entry, stop,
-                stopDist * GetPointValue(), todayTradeCount));
+                stopDist * GetPointValue(), todayTradeCount, TradePolicy));
         }
 
         // ──────────────────────────────────────────────────────────────
@@ -483,8 +811,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             // If a flatten has already been submitted (tradeIsActive=false),
             // skip trade management — the exit order is pending fill and
-            // managed orders have been cancelled. Running the daily max loss
-            // or breakeven trail here would re-flatten with a different signal.
+            // managed orders have been cancelled.
             if (!tradeIsActive)
                 return;
 
@@ -496,13 +823,155 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             {
                 FlattenPosition("Daily max loss breached (with open PnL)");
                 isDoneForDay = true;
-                // Notify gatekeeper so other strategies on this account also stop
                 RiskGatekeeper.MarkDailyMaxLossBreached(Account.Name);
                 return;
             }
 
-            if (TradePolicy == "BreakevenTrail")
+            if (TradePolicy == TradePolicyType.BreakevenTrail)
                 ManageBreakevenTrail(currentPrice);
+            else if (TradePolicy == TradePolicyType.CoverTheQueen)
+                ManageCoverTheQueen(currentPrice);
+            else if (TradePolicy == TradePolicyType.BaseHits)
+                ManageBaseHits(currentPrice);
+            else if (TradePolicy == TradePolicyType.SupertrendTrail)
+                ManageSupertrendTrail(currentPrice);
+            else if (TradePolicy == TradePolicyType.FixedTP1TP2)
+                ManageFixedTP1TP2(currentPrice);
+        }
+
+        private void ManageFixedTP1TP2(double currentPrice)
+        {
+            // Python parity: after TP1 (leg1) hits, move leg2 stop to breakeven.
+            // NT8 handles the profit target fills automatically via SetProfitTarget.
+            // We only need to move the runner (leg2) stop to BE after TP1 fills.
+            string runnerSignal = (!string.IsNullOrEmpty(entrySignalName) ? entrySignalName : GetSignalName(tradeDirection)) + "_Leg2";
+
+            if (!breakevenMoved)
+            {
+                // Check if leg1 has been filled (position reduced from 2 to 1)
+                if (Position.MarketPosition != MarketPosition.Flat && Position.Quantity == 1)
+                {
+                    breakevenMoved = true;
+                    currentStopPrice = tradeDirection == "Long" ? entryPrice : entryPrice;
+                    SetStopLoss(runnerSignal, CalculationMode.Price, currentStopPrice, false);
+                }
+            }
+        }
+
+        private void ManageCoverTheQueen(double currentPrice)
+        {
+            string runnerSignal = (!string.IsNullOrEmpty(entrySignalName) ? entrySignalName : GetSignalName(tradeDirection)) + "_Runner";
+            double queenPts = entryPrice * 0.0010;
+
+            // Once price reaches Queen TP1 or Leg 1 has filled, move Runner stop to Breakeven (+1 tick)
+            if (!breakevenMoved)
+            {
+                bool queenFilled = (Position.MarketPosition != MarketPosition.Flat && Position.Quantity == 1);
+                bool queenHit = tradeDirection == "Long"
+                    ? (currentPrice >= entryPrice + queenPts || Highs[0][0] >= entryPrice + queenPts)
+                    : (currentPrice <= entryPrice - queenPts || Lows[0][0] <= entryPrice - queenPts);
+
+                if (queenFilled || queenHit)
+                {
+                    breakevenMoved = true;
+                    currentStopPrice = tradeDirection == "Long" ? entryPrice + TickSize : entryPrice - TickSize;
+                    SetStopLoss(runnerSignal, CalculationMode.Price, currentStopPrice, false);
+                    Print(string.Format("[{0}] CoverTheQueen TP1 Hit! Runner stop moved to BE @ {1:F2}", GetStrategyName(), currentStopPrice));
+                }
+            }
+
+            // Trail Runner stop once Breakeven is secured
+            if (breakevenMoved)
+            {
+                double atr = GetCurrentATR();
+                if (atr <= 0) return;
+                double trailDistance = TrailAtrMult * atr;
+
+                if (tradeDirection == "Long")
+                {
+                    double newStop = currentPrice - trailDistance;
+                    if (newStop > currentStopPrice)
+                    {
+                        currentStopPrice = newStop;
+                        SetStopLoss(runnerSignal, CalculationMode.Price, currentStopPrice, false);
+                    }
+                }
+                else
+                {
+                    double newStop = currentPrice + trailDistance;
+                    if (newStop < currentStopPrice)
+                    {
+                        currentStopPrice = newStop;
+                        SetStopLoss(runnerSignal, CalculationMode.Price, currentStopPrice, false);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Supertrend-style trailing stop: starts at entry -/+ trail_mult*ATR and only ratchets
+        /// toward price. NEVER jumps to breakeven (unlike BreakevenTrail with trigger R=0).
+        /// Mirrors Python supertrend_intraday_cost.py: stop = max(stop, high - trail_mult*ATR).
+        /// </summary>
+        private void ManageSupertrendTrail(double currentPrice)
+        {
+            string signalName = GetSignalName(tradeDirection);
+            double atr = GetCurrentATR();
+            if (atr <= 0) return;
+            double trailDistance = TrailAtrMult * atr;
+
+            // Python parity: skip ratchet on the entry bar.
+            // Python's sim loop starts managing from the NEXT bar after entry,
+            // so the entry bar's High/Low does NOT ratchet the stop.
+            // Without this, a tight 1.0xATR trail gets hit immediately on the
+            // entry bar's own range (entry bar High - 1.0*ATR ≈ entry price).
+            if (trailFirstBar)
+            {
+                trailFirstBar = false;
+                return;
+            }
+
+            // Ratchet on the BAR HIGH/LOW (Python parity: stop = max(stop, high - trail*ATR)),
+            // not on close — a 5m bar that spikes through the stop must still fill it.
+            if (tradeDirection == "Long")
+            {
+                double newStop = High[0] - trailDistance;
+                if (newStop > currentStopPrice)
+                {
+                    currentStopPrice = newStop;
+                    SetStopLoss(signalName, CalculationMode.Price, currentStopPrice, false);
+                }
+            }
+            else
+            {
+                double newStop = Low[0] + trailDistance;
+                if (newStop < currentStopPrice)
+                {
+                    currentStopPrice = newStop;
+                    SetStopLoss(signalName, CalculationMode.Price, currentStopPrice, false);
+                }
+            }
+        }
+
+        private void ManageBaseHits(double currentPrice)
+        {
+            string signalName = GetSignalName(tradeDirection);
+            var targets = GetBaseHitsTargets();
+
+            if (!breakevenMoved)
+            {
+                bool triggerBE = tradeDirection == "Long"
+                    ? (currentPrice >= entryPrice + (targets.tp1Pts * 0.8))
+                    : (currentPrice <= entryPrice - (targets.tp1Pts * 0.8));
+
+                if (triggerBE)
+                {
+                    breakevenMoved = true;
+                    currentStopPrice = entryPrice;
+                    SetStopLoss(signalName, CalculationMode.Price, currentStopPrice, false);
+                    Print(string.Format("[{0}] BaseHits Breakeven moved @ {1:F2}", GetStrategyName(), entryPrice));
+                }
+            }
         }
 
         private void ManageBreakevenTrail(double currentPrice)
@@ -633,11 +1102,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// </summary>
         protected virtual double GetCurrentATR()
         {
-            if (!AddSecondaryTimeframe || atrIndicator == null)
-                return 0;
-            if (CurrentBars[1] < AtrPeriod)
-                return 0;
-            return atrIndicator[0];
+            if (AddSecondaryTimeframe && atrIndicator != null && CurrentBars.Length > 1 && CurrentBars[1] >= AtrPeriod)
+                return atrIndicator[0];
+            if (CurrentBars[0] >= 1)
+                return Math.Max(TickSize * 4, High[0] - Low[0]);
+            return 15.0;
         }
 
         /// <summary>
@@ -739,6 +1208,30 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
             if (!AddSecondaryTimeframe) throw new InvalidOperationException("Low5m requires AddSecondaryTimeframe=true");
             return Lows[1][barsAgo];
+        }
+
+        protected virtual double GetCustomStopPrice(int signal, double entryPrice)
+        {
+            return double.NaN;
+        }
+
+        protected virtual double GetCustomLimitPrice(int signal, double currentPrice)
+        {
+            return double.NaN;
+        }
+
+        protected virtual double GetCustomProfitTarget(int signal, double entryPrice, double stopDist)
+        {
+            return double.NaN;
+        }
+
+        /// <summary>
+        /// Second target (runner) for FixedTP1TP2 policy.
+        /// BBMRReversionBot returns the opposite BB band here.
+        /// </summary>
+        protected virtual double GetCustomTP2(int signal, double entryPrice)
+        {
+            return double.NaN;
         }
 
         private string GetSignalName(string direction)
