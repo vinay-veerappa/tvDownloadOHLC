@@ -30,7 +30,7 @@ if _current_dir.name == "scripts":
         sys.path.insert(0, _root_dir)
 
 from scripts.trading_framework.core.base import BaseBacktester
-from src.execution.nt8_parity_engine import NT8ParityEngine, NT8Trade
+from scripts.execution.nt8_parity_engine import NT8ParityEngine, NT8Trade
 
 
 class NT8ParityBacktester(BaseBacktester):
