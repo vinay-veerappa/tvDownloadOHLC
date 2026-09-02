@@ -109,19 +109,34 @@ class NT8ParityBacktester(BaseBacktester):
         queen_bps = risk_params.get("queen_bps", 10.0)
         runner_bps = risk_params.get("runner_bps", 30.0)
 
-        df_trades = engine.simulate(
-            df=data,
-            signals=sig_series,
-            limit_prices=lmt_series,
-            stop_losses=sl_series,
-            queen_bps=queen_bps,
-            runner_bps=runner_bps,
-            order_timeout_bars=risk_params.get("order_timeout_bars", 6),
-            earliest_entry_hhmm=risk_params.get("earliest_entry_hhmm", 945),
-            latest_entry_hhmm=risk_params.get("latest_entry_hhmm", 1530),
-            flatten_hhmm=risk_params.get("flatten_hhmm", 1555),
-            filter_lunch=risk_params.get("filter_lunch", True),
-        )
+        df_1m = risk_params.get("data_1m", None)
+        if df_1m is not None:
+            df_trades = engine.simulate_mtf(
+                df_5m=data,
+                df_1m=df_1m,
+                signals_5m=sig_series,
+                queen_bps=queen_bps,
+                runner_bps=runner_bps,
+                stop_loss_bps=risk_params.get("stop_loss_bps", 2.5),
+                earliest_entry_hhmm=risk_params.get("earliest_entry_hhmm", 945),
+                latest_entry_hhmm=risk_params.get("latest_entry_hhmm", 1530),
+                flatten_hhmm=risk_params.get("flatten_hhmm", 1555),
+                filter_lunch=risk_params.get("filter_lunch", True),
+            )
+        else:
+            df_trades = engine.simulate(
+                df=data,
+                signals=sig_series,
+                limit_prices=lmt_series,
+                stop_losses=sl_series,
+                queen_bps=queen_bps,
+                runner_bps=runner_bps,
+                order_timeout_bars=risk_params.get("order_timeout_bars", 6),
+                earliest_entry_hhmm=risk_params.get("earliest_entry_hhmm", 945),
+                latest_entry_hhmm=risk_params.get("latest_entry_hhmm", 1530),
+                flatten_hhmm=risk_params.get("flatten_hhmm", 1555),
+                filter_lunch=risk_params.get("filter_lunch", True),
+            )
 
         if df_trades.empty:
             return {

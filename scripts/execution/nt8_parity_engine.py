@@ -288,3 +288,189 @@ class NT8ParityEngine:
                 pending_order = {"dir": sig_arr[i], "limit": lmt, "sl": sl, "bar": i}
 
         return pd.DataFrame([t.__dict__ for t in trades])
+
+    def simulate_mtf(
+        self,
+        df_5m: pd.DataFrame,
+        df_1m: pd.DataFrame,
+        signals_5m: pd.Series,
+        queen_bps: float = 10.0,
+        runner_bps: float = 30.0,
+        stop_loss_bps: float = 2.5,
+        earliest_entry_hhmm: int = 945,
+        latest_entry_hhmm: int = 1530,
+        flatten_hhmm: int = 1555,
+        filter_lunch: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Multi-Timeframe Simulation: 5m Structure/CISD + 1m FVG Precision Entry.
+        """
+        times_1m = df_1m.index
+        opens_1m = df_1m["open"].to_numpy(dtype=np.float64)
+        highs_1m = df_1m["high"].to_numpy(dtype=np.float64)
+        lows_1m = df_1m["low"].to_numpy(dtype=np.float64)
+        closes_1m = df_1m["close"].to_numpy(dtype=np.float64)
+        n_1m = len(df_1m)
+
+        time_strs_1m = times_1m.strftime("%H%M")
+        sig_map = signals_5m[signals_5m != 0].to_dict()
+
+        trades: List[NT8Trade] = []
+        in_pos = False
+        pos_dir = 0
+        pos_entry_price = 0.0
+        pos_entry_time = None
+        active_sl = 0.0
+        active_tp1 = 0.0
+        active_tp2 = 0.0
+        queen_filled = False
+
+        # State
+        cur_day = None
+        daily_trades = 0
+        consecutive_losers = 0
+        pause_until_time = None
+        daily_pnl = 0.0
+        armed_dir = 0
+        armed_time = None
+
+        for i in range(2, n_1m):
+            t = times_1m[i]
+            hhmm = time_strs_1m[i]
+            bar_date = t.date()
+            h0, l0, c0, o0 = highs_1m[i], lows_1m[i], closes_1m[i], opens_1m[i]
+            h2, l2 = highs_1m[i - 2], lows_1m[i - 2]
+
+            if bar_date != cur_day:
+                cur_day = bar_date
+                daily_trades = 0
+                consecutive_losers = 0
+                pause_until_time = None
+                daily_pnl = 0.0
+                armed_dir = 0
+                armed_time = None
+
+            # 1. Manage open position
+            if in_pos:
+                closed = False
+                pnl_pts = 0.0
+                reason = ""
+                r_hit = False
+
+                if pos_dir == 1:
+                    if not queen_filled and h0 >= active_tp1:
+                        queen_filled = True
+                        active_sl = pos_entry_price
+
+                    if int(hhmm) >= flatten_hhmm:
+                        q_pts = (active_tp1 - pos_entry_price) if queen_filled else (c0 - pos_entry_price)
+                        r_pts = (c0 - pos_entry_price)
+                        pnl_pts = (q_pts + r_pts) / 2.0
+                        reason = "EOD Flat"
+                        closed = True
+                    elif l0 <= active_sl:
+                        q_pts = (active_tp1 - pos_entry_price) if queen_filled else (active_sl - pos_entry_price)
+                        r_pts = (active_sl - pos_entry_price)
+                        pnl_pts = (q_pts + r_pts) / 2.0
+                        reason = "Stop Loss"
+                        closed = True
+                    elif h0 >= active_tp2:
+                        q_pts = (active_tp1 - pos_entry_price)
+                        r_pts = (active_tp2 - pos_entry_price)
+                        pnl_pts = (q_pts + r_pts) / 2.0
+                        reason = "Profit Target"
+                        r_hit = True
+                        closed = True
+
+                elif pos_dir == -1:
+                    if not queen_filled and l0 <= active_tp1:
+                        queen_filled = True
+                        active_sl = pos_entry_price
+
+                    if int(hhmm) >= flatten_hhmm:
+                        q_pts = (pos_entry_price - active_tp1) if queen_filled else (pos_entry_price - c0)
+                        r_pts = (pos_entry_price - c0)
+                        pnl_pts = (q_pts + r_pts) / 2.0
+                        reason = "EOD Flat"
+                        closed = True
+                    elif h0 >= active_sl:
+                        q_pts = (pos_entry_price - active_tp1) if queen_filled else (pos_entry_price - active_sl)
+                        r_pts = (pos_entry_price - active_sl)
+                        pnl_pts = (q_pts + r_pts) / 2.0
+                        reason = "Stop Loss"
+                        closed = True
+                    elif l0 <= active_tp2:
+                        q_pts = (pos_entry_price - active_tp1)
+                        r_pts = (pos_entry_price - active_tp2)
+                        pnl_pts = (q_pts + r_pts) / 2.0
+                        reason = "Profit Target"
+                        r_hit = True
+                        closed = True
+
+                if closed:
+                    in_pos = False
+                    gross_usd = pnl_pts * self.point_value * self.contracts
+                    comm_usd = self.commission_per_contract_rt * self.contracts
+                    slip_usd = (self.slippage_ticks * self.tick_size * self.point_value) * self.contracts
+                    net_usd = gross_usd - comm_usd - slip_usd
+
+                    trades.append(NT8Trade(
+                        entry_time=pos_entry_time, exit_time=t, direction="Long" if pos_dir == 1 else "Short",
+                        entry_price=pos_entry_price, exit_price=active_tp2 if r_hit else (active_sl if "Stop" in reason else c0),
+                        leg1_points=q_pts, leg2_points=r_pts, total_points=pnl_pts,
+                        total_pnl_usd=net_usd, exit_reason=reason, queen_hit=queen_filled, runner_hit=r_hit,
+                    ))
+
+                    daily_pnl += net_usd
+                    if net_usd < 0:
+                        consecutive_losers += 1
+                        if consecutive_losers >= self.max_consecutive_losers:
+                            pause_until_time = t + pd.Timedelta(minutes=self.pause_minutes)
+                    else:
+                        consecutive_losers = 0
+
+            # 2. Check 5m CISD signals at 5m bar closures
+            if t in sig_map:
+                armed_dir = sig_map[t]
+                armed_time = t
+
+            # 3. Check 1m FVG Entry Trigger when armed
+            if not in_pos and armed_dir != 0:
+                is_paused = (pause_until_time is not None and t < pause_until_time)
+                hit_hard_stop = (consecutive_losers >= self.hard_stop_losers)
+                hit_daily_max = (daily_pnl <= -self.daily_max_loss)
+                hm = int(hhmm)
+                in_time = (earliest_entry_hhmm <= hm <= latest_entry_hhmm)
+                if filter_lunch and (1200 <= hm <= 1330):
+                    in_time = False
+
+                bars_armed = (t - armed_time).total_seconds() / 60.0 if armed_time else 999.0
+                if bars_armed <= 15.0 and in_time and daily_trades < self.max_trades_per_day and not is_paused and not hit_hard_stop and not hit_daily_max:
+                    if armed_dir == 1 and l0 > h2:  # 1m Bullish FVG
+                        entry_p = self.round_tick(h2)
+                        active_sl = self.round_tick(entry_p - (entry_p * (stop_loss_bps / 10000.0)))
+                        active_tp1 = self.round_tick(entry_p + (entry_p * (queen_bps / 10000.0)))
+                        active_tp2 = self.round_tick(entry_p + (entry_p * (runner_bps / 10000.0)))
+                        pos_entry_price = entry_p
+                        pos_entry_time = t
+                        pos_dir = 1
+                        in_pos = True
+                        queen_filled = False
+                        daily_trades += 1
+                        armed_dir = 0
+                    elif armed_dir == -1 and h0 < l2:  # 1m Bearish FVG
+                        entry_p = self.round_tick(l2)
+                        active_sl = self.round_tick(entry_p + (entry_p * (stop_loss_bps / 10000.0)))
+                        active_tp1 = self.round_tick(entry_p - (entry_p * (queen_bps / 10000.0)))
+                        active_tp2 = self.round_tick(entry_p - (entry_p * (runner_bps / 10000.0)))
+                        pos_entry_price = entry_p
+                        pos_entry_time = t
+                        pos_dir = -1
+                        in_pos = True
+                        queen_filled = False
+                        daily_trades += 1
+                        armed_dir = 0
+                elif bars_armed > 15.0:
+                    armed_dir = 0
+
+        return pd.DataFrame([t.__dict__ for t in trades])
