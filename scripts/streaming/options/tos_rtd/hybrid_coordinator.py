@@ -174,6 +174,59 @@ class HybridCoordinator:
             log.debug("Failed to load RTD market cache: %s", exc)
             return None
 
+    def _load_prior_session_oi(self) -> dict[str, dict[str, int]]:
+        """Read OI from the on-disk cache regardless of session key.
+
+        The session-keyed cache is discarded on rollover, so a failed fresh
+        scan would otherwise lose the previous session's good OI. OI changes
+        slowly (once-a-day), so carrying the prior session's OI forward is far
+        better than fabricating rank-weighted values.
+        """
+        try:
+            if not self._market_cache_path.exists():
+                return {}
+            data = json.loads(self._market_cache_path.read_text())
+            oi = data.get("open_interest", {}) or {}
+            # Keep only symbols that actually have non-zero OI.
+            return {
+                sym: {s: v for s, v in m.items() if int(v) > 0}
+                for sym, m in oi.items()
+                if any(int(v) > 0 for v in m.values())
+            }
+        except Exception as exc:
+            log.debug("Failed to load prior-session OI: %s", exc)
+            return {}
+
+    def _append_oi_history(
+        self,
+        session_key: str,
+        open_interest: dict[str, dict[str, int]],
+        scan_quality: dict[str, Any],
+    ) -> None:
+        """Append the session's raw OI book to a history file.
+
+        One JSON line per session, keyed by session date, storing the full
+        per-contract OI map. This preserves the raw input so historical walls
+        can be recomputed if the methodology changes, and enables OI-delta /
+        flow analysis over time. OI is once-per-session and tiny (a few KB),
+        so the cost is negligible.
+        """
+        try:
+            hist_dir = self._market_cache_path.parent / "history" / "oi"
+            hist_dir.mkdir(parents=True, exist_ok=True)
+            path = hist_dir / "oi_book.jsonl"
+            record = {
+                "session_key": session_key,
+                "cached_at": time.time(),
+                "open_interest": open_interest,
+                "scan_quality": scan_quality,
+            }
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+            log.debug("OI history appended for session %s", session_key)
+        except Exception as exc:
+            log.debug("Failed to append OI history: %s", exc)
+
     def _save_market_cache(
         self,
         session_key: str,
@@ -201,6 +254,7 @@ class HybridCoordinator:
             }
             self._market_cache_path.write_text(json.dumps(payload))
             self._market_cache = payload
+            self._append_oi_history(session_key, open_interest, scan_quality)
             log.debug("RTD market cache saved for session %s", session_key)
         except Exception as exc:
             log.debug("Failed to save RTD market cache: %s", exc)
@@ -354,9 +408,17 @@ class HybridCoordinator:
             len(scan_symbols), waves, wave_size,
         )
         scan_started = time.time()
+        # Persistent mode: keep ONE COM connection alive across all waves and
+        # add topics incrementally via subscribe_more. This avoids the per-wave
+        # COM teardown/reconnect that made waves 2+ time out (2026-08-31).
+        persistent = len(scan_symbols) > wave_size
         for wave_idx in range(0, len(scan_symbols), wave_size):
             wave = scan_symbols[wave_idx:wave_idx + wave_size]
-            wave_oi = self._run_oi_scan(wave, timeout=RTD_OI_SCAN_WAVE_TIMEOUT)
+            wave_oi = self._run_oi_scan(
+                wave,
+                timeout=RTD_OI_SCAN_WAVE_TIMEOUT,
+                persistent=persistent,
+            )
             raw_oi_map.update(wave_oi)
             got = len(wave_oi)
             log.info(
@@ -368,30 +430,60 @@ class HybridCoordinator:
             if wave_idx + wave_size < len(scan_symbols):
                 time.sleep(1.0)  # settle between waves
 
+        if persistent:
+            # All waves done on the shared connection — release it.
+            self._adapter.stop()
+
         real_oi_count = len(raw_oi_map)
         log.info(
             "RTD OI scan complete: %d/%d contracts with real non-zero OI",
             real_oi_count, len(scan_symbols),
         )
         if real_oi_count == 0:
-            log.warning(
-                "RTD OI scan returned no data — falling back to Schwab hint "
-                "strikes with rank-weighted OI (degraded mode)"
-            )
-            # Degrade gracefully: keep candidate symbols so IV streaming can
-            # still start, but mark OI as unknown (0). The Top-N filter then
-            # behaves like the old ATM-band behaviour instead of fabricating
-            # numbers.
-            for sym in self._symbols:
-                for rtd_sym in candidate_symbols:
-                    if self._rtd_symbol_belongs_to(rtd_sym, sym):
-                        raw_oi_map.setdefault(rtd_sym, 0)
-            self._scan_quality = {
-                "total_symbols_scanned": len(scan_symbols),
-                "non_zero_count": real_oi_count,
-                "non_zero_pct": 0.0,
-                "degraded": True,
-            }
+            # Fresh scan failed. Prefer the prior session's real OI (OI is
+            # once-a-day; a day-old value is far better than fabricated
+            # rank-weighted numbers). Only fall back to zeroing if there is
+            # no prior OI to carry forward.
+            prior_oi = self._load_prior_session_oi()
+            carried = sum(len(m) for m in prior_oi.values())
+            if carried:
+                log.warning(
+                    "RTD OI scan returned no data — carrying forward %d prior-session "
+                    "OI symbols (degraded mode, source=carried_forward)",
+                    carried,
+                )
+                raw_oi_map = {}
+                for sym in self._symbols:
+                    for rtd_sym in candidate_symbols:
+                        if self._rtd_symbol_belongs_to(rtd_sym, sym):
+                            raw_oi_map[rtd_sym] = prior_oi.get(sym, {}).get(rtd_sym, 0)
+                self._scan_quality = {
+                    "total_symbols_scanned": len(scan_symbols),
+                    "non_zero_count": carried,
+                    "non_zero_pct": 0.0,
+                    "degraded": True,
+                    "source": "carried_forward",
+                }
+            else:
+                log.warning(
+                    "RTD OI scan returned no data and no prior OI to carry — "
+                    "falling back to Schwab hint strikes with rank-weighted OI "
+                    "(degraded mode)"
+                )
+                # Degrade gracefully: keep candidate symbols so IV streaming can
+                # still start, but mark OI as unknown (0). The Top-N filter then
+                # behaves like the old ATM-band behaviour instead of fabricating
+                # numbers.
+                for sym in self._symbols:
+                    for rtd_sym in candidate_symbols:
+                        if self._rtd_symbol_belongs_to(rtd_sym, sym):
+                            raw_oi_map.setdefault(rtd_sym, 0)
+                self._scan_quality = {
+                    "total_symbols_scanned": len(scan_symbols),
+                    "non_zero_count": real_oi_count,
+                    "non_zero_pct": 0.0,
+                    "degraded": True,
+                }
 
         # Per-symbol OI-weighted Top-N filtering with ATM force-inclusion.
         # Merge with existing cached OI for symbols that the fresh scan
@@ -962,6 +1054,7 @@ class HybridCoordinator:
         option_symbols: list[str],
         timeout: float = 30.0,
         completeness_pct: float = 0.80,
+        persistent: bool = False,
     ) -> dict[str, int]:
         """Subscribe to OPEN_INT for all symbols and return the OI map.
 
@@ -969,6 +1062,11 @@ class HybridCoordinator:
         Open interest changes slowly, so it is captured once and reused to
         free COM topic budget. Implied volatility is NOT captured here — it is
         subscribed live during streaming because IV changes intraday.
+
+        When ``persistent`` is True the worker is kept alive across calls: the
+        first call starts it, later calls add topics via ``subscribe_more`` on
+        the SAME COM connection (no per-wave teardown/reconnect). The caller
+        must stop the adapter when the whole scan is done.
         """
         from .quote_types import QuoteType
 
@@ -976,7 +1074,12 @@ class HybridCoordinator:
             return {}
 
         subscriptions = [(QuoteType.OPEN_INT, sym) for sym in option_symbols]
-        self._adapter.start_raw(subscriptions=subscriptions)
+
+        if persistent and self._adapter.is_running():
+            # Reuse the live connection — add this wave's topics incrementally.
+            self._adapter.subscribe_more(subscriptions)
+        else:
+            self._adapter.start_raw(subscriptions=subscriptions)
 
         target_count = int(len(option_symbols) * completeness_pct)
         start = time.time()
@@ -985,9 +1088,14 @@ class HybridCoordinator:
             while time.time() - start < timeout:
                 time.sleep(0.5)
                 snapshot = self._adapter.get_snapshot()
+                # Scope completeness to THIS wave's symbols only. In persistent
+                # mode the snapshot accumulates prior waves' OPEN_INT keys, so
+                # counting all of them would break instantly on wave 2+ and
+                # then collect nothing for the current wave (the 0-OI bug).
                 oi_keys = [
                     k for k in snapshot
                     if k.endswith(":OPEN_INT") and snapshot[k] is not None
+                    and any(k.startswith(s) for s in option_symbols)
                 ]
                 if len(oi_keys) >= target_count:
                     log.info(
@@ -1002,10 +1110,12 @@ class HybridCoordinator:
                     timeout, target_count, len(option_symbols),
                 )
         finally:
-            # Collect final values before stopping.
-            snapshot = self._adapter.get_snapshot()
-            self._adapter.stop()
+            if not persistent:
+                # Collect final values before stopping.
+                snapshot = self._adapter.get_snapshot()
+                self._adapter.stop()
 
+        snapshot = self._adapter.get_snapshot()
         oi_map: dict[str, int] = {}
         for sym in option_symbols:
             oi_val = snapshot.get(f"{sym}:OPEN_INT")

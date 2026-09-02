@@ -538,7 +538,7 @@ TOS_RTD_GEX_AS_PRIMARY: bool = os.environ.get("TOS_RTD_GEX_AS_PRIMARY", "1").low
 # OPEN_INT for up to RTD_OI_SCAN_WAVE_SIZE symbols and waits up to
 # RTD_OI_SCAN_WAVE_TIMEOUT seconds for responses before collecting.
 RTD_OI_SCAN_WAVE_SIZE: int = int(os.environ.get("RTD_OI_SCAN_WAVE_SIZE", "150"))
-RTD_OI_SCAN_WAVE_TIMEOUT: float = float(os.environ.get("RTD_OI_SCAN_WAVE_TIMEOUT", "20"))
+RTD_OI_SCAN_WAVE_TIMEOUT: float = float(os.environ.get("RTD_OI_SCAN_WAVE_TIMEOUT", "45"))
 
 # Futures LAST staleness guard: during RTH a LAST quote older than this
 # (seconds) is treated as frozen and rejected in favour of Schwab fallback.

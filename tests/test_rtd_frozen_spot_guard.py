@@ -13,6 +13,7 @@ Root causes fixed:
 import sys
 import threading
 import time
+import json
 from types import SimpleNamespace
 import unittest.mock as m
 
@@ -97,11 +98,98 @@ def test_watchdog_passes_when_agreeing():
     print("PASS: agreeing parquet ref does not hijack live RTD")
 
 
+def test_prior_session_oi_carried_forward():
+    """A failed fresh scan must not destroy the prior session's good OI."""
+    c = object.__new__(HybridCoordinator)
+    c._market_cache_path = m.MagicMock()
+    c._market_cache_path.exists.return_value = True
+    c._market_cache_path.read_text.return_value = json.dumps({
+        "session_key": "2026-08-30",
+        "open_interest": {
+            "/ES": {"./EWQ26C7800:XCME": 4203, "./EWQ26P7500:XCME": 0},
+            "/NQ": {"./QN1U26C29600:XCME": 106},
+        },
+    })
+    oi = c._load_prior_session_oi()
+    assert oi["/ES"]["./EWQ26C7800:XCME"] == 4203, "real OI must carry"
+    assert "./EWQ26P7500:XCME" not in oi["/ES"], "zero-OI must be dropped"
+    assert oi["/NQ"]["./QN1U26C29600:XCME"] == 106
+    print("PASS: prior-session OI carried forward, zeros dropped")
+
+
+def test_oi_history_append_and_read(tmp_path=None):
+    """The OI book is appended per session and readable back."""
+    import tempfile
+    from pathlib import Path
+    from scripts.streaming.options.tos_rtd.oi_history import (
+        load_oi_history, oi_delta,
+    )
+    tmp = Path(tempfile.mkdtemp())
+    hist = tmp / "history" / "oi" / "oi_book.jsonl"
+    hist.parent.mkdir(parents=True)
+
+    c = object.__new__(HybridCoordinator)
+    c._market_cache_path = tmp / ".rtd_market_cache.json"
+    c._append_oi_history("2026-09-01", {"/ES": {"./EWQ26C7800:XCME": 4203}}, {"degraded": False})
+    c._append_oi_history("2026-09-02", {"/ES": {"./EWQ26C7800:XCME": 4500}}, {"degraded": False})
+
+    rows = load_oi_history(path=hist)
+    assert len(rows) == 2, f"expected 2 records, got {len(rows)}"
+    assert rows[0]["session_key"] == "2026-09-01"
+    assert rows[1]["open_interest"]["/ES"]["./EWQ26C7800:XCME"] == 4500
+
+    deltas = oi_delta("/ES", path=hist)
+    assert deltas[1]["delta"]["./EWQ26C7800:XCME"] == 297, "OI delta must be +297"
+    print("PASS: OI history appended + readable + delta computed")
+
+
+def test_persistent_wave_completeness_scoped_to_wave():
+    """Persistent multi-wave scan must scope completeness to the CURRENT wave.
+
+    Regression for the 0-OI bug: in persistent mode the snapshot accumulates
+    prior waves' OPEN_INT keys, so counting all of them made wave 2+ break
+    instantly and then collect nothing for the current wave.
+    """
+    import scripts.streaming.options.tos_rtd.hybrid_coordinator as hc_mod
+    from scripts.streaming.options.tos_rtd.quote_types import QuoteType
+
+    # Wave 1 symbols already delivered (in snapshot); wave 2 not yet.
+    wave1 = [f"./EW1U26C76{i:02d}:XCME" for i in range(0, 6)]
+    wave2 = [f"./EW1U26C77{i:02d}:XCME" for i in range(0, 6)]
+
+    c = object.__new__(HybridCoordinator)
+    c._adapter = SimpleNamespace(
+        is_running=lambda: True,
+        subscribe_more=lambda subs: None,
+        get_snapshot=lambda: {f"{s}:OPEN_INT": 100 for s in wave1},
+        stop=lambda: None,
+    )
+
+    # Patch the poll loop to a single iteration so we can inspect the
+    # completeness decision without a real 20s wait.
+    import scripts.streaming.options.tos_rtd.hybrid_coordinator as hc
+    orig = hc.time.sleep
+    hc.time.sleep = lambda *a, **k: None
+    try:
+        # Wave 2 has 6 symbols, target 80% = 4. Snapshot has only wave1 keys.
+        # With the fix, completeness must NOT be reached (0 wave2 keys < 4),
+        # so the loop runs to timeout and returns {} for wave2.
+        result = c._run_oi_scan(wave2, timeout=0.1, completeness_pct=0.8, persistent=True)
+    finally:
+        hc.time.sleep = orig
+
+    assert result == {}, f"wave2 must return empty (no wave2 OI delivered), got {result}"
+    print("PASS: persistent wave completeness scoped to current wave (no false-complete)")
+
+
 def main():
     test_frozen_last_refused()
     test_fresh_last_accepted()
     test_watchdog_catches_frozen_rtd_without_schwab()
     test_watchdog_passes_when_agreeing()
+    test_prior_session_oi_carried_forward()
+    test_oi_history_append_and_read()
+    test_persistent_wave_completeness_scoped_to_wave()
     print("ALL PASS")
 
 

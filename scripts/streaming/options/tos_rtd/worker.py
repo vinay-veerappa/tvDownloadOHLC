@@ -28,13 +28,16 @@ log = logging.getLogger(__name__)
 MAX_INIT_RETRIES = SETTINGS.max_init_retries
 INIT_RETRY_DELAYS = SETTINGS.init_retry_delays
 
-def run_rtd_worker_process(data_queue, stop_event, subscriptions):
+def run_rtd_worker_process(data_queue, stop_event, subscriptions, command_queue=None):
     """Entry point for the multiprocessing worker.
 
     Args:
         data_queue: multiprocessing.Queue for outgoing RTD updates.
         stop_event: multiprocessing.Event that signals shutdown.
         subscriptions: list of (QuoteType, symbol) tuples to subscribe to.
+        command_queue: optional multiprocessing.Queue for incremental
+            subscribe/unsubscribe commands so a single COM connection can be
+            reused across many topic batches (avoids per-batch COM churn).
     """
     import signal
     import sys
@@ -66,7 +69,7 @@ def run_rtd_worker_process(data_queue, stop_event, subscriptions):
 
     worker = RTDWorker(data_queue, stop_event)
     worker.logger = logger
-    worker.start(subscriptions)
+    worker.start(subscriptions, command_queue=command_queue)
 
 class RTDWorker:
     """Background worker that manages COM lifecycle and data polling."""
@@ -117,13 +120,17 @@ class RTDWorker:
                 else:
                     raise
 
-    def start(self, subscriptions: list[tuple[QuoteType, str]]) -> None:
+    def start(self, subscriptions: list[tuple[QuoteType, str]], command_queue=None) -> None:
         """Start RTD worker — subscribes to the provided quote tuples and polls for updates.
 
         The caller is responsible for assembling the exact (QuoteType, symbol)
         subscriptions. This lets the coordinator differentiate live streaming
         subscriptions (front-expiry IV/LAST) from cached/static back-expiry
         contracts, dramatically reducing COM topic usage.
+
+        If ``command_queue`` is provided, the worker keeps running and accepts
+        {"cmd": "subscribe"|"unsubscribe", "subscriptions": [...]} messages so
+        a single COM connection can be reused across many topic batches.
         """
         try:
             if self.initialized:
@@ -195,6 +202,16 @@ class RTDWorker:
             while not self.stop_event.is_set():
                 pythoncom.PumpWaitingMessages()
 
+                # Process incremental subscribe/unsubscribe commands (reuses
+                # the same COM connection — no per-batch teardown).
+                if command_queue is not None:
+                    try:
+                        while True:
+                            cmd = command_queue.get_nowait()
+                            self._handle_command(cmd)
+                    except Exception:
+                        pass  # queue.Empty or transient
+
                 try:
                     updates = self.client.get_pending_updates()
                     if updates:
@@ -244,6 +261,22 @@ class RTDWorker:
         finally:
             self.cleanup()
             self.logger.info("RTDWorker cleanup complete")
+
+    def _handle_command(self, cmd) -> None:
+        """Handle an incremental subscribe/unsubscribe command on a live worker."""
+        if not isinstance(cmd, dict):
+            return
+        op = cmd.get("cmd")
+        subs = cmd.get("subscriptions") or []
+        if not subs:
+            return
+        try:
+            if op == "subscribe":
+                self.client.batch_subscribe(subs)
+            elif op == "unsubscribe":
+                self.client.batch_unsubscribe(subs)
+        except Exception as e:
+            self.logger.error("Command %s failed: %s", op, e)
 
     def cleanup(self) -> None:
         """Disconnect RTD client and uninitialize COM."""

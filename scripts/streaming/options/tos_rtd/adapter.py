@@ -95,6 +95,7 @@ class TOSRTDAdapter:
         self.config = config or RTDConfig()
         self._data_queue = mp.Queue()
         self._stop_event = mp.Event()
+        self._command_queue = mp.Queue()
         self._process: Optional[mp.Process] = None
         self._latest_data: dict[str, Any] = {}
         self._latest_lock = threading.Lock()
@@ -215,7 +216,7 @@ class TOSRTDAdapter:
 
         self._process = mp.Process(
             target=run_rtd_worker_process,
-            args=(self._data_queue, self._stop_event, subscriptions),
+            args=(self._data_queue, self._stop_event, subscriptions, self._command_queue),
             daemon=True,
             name="TOSRTDWorker",
         )
@@ -256,6 +257,18 @@ class TOSRTDAdapter:
             else:
                 subscriptions.append((QuoteType.LAST, symbol))
         return subscriptions
+
+    def subscribe_more(self, subscriptions: list[tuple[QuoteType, str]]) -> None:
+        """Incrementally subscribe more topics on the running worker.
+
+        Reuses the existing COM connection (no teardown/reconnect), so a
+        multi-wave OI scan can add topics without paying per-wave COM churn.
+        """
+        if not self._running or self._process is None or not self._process.is_alive():
+            log.warning("subscribe_more: worker not running — ignoring")
+            return
+        self._command_queue.put({"cmd": "subscribe", "subscriptions": subscriptions})
+        self._live_subscription_count += len(subscriptions)
 
     def stop(self) -> None:
         """Stop RTD streaming and clean up."""
