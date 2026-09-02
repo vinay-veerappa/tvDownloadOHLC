@@ -193,12 +193,13 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
             else if (State == State.Configure)
             {
+                ConfigureStrategy();
+
                 // Only add the 5-min secondary when the strategy actually uses it.
                 // Range-based strategies set AddSecondaryTimeframe=false and override
                 // GetCurrentATR() to return their range-based risk metric.
                 if (AddSecondaryTimeframe)
                     AddDataSeries(BarsPeriodType.Minute, 5);
-                ConfigureStrategy();
             }
             else if (State == State.DataLoaded)
             {

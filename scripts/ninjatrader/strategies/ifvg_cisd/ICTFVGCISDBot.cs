@@ -103,19 +103,19 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             Variant = 2;
             EntryMode = 1;                 // 1 = FVG Limit Touch
-            UseMtfExecution = false;       // Default false for single-TF backtest compatibility; true adds 5m series
+            UseMtfExecution = true;        // Multi-Timeframe: 5m Structure + 1m Precision Entry
             UseStage2Distribution = false;
             UseHtfFilter = true;           // Pro-Trend 4H Orderflow
             FilterLunch = true;            // Blackout 12:00-13:30
             RequireExternalSweep = false;  // Modular toggle
             QueenTargetBps = 10.0;         // +10 Basis Points (0.10%)
             RunnerTargetBps = 30.0;        // +30 Basis Points (0.30%)
-            StopLossBps = 5.0;             // 5.0 Basis Points (2.5 bps when MTF active)
+            StopLossBps = 2.5;             // 2.5 Basis Points institutional micro-stop
             MinRiskBps = 2.0;              // 2 Basis Points risk floor
             MaxRiskBps = 15.0;             // 15 Basis Points risk ceiling
             EnableMidlineReclaims = true;
 
-            AddSecondaryTimeframe = false;
+            AddSecondaryTimeframe = true;
             DebugMode = true;
         }
 
