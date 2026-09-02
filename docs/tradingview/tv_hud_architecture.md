@@ -87,3 +87,50 @@ scripts/tradingview/
 * **Open Unrealized Floating P&L**: Live instantaneous profit/loss ticks.
 * **Realized Today**: Daily closed P&L across all accounts.
 * **Fleet Exposure**: Aggregate active contracts (e.g. `+2 NQ, -1 ES`).
+
+---
+
+## Order Ticket (RiskGuard-Integrated) — shipped 2026-09-01
+
+Lives in the top bar of the P&L widget / HUD (shared module `account_pnl.js`).
+Order submission works in the **standalone widget only** — TV's page sandbox blocks
+fetch to `localhost:8635`, so the in-chart HUD shows the ticket bar with
+non-functional B/S buttons (by design, see TV_INJECTION_API.md §10.2).
+
+### Config-driven guard enforcement at entry
+The RiskGuard config file (`Documents\NinjaTrader 8\RiskGuard\config.json`) is the
+single source of truth, polled every 30s via `GET /api/guard/config`:
+* **Symbol dropdown** is generated from `AllowedInstruments` — blocked full-size
+  roots (ES/NQ/YM/RTY/CL/GC when configured so) never appear, so they cannot even
+  be selected rather than being rejected after submission.
+* **Qty cap** = `min(InstrumentLimits[root], Sizing.MaxContractsPerAccount)`;
+  the input clamps and shows `max N`.
+* **GUARD chip** shows the enforcement mode (`SHADOW` orange / `LIVE` green).
+
+### Bracket entry
+* Per-account **B / S** buttons fire `POST /api/order/atm` (proxied to the NT8
+  bridge, idempotency key per click, busy state survives the 200ms re-render).
+* ATM strategy selectable (AUTO + FixedTicks, AtrAdaptive, SwingPoint,
+  DrawdownShield, ScaledRunner, VolatilityScaled, SessionAdaptive, KellyOptimal);
+  SL/TP in ticks (default 40/80). Response bracket (`bracketId`, stop/target) is
+  shown in the status line.
+* **Lockout sweep**: `/api/lockouts` polls RiskGuard every 2.5s (30-account cap,
+  10s cache). Locked rows get a `🔒LOCKED` badge and disabled B/S buttons.
+
+### Rendering (stable-row pipeline, fixed 2026-09-02)
+The table rows are **created once per account and reused**; the 200ms tick
+updates cell values in place. Click events are **delegated at the tbody level**
+(one listener, survives re-renders). Never rebuild DOM nodes a user can press —
+an earlier full-`innerHTML`-every-200ms rebuild silently ate clicks (mousedown
+and mouseup landing on different element generations) and strobed the busy
+animation. Full rationale: TV_INJECTION_API.md §10.3.
+
+### Panic flatten
+* Single click (no confirm) → `POST /api/emergency-flatten` for all accounts.
+* **⚠️ Side effect to know**: every flatten writes a 60-minute bridge-local lockout
+  (`_lockoutExpiry`) for every account it touched. After a panic, the whole fleet
+  reads `🔒LOCKED` in the widget while the RiskGuard window shows clean — the two
+  readers differ (window = enforcer only; API = enforcer + bridge-local + state.json
+  restore). Clear a false lockout with
+  `POST /api/lockout {action:'unlock', account:X}` per account. Full semantics:
+  TV_INJECTION_API.md §10.2.

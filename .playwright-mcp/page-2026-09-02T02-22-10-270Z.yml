@@ -1,0 +1,168 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e6]: FinancialJuice HUD
+      - generic [ref=e7]: SQUAWK
+    - generic [ref=e8]:
+      - button "🔊 Squawk" [ref=e9] [cursor=pointer]
+      - button "🌓" [ref=e10] [cursor=pointer]
+      - button "🗕" [ref=e11] [cursor=pointer]
+      - button "✕" [ref=e12] [cursor=pointer]
+  - generic [ref=e13]:
+    - generic [ref=e14]:
+      - button "📰 Headlines" [ref=e15] [cursor=pointer]
+      - button "📅 Econ Calendar" [ref=e16] [cursor=pointer]
+      - button "⚡ TickStrike" [ref=e17] [cursor=pointer]
+    - iframe [ref=e19]:
+      - generic [ref=f1e3] [cursor=pointer]:
+        - generic [ref=f1e4]: LAUNCH
+        - generic [ref=f1e10]:
+          - generic [ref=f1e11]: DELAYED
+          - generic [ref=f1e12]: VOICE NEWS
+          - text: 
+    - iframe [ref=e21]:
+      - generic [ref=f2e1]:
+        - generic [ref=f2e2]:
+          - generic:
+            - generic [ref=f2e6]:
+              - paragraph [ref=f2e8]: "Rbnz minutes: all members agreed downside risks to activity were substantial and recovery may stay uneven"
+              - paragraph [ref=f2e10]: 19:04 Sep 01
+              - list [ref=f2e12]:
+                - listitem [ref=f2e13]:
+                  - link "" [ref=f2e14] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e19]:
+              - paragraph [ref=f2e21]: "RBNZ minutes: Paul Conway and Carl Hansen viewed inflation risks as balanced"
+              - paragraph [ref=f2e23]: 19:04 Sep 01
+              - list [ref=f2e25]:
+                - listitem [ref=f2e26]:
+                  - link "" [ref=f2e27] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e32]:
+              - paragraph [ref=f2e34]: "RBNZ minutes: Hayley Gourley, Karen Silk, Prasanna Gai and Anna Breman note upside risks to inflation versus central projection"
+              - paragraph [ref=f2e36]: 19:04 Sep 01
+              - list [ref=f2e38]:
+                - listitem [ref=f2e39]:
+                  - link "" [ref=f2e40] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e45]:
+              - paragraph [ref=f2e47]: "RBNZ minutes: committee concludes spare capacity persists in economy, especially labor market"
+              - paragraph [ref=f2e49]: 19:03 Sep 01
+              - list [ref=f2e51]:
+                - listitem [ref=f2e52]:
+                  - link "" [ref=f2e53] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e58]:
+              - paragraph [ref=f2e60]: "RBNZ minutes: on central economic outlook, members see OCR possibly needing further increase"
+              - paragraph [ref=f2e62]: 19:03 Sep 01
+              - list [ref=f2e64]:
+                - listitem [ref=f2e65]:
+                  - link "" [ref=f2e66] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e71]:
+              - paragraph [ref=f2e73]: "RBNZ minutes: all members concur that central projection for OCR is suitable"
+              - paragraph [ref=f2e75]: 19:03 Sep 01
+              - list [ref=f2e77]:
+                - listitem [ref=f2e78]:
+                  - link "" [ref=f2e79] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e84]:
+              - paragraph [ref=f2e86]: "RBNZ minutes: signs of medium-term inflation align with return to target"
+              - paragraph [ref=f2e88]: 19:03 Sep 01
+              - list [ref=f2e90]:
+                - listitem [ref=f2e91]:
+                  - link "" [ref=f2e92] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e97]:
+              - paragraph [ref=f2e99]: "RBNZ minutes: future OCR trajectory is not fixed"
+              - paragraph [ref=f2e101]: 19:03 Sep 01
+              - list [ref=f2e103]:
+                - listitem [ref=f2e104]:
+                  - link "" [ref=f2e105] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e110]:
+              - paragraph [ref=f2e112]: "RBNZ minutes: committee judged raising OCR to 2.75% appropriate to sustainably return inflation to 2% target midpoint"
+              - paragraph [ref=f2e114]: 19:02 Sep 01
+              - list [ref=f2e116]:
+                - listitem [ref=f2e117]:
+                  - link "" [ref=f2e118] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e123]:
+              - paragraph [ref=f2e125]: "RBNZ minutes: labour market conditions expected to improve as recovery accelerates"
+              - paragraph [ref=f2e127]: 19:02 Sep 01
+              - list [ref=f2e129]:
+                - listitem [ref=f2e130]:
+                  - link "" [ref=f2e131] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e136]:
+              - paragraph [ref=f2e138]: "RBNZ minutes: recovery likely to strengthen and broaden"
+              - paragraph [ref=f2e140]: 19:02 Sep 01
+              - list [ref=f2e142]:
+                - listitem [ref=f2e143]:
+                  - link "" [ref=f2e144] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e149]:
+              - paragraph [ref=f2e151]: "RBNZ minutes: future policy to hinge on committee’s assessment of medium-term inflation risks"
+              - paragraph [ref=f2e153]: 19:02 Sep 01
+              - list [ref=f2e155]:
+                - listitem [ref=f2e156]:
+                  - link "" [ref=f2e157] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e162]:
+              - paragraph [ref=f2e164]: "RBNZ minutes: After weak growth in June quarter, New Zealand's economic recovery likely resumed but remains uneven"
+              - paragraph [ref=f2e166]: 19:02 Sep 01
+              - list [ref=f2e168]:
+                - listitem [ref=f2e169]:
+                  - link "" [ref=f2e170] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e175]:
+              - paragraph [ref=f2e177]: "RBNZ minutes: committee agrees to raise OCR by 25 basis points to 2.75%"
+              - paragraph [ref=f2e179]: 19:02 Sep 01
+              - list [ref=f2e181]:
+                - listitem [ref=f2e182]:
+                  - link "" [ref=f2e183] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e188]:
+              - paragraph [ref=f2e190]: "RBNZ minutes: Monetary policy committee agrees to raise OCR by 25 basis points to 2.75%"
+              - paragraph [ref=f2e192]: 19:02 Sep 01
+              - list [ref=f2e194]:
+                - listitem [ref=f2e195]:
+                  - link "" [ref=f2e196] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e201]:
+              - paragraph [ref=f2e203]: New Zealand dollar dips 0.53% to $0.5860
+              - paragraph [ref=f2e205]: 19:02 Sep 01
+              - list [ref=f2e207]:
+                - listitem [ref=f2e208]:
+                  - link "" [ref=f2e209] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e214]:
+              - paragraph [ref=f2e216]: "RBNZ statement: labour market conditions expected to improve"
+              - paragraph [ref=f2e218]: 19:01 Sep 01
+              - list [ref=f2e220]:
+                - listitem [ref=f2e221]:
+                  - link "" [ref=f2e222] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e227]:
+              - paragraph [ref=f2e229]: "RBNZ statement: committee anticipates New Zealand's export sector to stay resilient and household spending to slowly rise"
+              - paragraph [ref=f2e231]: 19:01 Sep 01
+              - list [ref=f2e233]:
+                - listitem [ref=f2e234]:
+                  - link "" [ref=f2e235] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e240]:
+              - paragraph [ref=f2e242]: "RBNZ statement: recovery forecast to gain strength and expand"
+              - paragraph [ref=f2e244]: 19:01 Sep 01
+              - list [ref=f2e246]:
+                - listitem [ref=f2e247]:
+                  - link "" [ref=f2e248] [cursor=pointer]:
+                    - /url: javascript:void(0)
+            - generic [ref=f2e253]:
+              - paragraph [ref=f2e255]: "RBNZ: Committee stays alert, will act to ensure inflation returns sustainably to 2 percent target midpoint over medium term"
+              - paragraph [ref=f2e257]: 19:00 Sep 01
+              - list [ref=f2e259]:
+                - listitem [ref=f2e260]:
+                  - link "" [ref=f2e261] [cursor=pointer]:
+                    - /url: javascript:void(0)
+        - link "Powered By FinancialJuice" [ref=f2e264] [cursor=pointer]:
+          - /url: https://www.financialjuice.com/home?widget=headline

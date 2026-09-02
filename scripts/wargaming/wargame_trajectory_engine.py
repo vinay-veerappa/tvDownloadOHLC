@@ -43,8 +43,9 @@ def compute_wargame_probabilities_and_trajectories(
         return float(val) if val is not None else default_val
 
     # NY1 Initial Range (07:30 - 08:30 ET)
-    ny1_h = anchors.get("ny1_high", p12["high"] - 44.0)
-    ny1_l = anchors.get("ny1_low", p12["low"] + 19.0)
+    ny1_formed = anchors.get("ny1_formed", False)
+    ny1_h = anchors.get("ny1_high", p12["high"])
+    ny1_l = anchors.get("ny1_low", p12["low"])
     ny1_m = (ny1_h + ny1_l) / 2.0
 
     # 1. Base Probabilities for NY1
@@ -56,7 +57,16 @@ def compute_wargame_probabilities_and_trajectories(
     }
 
     # 2. Elimination State based on Spot Price relative to NY1 Range Box
-    if spot_price > ny1_h:
+    if not ny1_formed:
+        state = "INSIDE_RANGE"
+        active_outcomes = ["SF", "LF", "LT", "ST"]
+        eliminated_outcomes = []
+        sf_conditional = base_probs["SF"]
+        lf_conditional = base_probs["LF"]
+        lt_conditional = base_probs["LT"]
+        st_conditional = base_probs["ST"]
+        state_desc = f"Pre-NY1 / Pre-Open: Spot ({spot_price:,.2f}) inside P12 Range ({p12['low']:,.2f} - {p12['high']:,.2f}). NY1 direction undetermined. All 4 outcome branches active."
+    elif spot_price > ny1_h:
         state = "LONG_BREAKOUT"
         active_outcomes = ["LF", "LT"]
         eliminated_outcomes = ["SF", "ST"]

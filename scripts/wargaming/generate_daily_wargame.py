@@ -28,6 +28,11 @@ from scripts.wargaming.wargame_trajectory_engine import compute_wargame_probabil
 from scripts.trader.signals.candle_science import get_candle_science_read
 from scripts.wargaming.htf_ema_analysis import compute_htf_ema_analysis
 from scripts.wargaming.cross_asset_directive import build_cross_asset_directive, format_cross_asset_markdown
+from scripts.wargaming.mickey_gap_fillers import (
+    compute_all_gap_fillers,
+    format_gap_fillers_markdown,
+    build_continuation_checklist,
+)
 from scripts.wargaming.economic_news_engine import compute_economic_news_context, format_economic_news_markdown
 from scripts.risk.position_sizer import calculate_position_size, load_ticker_config
 from scripts.libs_py.profiler.engine import SessionBoxEngine
@@ -150,13 +155,15 @@ def generate_wargame_data(
     # 3.5 NY1 Initial Range (07:30 - 08:30 ET)
     ny1_range_start = pd.Timestamp(datetime.combine(t_dt, time(7, 30)), tz="America/New_York")
     ny1_range_end = pd.Timestamp(datetime.combine(t_dt, time(8, 30)), tz="America/New_York")
-    ny1_initial_df = df_1m[(df_1m.index >= ny1_range_start) & (df_1m.index < ny1_range_end)]
-    if not ny1_initial_df.empty:
+    ny1_initial_df = df_1m[(df_1m.index >= ny1_range_start) & (df_1m.index < ny1_range_end) & (df_1m.index <= cutoff_dt)]
+    if not ny1_initial_df.empty and cutoff_dt >= ny1_range_end:
         ny1_h = float(ny1_initial_df["high"].max())
         ny1_l = float(ny1_initial_df["low"].min())
         ny1_m = (ny1_h + ny1_l) / 2.0
+        ny1_formed = True
     else:
-        ny1_h, ny1_l, ny1_m = p12_high - 40.0, p12_low + 20.0, p12_mid
+        ny1_h, ny1_l, ny1_m = p12_high, p12_low, p12_mid
+        ny1_formed = False
 
     # 4. SessionBoxEngine for Asia / London states & broken status
     engine = SessionBoxEngine(df_cutoff, ticker=ticker).process()
@@ -237,6 +244,7 @@ def generate_wargame_data(
             "ny1_high": ny1_h,
             "ny1_low": ny1_l,
             "ny1_mid": ny1_m,
+            "ny1_formed": ny1_formed,
         },
         sessions={
             "asia_status": asia_status,
@@ -252,7 +260,6 @@ def generate_wargame_data(
     # 9. HTF Macro Levels, Weekly Outlook, Session Budget & Signature Setups
     htf_macro = compute_htf_macro_levels(ticker=ticker, target_date=t_dt.isoformat())
     weekly_outlook = compute_weekly_outlook(ticker=ticker, target_date=t_dt.isoformat())
-    session_budget = compute_session_budget(ticker=ticker, target_date=t_dt.isoformat(), cutoff_time=cutoff_time_str)
     sig_setups = scan_signature_setups(ticker=ticker, target_date=t_dt.isoformat(), cutoff_time=cutoff_time_str)
     news_ctx = compute_economic_news_context(target_date=t_dt)
 
@@ -262,6 +269,25 @@ def generate_wargame_data(
     except Exception as e:
         log.warning(f"Cross-asset directive failed: {e}")
         cad = None
+
+    # 11. Mickey Gap Fillers (independent checks, each persisted to derived store)
+    try:
+        ny1_hl = {"high": ny1_h, "low": ny1_l, "mid": ny1_m}
+        gap_fillers = compute_all_gap_fillers(
+            ticker=ticker, t_dt=t_dt, df_1m=df_1m, spot_price=spot_price,
+            p12={"high": p12_high, "low": p12_low, "mid": p12_mid,
+                 "hod_time": p12_hod_time, "lod_time": p12_lod_time},
+        )
+    except Exception as e:
+        log.warning(f"Gap fillers failed: {e}")
+        gap_fillers = None
+
+    # 12. DRO Checkbook (rendered into the playbook)
+    try:
+        session_budget = compute_session_budget(ticker=ticker, target_date=t_dt.isoformat(), cutoff_time=cutoff_time_str)
+    except Exception as e:
+        log.warning(f"Session budget failed: {e}")
+        session_budget = None
 
     return {
         "ticker": ticker,
@@ -313,9 +339,11 @@ def generate_wargame_data(
         "htf_macro": htf_macro,
         "weekly_outlook": weekly_outlook,
         "session_budget": session_budget,
+        "gap_fillers": gap_fillers,
         "signature_setups": sig_setups,
         "news_context": news_ctx,
         "cross_asset_directive": cad,
+        "_ny1_hl": {"high": ny1_h, "low": ny1_l, "mid": ny1_m},
     }
 
 
@@ -390,24 +418,86 @@ def format_wargame_markdown(data: Dict[str, Any]) -> str:
             "",
         ])
 
+    traj_data = data.get("trajectory_engine", {})
+    state = traj_data.get("state", "INSIDE_RANGE")
+    c_probs = traj_data.get("conditional_probs", {"SF": 32.8, "LF": 33.3, "LT": 17.2, "ST": 16.5})
+    ny1_hl = data.get("_ny1_hl", {})
+    ny1_h = ny1_hl.get("high", p12["high"] - 40.0)
+    ny1_l = ny1_hl.get("low", p12["low"] + 20.0)
+    ny1_m = ny1_hl.get("mid", p12["mid"])
+    mo_str = f"`{anchors['midnight_open']:,.2f}`" if anchors.get('midnight_open') else "Midnight Open"
+    pdh_str = f"`{anchors['pdh']:,.2f}`" if anchors.get('pdh') else "PDH"
+    pdl_str = f"`{anchors['pdl']:,.2f}`" if anchors.get('pdl') else "PDL"
+
+    if state == "INSIDE_RANGE":
+        lines.extend([
+            f"* **Decision Tree Status**: Spot (`{spot:,.2f}`) is inside the pre-market range (`{ny1_l:,.2f}` – `{ny1_h:,.2f}`). **All 4 outcome branches active**.",
+            f"* **Statistical Edge**: **False Branches ({c_probs['SF'] + c_probs['LF']:.1f}%)** hold a 2:1 edge over **True Expansion Branches ({c_probs['LT'] + c_probs['ST']:.1f}%)**.",
+            "",
+            f"### 🔴 SCENARIO 1: SHORT FALSE (SF) ── Bullish Mean Reversion ({c_probs['SF']:.1f}%)",
+            f"* **Trigger / Condition**: 09:30 RTH Open sweeps toward `NY1 Low ({ny1_l:,.2f})` / `P12 Low ({p12['low']:,.2f})` and fails to sustain a >10 bps breakdown in the 0–5 Box.",
+            f"* **LOD Target Box**: `09:30 – 10:15 ET` (Initial sweep forms the low of the day).",
+            f"* **Execution & Targets**: Mean revert to **P12 Midline (`{p12['mid']:,.2f}`)** and **Midnight Open ({mo_str})** before **09:45 AM**. Afternoon HOD Target: `13:30 – 16:00 ET` targeting **P12 High (`{p12['high']:,.2f}`)**.",
+            f"* **Cutoffs**: Midline retest expected before **09:45 AM**; mean-reversion window expires at **10:15 AM**.",
+            "",
+            f"### 🔵 SCENARIO 2: LONG FALSE (LF) ── Bearish Mean Reversion ({c_probs['LF']:.1f}%)",
+            f"* **Trigger / Condition**: 09:30 RTH Open sweeps toward `NY1 High ({ny1_h:,.2f})` / `P12 High ({p12['high']:,.2f})` and fails to sustain a >10 bps breakout in the 0–5 Box.",
+            f"* **HOD Target Box**: `09:30 – 10:15 ET` (Long trap forms the high of the day).",
+            f"* **Execution & Targets**: Mean revert to **P12 Midline (`{p12['mid']:,.2f}`)** and **Midnight Open ({mo_str})** before **09:45 AM**. Afternoon LOD Target: `13:30 – 16:00 ET` targeting **P12 Low ({p12['low']:,.2f})** / **PDL ({pdl_str})**.",
+            f"* **Cutoffs**: Midline retest expected before **09:45 AM**; mean-reversion window expires at **10:15 AM**.",
+            "",
+            f"### 🟢 SCENARIO 3: LONG TRUE (LT) ── Bullish Trend Expansion ({c_probs['LT']:.1f}%)",
+            f"* **Trigger / Condition**: 09:30 Open breaches and sustains **>10 bps acceptance** above `NY1 High ({ny1_h:,.2f})` / `P12 High ({p12['high']:,.2f})` with no 4-step reversal signature.",
+            f"* **LOD Baseline**: `09:30 – 09:45 ET` (Open defends above `{ny1_m:,.2f}`).",
+            f"* **Execution & Targets**: Trend continuation into afternoon session. Afternoon HOD Extension: `14:30 – 16:15 ET` reaching Bullish P70 (`{spot*(1+cs['bull']['p70']/100):,.2f}`).",
+            f"* **Rule**: If no reversal signature forms by 10:15 AM, Trend Continuation locks for the session.",
+            "",
+            f"### 🟣 SCENARIO 4: SHORT TRUE (ST) ── Bearish Trend Expansion ({c_probs['ST']:.1f}%)",
+            f"* **Trigger / Condition**: 09:30 Open flushes and sustains **>10 bps acceptance** below `NY1 Low ({ny1_l:,.2f})` / `P12 Low ({p12['low']:,.2f})` with no 4-step reversal signature.",
+            f"* **HOD Baseline**: `09:30 – 09:45 ET` (Rejection holds under `{ny1_m:,.2f}`).",
+            f"* **Execution & Targets**: Trend continuation into afternoon session. Afternoon LOD Extension: `14:30 – 16:15 ET` reaching Bearish P70 (`{spot*(1+cs['bear']['p70']/100):,.2f}`).",
+            f"* **Rule**: If no reversal signature forms by 10:15 AM, Trend Continuation locks for the session.",
+            "",
+        ])
+    elif state == "LONG_BREAKOUT":
+        lines.extend([
+            f"* **Decision Tree Status**: Spot (`{spot:,.2f}`) > `NY1 High ({ny1_h:,.2f})`. **ST & SF ELIMINATED**.",
+            f"* **Active Branches**: **Long False ({c_probs['LF']:.1f}%)** vs **Long True ({c_probs['LT']:.1f}%)**.",
+            "",
+            f"### 🔵 SCENARIO 1: LONG FALSE (LF) ── Bearish Mean Reversion ({c_probs['LF']:.1f}%)",
+            f"* **Trigger**: Fails to sustain >10 bps acceptance above `NY1 High ({ny1_h:,.2f})` and rejects back below 09:30 open print.",
+            f"* **Targets**: Mean revert to **P12 Midline (`{p12['mid']:,.2f})** and **Midnight Open ({mo_str})** before **09:45 AM**.",
+            "",
+            f"### 🟢 SCENARIO 2: LONG TRUE (LT) ── Bullish Trend Expansion ({c_probs['LT']:.1f}%)",
+            f"* **Trigger**: Holds >10 bps acceptance above `NY1 High ({ny1_h:,.2f})` past 09:45 AM with no reversal signature.",
+            f"* **Targets**: Target **PDH ({pdh_str})** and Bullish P70 (`{spot*(1+cs['bull']['p70']/100):,.2f}`).",
+            "",
+        ])
+    else:  # SHORT_BREAKOUT
+        lines.extend([
+            f"* **Decision Tree Status**: Spot (`{spot:,.2f}`) < `NY1 Low ({ny1_l:,.2f})`. **LT & LF ELIMINATED**.",
+            f"* **Active Branches**: **Short False ({c_probs['SF']:.1f}%)** vs **Short True ({c_probs['ST']:.1f}%)**.",
+            "",
+            f"### 🔴 SCENARIO 1: SHORT FALSE (SF) ── Bullish Mean Reversion ({c_probs['SF']:.1f}%)",
+            f"* **Trigger**: Fails to sustain >10 bps acceptance below `NY1 Low ({ny1_l:,.2f})` and reclaims 09:30 open print.",
+            f"* **Targets**: Mean revert to **P12 Midline (`{p12['mid']:,.2f})** and **Midnight Open ({mo_str})** before **09:45 AM**.",
+            "",
+            f"### 🟣 SCENARIO 2: SHORT TRUE (ST) ── Bearish Trend Expansion ({c_probs['ST']:.1f}%)",
+            f"* **Trigger**: Holds >10 bps acceptance below `NY1 Low ({ny1_l:,.2f})` past 09:45 AM with no reversal signature.",
+            f"* **Targets**: Target **PDL ({pdl_str})** and Bearish P70 (`{spot*(1+cs['bear']['p70']/100):,.2f}`).",
+            "",
+        ])
+
+    # Gap-filler checklist (independent checks; each persisted to derived store)
+    gap = data.get("gap_fillers")
+    if gap:
+        lines.append(format_gap_fillers_markdown(
+            gap.get("flag_flip", {}), gap.get("tf_streaks", {}),
+            data.get("session_budget") or {}, gap.get("out_of_stat", {}),
+            gap.get("magic_hour", {}),
+        ))
+
     lines.extend([
-        "### 🔴 SCENARIO CARD 1: THE FALSE BRANCH (Reversion / Sweeper) ── PRIMARY BIAS",
-        f"* **If** 09:30 RTH Open sweeps toward `P12 Low ({p12['low']:,.2f})` or session extremes and fails to sustain a 10 bps breakout in the 0–5 Box:",
-        "* **THEN** execute **Mean Reversion** back toward primary magnets:",
-        f"  1. **P12 Midline**: `{p12['mid']:,.2f}` (Primary morning liquidity magnet)",
-        f"  2. **Midnight Open**: `{anchors['midnight_open']:,.2f}`" if anchors['midnight_open'] else "  2. **Midnight Open**",
-        "* **Statistical Cutoff Rules**:",
-        "  - **09:45 AM Cutoff**: P12 Midline / Midnight Open retest expected before 09:45 AM.",
-        "  - **10:15 AM Cutoff**: Morning mean-reversion window expires. If price holds across P12 Mid at 10:15, transition to range consolidation.",
-        "",
-        "### 🟢 SCENARIO CARD 2: THE TRUE BRANCH (Trend Expansion) ── SECONDARY BIAS",
-        f"* **Bullish Expansion**: If 09:30 Open breaches and accepts above `P12 Mid ({p12['mid']:,.2f})` by >10 bps in Q1:",
-        f"  - Target: `P12 High ({p12['high']:,.2f})` → `PDH ({anchors['pdh']:,.2f})`.",
-        "  - HOD Mode Window: 16:00–17:00 PM (Late-day expansion).",
-        f"* **Bearish Continuation**: If price rejects `P12 Mid ({p12['mid']:,.2f})` and breaches `P12 Low ({p12['low']:,.2f})` with hourly red line signature:",
-        f"  - Target: `PDM ({anchors['pdm']:,.2f})` → `PDL ({anchors['pdl']:,.2f})`.",
-        "  - Rule: If no reversal signature forms by 10:15 AM, Trend Continuation locks for the session.",
-        "",
         "---",
         "",
         "## 🎯 4. CANDLE SCIENCE EXCURSION TARGET BOXES",
@@ -434,6 +524,16 @@ def format_wargame_markdown(data: Dict[str, Any]) -> str:
         "4. **[ ] Step 4**: Does the **10:00 AM Q1 (10:00–10:14)** establish an instant statistical extreme?",
         "   - **4/4 Steps Completed**: Major Reversal confirmed $\\rightarrow$ Execute Scenario 1 (False Branch).",
         "   - **0–1 Steps Completed**: Trend Continuation confirmed $\\rightarrow$ Ride Scenario 2 (True Branch).",
+    ])
+
+    # Gap 6: 4-step continuation checklist (mirror of the reversal counter)
+    ny1_hl = data.get("_ny1_hl") or {}
+    cont_steps = build_continuation_checklist(spot, p12, anchors, ny1_hl)
+    lines.extend([
+        "",
+        "### ✅ 4-STEP CONTINUATION CHECKLIST (True Day Confirmation — the mirror)",
+        "Run alongside the reversal counter; continuation steps confirm staying in, reversal steps confirm flipping:",
+        *cont_steps,
     ])
 
     return "\n".join([l for l in lines if l is not None])

@@ -1,0 +1,219 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e6]: Fleet P&L & Copier Monitor
+      - generic [ref=e7]: NT8 LIVE
+      - generic [ref=e8]: 1 CONTRACT OPEN
+    - generic [ref=e9]:
+      - button "🌓" [ref=e10] [cursor=pointer]
+      - button "🗕" [ref=e11] [cursor=pointer]
+      - button "✕" [ref=e12] [cursor=pointer]
+  - generic [ref=e13]:
+    - generic [ref=e14]:
+      - generic [ref=e15]: Total Fleet Net Liq
+      - generic [ref=e16]: +$650,578.80
+    - generic [ref=e17]:
+      - generic [ref=e18]: Open Unrealized
+      - generic [ref=e19]: +$8.00
+    - generic [ref=e20]:
+      - generic [ref=e21]: Realized Today
+      - generic [ref=e22]: "-$97.50"
+    - generic [ref=e23]:
+      - generic [ref=e24]: Open Contracts
+      - generic "Open contracts count and exposure breakdown" [ref=e25]: 1 Contract (-1 MNQ)
+  - generic [ref=e26]:
+    - generic [ref=e27]:
+      - generic [ref=e28]: ⚪ COPIER IDLE
+      - generic [ref=e29]: Fleet ready
+    - button "🚨 PANIC FLATTEN" [ref=e30] [cursor=pointer]
+  - generic [ref=e31]:
+    - generic [ref=e32]:
+      - generic [ref=e33]: Symbol
+      - combobox [ref=e34] [cursor=pointer]:
+        - option "MNQ 09-26" [selected]
+        - option "MNQ 12-26"
+        - option "MES 09-26"
+        - option "MES 12-26"
+        - option "MYM 09-26"
+        - option "MYM 12-26"
+        - option "MCL 09-26"
+        - option "MCL 12-26"
+        - option "MGC 09-26"
+        - option "MGC 12-26"
+        - option "M2K 09-26"
+        - option "M2K 12-26"
+        - option "MNQ SEP26"
+      - 'generic "RiskGuard cap (MNQ: 1) / account: 5" [ref=e35]': max 1
+    - generic [ref=e36]:
+      - generic [ref=e37]: Qty
+      - spinbutton [ref=e38]: "1"
+    - generic [ref=e39]:
+      - generic [ref=e40]: ATM
+      - combobox "ATM bracket strategy — AUTO = per-instrument profile. SL/T ticks apply to tick strategies; ATR strategies compute from ATR." [ref=e41]:
+        - option "AUTO" [selected]
+        - option "FixedTicks"
+        - option "AtrAdaptive"
+        - option "SwingPoint"
+        - option "DrawdownShield"
+        - option "ScaledRunner"
+        - option "VolatilityScaled"
+        - option "SessionAdaptive"
+        - option "KellyOptimal"
+    - generic [ref=e42]:
+      - generic [ref=e43]: SL/T
+      - spinbutton "Stop distance in ticks" [ref=e44]: "40"
+      - spinbutton "Target distance in ticks" [ref=e45]: "80"
+    - 'generic "RiskGuard shadow — allowed: MNQ, MES, MYM, MCL, MGC, M2K" [ref=e46]': "GUARD: SHADOW"
+    - generic [ref=e47]: B/S on each account row
+  - generic [ref=e48]:
+    - generic [ref=e49]:
+      - button "Active (10 • 1 Open)" [ref=e50] [cursor=pointer]
+      - button "⚡ Copier (2)" [ref=e51] [cursor=pointer]
+      - button "All Accounts (109)" [ref=e52] [cursor=pointer]
+    - textbox "Search account..." [ref=e53]
+  - table [ref=e55]:
+    - rowgroup [ref=e56]:
+      - row [ref=e206]:
+        - columnheader "Account ⇅" [ref=e207] [cursor=pointer]:
+          - text: Account
+          - generic [ref=e208]: ⇅
+        - columnheader "Position / Contracts ▼" [ref=e209] [cursor=pointer]:
+          - text: Position / Contracts
+          - generic [ref=e210]: ▼
+        - columnheader "Unrealized ⇅" [ref=e211] [cursor=pointer]:
+          - text: Unrealized
+          - generic [ref=e212]: ⇅
+        - columnheader "Realized ⇅" [ref=e213] [cursor=pointer]:
+          - text: Realized
+          - generic [ref=e214]: ⇅
+        - columnheader "Net Liq ⇅" [ref=e215] [cursor=pointer]:
+          - text: Net Liq
+          - generic [ref=e216]: ⇅
+        - columnheader "B / S" [ref=e217]
+    - rowgroup [ref=e69]:
+      - row [ref=e218]:
+        - cell "Sim101 SIM ⚡LEADER·2" [ref=e219]:
+          - generic [ref=e220]:
+            - generic [ref=e221]: Sim101
+            - generic [ref=e222]: SIM
+            - generic "Copy-trader LEADER driving 2 follower account(s)" [ref=e223]: ⚡LEADER·2
+        - cell "SHORT 1 MNQ SEP26 @ 29081.50" [ref=e224]
+        - cell "+$8.00" [ref=e226]
+        - cell "+$1.00" [ref=e227]
+        - cell "+$102,425.50" [ref=e228]
+        - cell [ref=e229]:
+          - button "B" [ref=e230] [cursor=pointer]
+          - button "S" [ref=e231] [cursor=pointer]
+      - row [ref=e232]:
+        - cell "SimCopyTest1 SIM" [ref=e233]:
+          - generic [ref=e234]:
+            - generic [ref=e235]: SimCopyTest1
+            - generic [ref=e236]: SIM
+        - cell "0 (FLAT)" [ref=e237]
+        - cell "$0.00" [ref=e239]
+        - cell "$0.00" [ref=e240]
+        - cell "+$100,511.50" [ref=e241]
+        - cell [ref=e242]:
+          - button "B" [ref=e243] [cursor=pointer]
+          - button "S" [ref=e244] [cursor=pointer]
+      - row [ref=e245]:
+        - cell "Backtest SIM" [ref=e246]:
+          - generic [ref=e247]:
+            - generic [ref=e248]: Backtest
+            - generic [ref=e249]: SIM
+        - cell "0 (FLAT)" [ref=e250]
+        - cell "$0.00" [ref=e252]
+        - cell "$0.00" [ref=e253]
+        - cell "+$100,000.00" [ref=e254]
+        - cell [ref=e255]:
+          - button "B" [ref=e256] [cursor=pointer]
+          - button "S" [ref=e257] [cursor=pointer]
+      - row [ref=e258]:
+        - cell "Sim-ORB SIM ↳Sim101·OFF" [ref=e259]:
+          - generic [ref=e260]:
+            - generic [ref=e261]: Sim-ORB
+            - generic [ref=e262]: SIM
+            - generic "Copy FOLLOWER of Sim101 — OFF" [ref=e263]: ↳Sim101·OFF
+        - cell "0 (FLAT)" [ref=e264]
+        - cell "$0.00" [ref=e266]
+        - cell "$0.00" [ref=e267]
+        - cell "+$99,685.50" [ref=e268]
+        - cell [ref=e269]:
+          - button "B" [ref=e270] [cursor=pointer]
+          - button "S" [ref=e271] [cursor=pointer]
+      - row [ref=e272]:
+        - cell "SimCopy2 SIM ↳Sim101·OFF" [ref=e273]:
+          - generic [ref=e274]:
+            - generic [ref=e275]: SimCopy2
+            - generic [ref=e276]: SIM
+            - generic "Copy FOLLOWER of Sim101 — OFF" [ref=e277]: ↳Sim101·OFF
+        - cell "0 (FLAT)" [ref=e278]
+        - cell "$0.00" [ref=e280]
+        - cell "$0.00" [ref=e281]
+        - cell "+$97,655.50" [ref=e282]
+        - cell [ref=e283]:
+          - button "B" [ref=e284] [cursor=pointer]
+          - button "S" [ref=e285] [cursor=pointer]
+      - row [ref=e286]:
+        - cell "Sim_All_Day_ORB SIM" [ref=e287]:
+          - generic [ref=e288]:
+            - generic [ref=e289]: Sim_All_Day_ORB
+            - generic [ref=e290]: SIM
+        - cell "0 (FLAT)" [ref=e291]
+        - cell "$0.00" [ref=e293]
+        - cell "$0.00" [ref=e294]
+        - cell "+$49,453.15" [ref=e295]
+        - cell [ref=e296]:
+          - button "B" [ref=e297] [cursor=pointer]
+          - button "S" [ref=e298] [cursor=pointer]
+      - row [ref=e299]:
+        - cell "LFE02559938020004 LFE" [ref=e300]:
+          - generic [ref=e301]:
+            - generic [ref=e302]: LFE02559938020004
+            - generic [ref=e303]: LFE
+        - cell "0 (FLAT)" [ref=e304]
+        - cell "$0.00" [ref=e306]
+        - cell "$0.00" [ref=e307]
+        - cell "+$26,057.75" [ref=e308]
+        - cell [ref=e309]:
+          - button "B" [ref=e310] [cursor=pointer]
+          - button "S" [ref=e311] [cursor=pointer]
+      - row [ref=e312]:
+        - cell "LFE02559938020005 LFE" [ref=e313]:
+          - generic [ref=e314]:
+            - generic [ref=e315]: LFE02559938020005
+            - generic [ref=e316]: LFE
+        - cell "0 (FLAT)" [ref=e317]
+        - cell "$0.00" [ref=e319]
+        - cell "+$232.50" [ref=e320]
+        - cell "+$25,492.25" [ref=e321]
+        - cell [ref=e322]:
+          - button "B" [ref=e323] [cursor=pointer]
+          - button "S" [ref=e324] [cursor=pointer]
+      - row [ref=e325]:
+        - cell "LFE02559938020006 LFE" [ref=e326]:
+          - generic [ref=e327]:
+            - generic [ref=e328]: LFE02559938020006
+            - generic [ref=e329]: LFE
+        - cell "0 (FLAT)" [ref=e330]
+        - cell "$0.00" [ref=e332]
+        - cell "$0.00" [ref=e333]
+        - cell "+$25,191.50" [ref=e334]
+        - cell [ref=e335]:
+          - button "B" [ref=e336] [cursor=pointer]
+          - button "S" [ref=e337] [cursor=pointer]
+      - row [ref=e338]:
+        - cell "LFE02559938020007 LFE" [ref=e339]:
+          - generic [ref=e340]:
+            - generic [ref=e341]: LFE02559938020007
+            - generic [ref=e342]: LFE
+        - cell "0 (FLAT)" [ref=e343]
+        - cell "$0.00" [ref=e345]
+        - cell "-$331.00" [ref=e346]
+        - cell "+$24,106.15" [ref=e347]
+        - cell [ref=e348]:
+          - button "B" [ref=e349] [cursor=pointer]
+          - button "S" [ref=e350] [cursor=pointer]
+  - generic [ref=e203]:
+    - generic [ref=e204]: Live • 7:56:56 PM
+    - generic [ref=e205]: 109 accounts | 10 active | 1 contract open

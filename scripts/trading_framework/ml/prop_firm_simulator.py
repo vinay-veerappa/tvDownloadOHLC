@@ -156,6 +156,45 @@ FIRM_PROFILES: Dict[str, PropFirmProfile] = {
         consistency_rule_pct=0.30,      # No single day > 30% of total profit
         eval_max_days=30,
     ),
+    # ── Take Profit Trader (TPT) ──────────────────────────────────────────────
+    # TPT 50K: $3,000 profit target / $2,000 EOD trailing DD / $1,100 daily loss / 50% consistency
+    "takeprofittrader_50k": PropFirmProfile(
+        name="Take Profit Trader 50K",
+        account_size=50_000.0,
+        profit_target=3_000.0,
+        max_trailing_drawdown=2_000.0,
+        trailing=True,
+        daily_loss_limit=1_100.0,
+        max_trades_per_day=999,
+        consistency_rule_pct=0.50,      # Max 50% single day profit
+        eval_max_days=60,
+    ),
+    # ── Tradeify ──────────────────────────────────────────────────────────────
+    # Tradeify 50K (Growth/Advanced): $3,000 target / $2,000 EOD trailing / $1,100 daily loss / 35% consistency
+    "tradeify_50k": PropFirmProfile(
+        name="Tradeify 50K",
+        account_size=50_000.0,
+        profit_target=3_000.0,
+        max_trailing_drawdown=2_000.0,
+        trailing=True,
+        daily_loss_limit=1_100.0,
+        max_trades_per_day=999,
+        consistency_rule_pct=0.35,      # Max 35% single day profit
+        eval_max_days=60,
+    ),
+    # ── Lucid Traders ─────────────────────────────────────────────────────────
+    # Lucid 50K: $3,000 profit target / $2,000 EOD trailing / $1,000 daily loss / 35% consistency
+    "lucid_50k": PropFirmProfile(
+        name="Lucid 50K",
+        account_size=50_000.0,
+        profit_target=3_000.0,
+        max_trailing_drawdown=2_000.0,
+        trailing=True,
+        daily_loss_limit=1_000.0,
+        max_trades_per_day=999,
+        consistency_rule_pct=0.35,      # Max 35% single day profit
+        eval_max_days=60,
+    ),
     # ── Minimal (internal testing) ────────────────────────────────────────────
     "generic_50k": PropFirmProfile(
         name="Generic 50K (no constraints)",

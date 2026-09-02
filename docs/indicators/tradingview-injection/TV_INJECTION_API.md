@@ -288,7 +288,7 @@ TV chart (any button/draw-on-chart trade)
 |---|---|
 | Fetch-layer interception + payload capture | ✅ T7.3 (6/6 live veto) |
 | TV-native-buttons disable | design: deny-all already proven; CSS toggle optional |
-| Order ticket HUD w/ brackets/OCO | To build — **ATM strategies are already server-side** in the NT8 bridge (AtrAdaptive, DrawdownShield, ScaledRunner…: stop, target, breakeven, trailing, partials → OCO for free) |
+| Order ticket — **floating widget + in-chart HUD** | To build — **ATM strategies are already server-side** in the NT8 bridge (AtrAdaptive, DrawdownShield, ScaledRunner…: stop, target, breakeven, trailing, partials → OCO for free). Both surfaces funnel into the same ORDER GUARD → daemon → `nt_place_atm_order` path (see §10.1) |
 | Pre-trade risk enforcement | ✅ existing nt8-riskguard |
 | Copy distribution | ✅ existing TradeCopierEngine |
 | Latency harness (TV-direct vs NT8-funnel) | To build — decision gate before any per-path choice; TV-direct ≈50–150ms, NT8-funnel est +100–500ms (UNMEASURED) |
@@ -300,6 +300,163 @@ TV chart (any button/draw-on-chart trade)
   addressed as copy followers — TV needs no Tradovate credentials at all.
 - All Phase-1 work on Sim101. Live enablement only after the measured decision gate.
 - Every aspect measured before final decisions (user requirement).
+
+## 10.1 Order ticket surfaces — floating widget + in-chart HUD (user-directed 2026-09-01)
+
+**DECIDED: the order ticket ships as TWO surfaces, not one.**
+
+1. **Floating widget** — a standalone always-on-top window (Electron/Tauri or a pinned
+   browser window). Lives **outside** TV Desktop entirely.
+2. **In-chart HUD** — DOM overlay injected into TV via the proven CDP injection path
+   (§1, §6 gotcha 6–8: fixed `id`, `position:fixed`, idempotent re-inject).
+
+### Why both (the rationale)
+- **Floating widget is TV-independent** — it works irrespective of whether TradingView is
+  running, and survives every TV failure mode (reconnect shell death, restart, update,
+  CDP drop — see §3 post-mortem, §6 gotcha 9). The HUD cannot outlive the page it is
+  injected into; the widget can.
+- **HUD is chart-contextual** — symbol/price anchoring (`priceToCoordinate`, §6b) and
+  one-click placement next to the chart you are watching. The widget lacks chart context
+  but is always reachable.
+- **Both submit through the SAME funnel** — no per-surface logic. Each surface only
+  produces an order *intent*; everything below the intent boundary is shared:
+
+```
+Floating widget ─┐
+                 ├─→ order intent (instrument/qty/side/price/strategy)
+In-chart HUD ────┘         │
+                           ▼
+              ORDER GUARD (patched fetch, §9)     [in-chart surface only;
+                │                                  widget sends intent directly]
+                ▼
+              daemon (persistent, pump + re-arm + audit)
+                ▼
+              nt_place_atm_order → DynamicAtmManager (§10: brackets/OCO/breakeven/
+                │                    trailing/partials for free)
+                ▼
+              nt8-riskguard pre-trade checks → TradeCopierEngine distribution
+```
+
+### Design consequences
+- The in-chart HUD's order ticket is subject to the §9 interception layer (patched
+  `fetch`), because its clicks originate inside TV's page sandbox. The floating widget
+  **bypasses the interception layer by construction** — it never runs in TV's page — so
+  its risk enforcement is entirely downstream (daemon-side + RiskGuard pre-trade). This
+  is acceptable because RiskGuard is the enforcement layer of record either way.
+- Both surfaces share one intent schema — the same payload ORDER GUARD captures from TV
+  (`instrument, type, side, qty, limitPrice, stopLoss, takeProfit`) is what the widget
+  and HUD emit directly. One schema, two emitters.
+- The widget needs its own account/symbol context (it cannot read TV's chart state); the
+  HUD can pre-fill symbol/price from the chart. Keep the schema identical and let each
+  surface populate fields from its own context source.
+- Overlay lifetime asymmetry is the point of the dual approach: HUD re-injection after TV
+  restart stays a daemon responsibility (§6c note); the floating widget simply persists
+  across TV restarts.
+
+### 10.2 Shipped implementation — RiskGuard-integrated ticket (2026-09-01, live-verified)
+
+Built into `scripts/tradingview/huds/account_pnl.js` (shared module, v2.4.0) +
+`scripts/tradingview/pnl_widget_server.js` (port 8635). Widget-only order path
+(see caveat below).
+
+- **Endpoints added to the widget server** (bearer token to NT8 bridge `localhost:7890`):
+  - `GET /api/guard/config` — reads the guard's `config.json`
+    (`Documents\NinjaTrader 8\RiskGuard\config.json`), re-read every 30s. Drives the
+    ticket UI: symbol dropdown = `AllowedInstruments` × front/next quarterly codes,
+    qty cap = `min(InstrumentLimits[root], Sizing.MaxContractsPerAccount)`.
+  - `GET /api/lockouts` — sweep every 2.5s (cap 30 accounts, 10s TTL) via
+    `POST /api/lockout {action:'status',account}`.
+  - `POST /api/order/atm` — proxy to NT8 `POST /api/order/atm` (idempotencyKey required).
+- **Ticket UI**: symbol `<select>` (allowed roots + quarterly codes, position symbols
+  merged in), qty (capped, shows `max N`), ATM strategy select (AUTO + 8: FixedTicks,
+  AtrAdaptive, SwingPoint, DrawdownShield, ScaledRunner, VolatilityScaled,
+  SessionAdaptive, KellyOptimal), SL/TP ticks (default 40/80), `GUARD: SHADOW/LIVE`
+  chip, status line for bracket response (`bracketId`, stop/target prices).
+- **Per-row B/S buttons**: busy state keyed `account|side`, re-applied on every
+  200ms re-render; locked accounts get `🔒LOCKED` badge + disabled buttons.
+- **Panic flatten**: single click (2-click confirm removed, user-directed) →
+  `POST /api/emergency-flatten` with reason `Operator Panic Flatten (Standalone
+  Desktop Widget)`.
+- **⚠️ Constraint (hit twice)**: `initScript` is embedded into the page template as
+  `(${initScript})(panel)` — NO backticks or `${}` inside `initScript`; use string
+  concatenation.
+- **⚠️ TV HUD caveat**: the in-chart HUD shares `account_pnl.js`, but TV's page
+  sandbox cannot fetch `localhost:8635` — the order path works in the standalone
+  widget only. HUD renders the ticket bar but B/S buttons are non-functional there
+  (deprioritized, user-directed).
+
+#### Lockout semantics — what `/api/lockout` actually reports (learned 2026-09-02)
+
+`RiskGuardAddOn.IsAccountLocked` (bridge view) has **three OR-ed sources**; the
+RiskGuard UI window shows only the first, so the two can legitimately disagree:
+
+1. `LockoutBinds()` — the enforcer's live predicate: `state.IsLockedOut` OR
+   `state.LockoutUntil > now`, **suppressed when `LockoutWasShadowOnly` is true**.
+   A shadow-mode lockout still records state (window may show clean) but the
+   bridge's `IsAccountLocked` ALSO consults sources 2–3 below without that
+   suppression, so accounts can read locked via the API while the window shows
+   nothing.
+2. `_lockoutExpiry` — bridge-local `ConcurrentDictionary` written by EVERY
+   `/api/emergency-flatten` call (default 60 min, `lockoutMinutes` param) for
+   **every account the flatten touched**, not just those that breached. The widget
+   panic button and repeated manual flattens therefore lock out the whole touched
+   fleet for an hour on the bridge side only.
+3. `LockedOutAccounts` in `state.json` — restored as `state.IsLockedOut = true` on
+   every add-on start (P2-92) with **no expiry**; only `UnlockAccount` clears it.
+
+Practical consequence: a fleet-wide panic flatten (our widget's normal panic path)
+poisons the lockout sweep for up to 60 minutes across every touched account — the
+widget shows `🔒LOCKED` on all rows, the RiskGuard window shows nothing, and
+`/api/order/atm` refuses everything non-reducing. Remedy if it is a false lockout:
+`POST /api/lockout {action:'unlock',account:X}` per account (calls
+`RiskGuardAddOn.UnlockAccount` + clears the bridge-local entry), or restart the
+bridge with `state.json`'s `LockedOutAccounts` cleaned.
+
+### 10.3 Render pipeline — stable rows (defect fixed 2026-09-02)
+
+**Defect (measured):** `renderAccountsView()` rebuilt the whole table via
+`tbody.innerHTML = html` every 200ms. Two symptoms, one cause:
+
+1. **Clicks silently eaten.** The browser fires `click` only when mousedown and
+   mouseup land on the SAME element. With a full innerHTML rebuild every 200ms,
+   mousedown landed on the old button node, the rebuild replaced it, and mouseup
+   landed on the new node → no click event, no order, no rejection, no log.
+   This presented as "the sell did not work" with an empty bridge event stream.
+2. **Flashing/strobing.** Hover state reset every rebuild, and the `.busy`
+   opacity animation (`ws-pnl-flash`) restarted on every re-render → strobe.
+
+**Fix (in `huds/account_pnl.js`, shared by widget + TV HUD):**
+- **Stable rows**: rows are created once per account (keyed by a build key =
+  view + account order). Each 200ms tick only updates volatile cell values
+  (`textContent`/`className`) in place — buttons never move or vanish.
+- **Event delegation**: ONE click listener on `tbody` (set once, flagged by
+  `tbodyDelegated`) replaces per-button listeners; it survives any rebuild.
+- **Flash removed** from `.busy` (opacity dim only); `ws-pnl-flash` remains on
+  the DESYNC banner where it belongs.
+- Relationship badges moved from the per-render HTML string to an in-place
+  `otApplyRelBadges()` layer per row.
+
+**⚠️ Any HUD that polls must follow this pattern: never rebuild DOM nodes a
+user can press; update values in place and delegate events at the container.**
+
+### 10.4 Trade copier findings (2026-09-02, live on Sim101 → Sim-ORB)
+
+1. **Fixed (config)**: `AutoSymbolConversion` table is bidirectional mini↔micro,
+   so a leader `MNQ SEP26` fill was translated to `NQ SEP26` — a
+   BlockedInstruments root — and every copy refused
+   (`COPY_BLOCKED_FOLLOWER_LOCKED: ... locked for NQ SEP26`). Also the
+   relationship was `ArmedForLive:false` (shadow). Fix: set
+   `AutoSymbolConversion:false` + arm. ⚠️ Bridge trap (P1-74): the request key
+   `autoConversion` is SILENTLY DROPPED by `NormalizeRequest`; only the
+   canonical `AutoSymbolConversion` applies.
+2. **Open (core defect, ticketed)**: entry-vs-exit classification reads the
+   OrderAction label (`Sell` = exit), so a market SELL on a flat account — a
+   short ENTRY — is skipped (`COPY_SKIPPED_NO_POSITION_TO_EXIT`), and a short
+   cover (Buy on short) would classify as ENTRY on a flat follower.
+   **Short entries are never copied.** Ticket:
+   `nt8-riskguard/agent/tickets_copier_classification.json` (CM0, position-delta
+   classification spec + 6-case battery). Verified live: long entry + exit copy
+   correctly; short entry does not.
 
 ## 6c. Financial Juice news/squawk panel (2026-08-31) — verified live
 

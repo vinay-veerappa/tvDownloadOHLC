@@ -9,6 +9,8 @@
  */
 
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import { hud } from './huds/account_pnl.js';
 
 const PORT = Number(process.env.PNL_WIDGET_PORT) || 8635;
@@ -24,6 +26,84 @@ let lastStateHash = '';
 let tvWs = null;
 let tvMsgId = 1;
 let tvConnecting = false;
+
+// ---------------------------------------------------------------------------
+// RiskGuard config integration — the order ticket is driven BY the guard, so
+// the operator cannot select a blocked instrument or oversize at entry.
+// ---------------------------------------------------------------------------
+const RISKGUARD_CONFIG = process.env.RISKGUARD_CONFIG
+  || path.join(process.env.USERPROFILE || '', 'Documents', 'NinjaTrader 8', 'RiskGuard', 'config.json');
+
+let guardConfig = { mode: 'unknown', allowedRoots: [], blockedRoots: [], instrumentLimits: {}, maxPerAccount: null, loaded: false, error: null, loadedAt: null };
+
+function loadGuardConfig() {
+  try {
+    const raw = fs.readFileSync(RISKGUARD_CONFIG, 'utf8');
+    const cfg = JSON.parse(raw);
+    guardConfig = {
+      mode: cfg.Mode || 'unknown',
+      allowedRoots: Array.isArray(cfg.AllowedInstruments) ? cfg.AllowedInstruments : [],
+      blockedRoots: Array.isArray(cfg.BlockedInstruments) ? cfg.BlockedInstruments : [],
+      instrumentLimits: cfg.InstrumentLimits || {},
+      maxPerAccount: cfg.Sizing?.MaxContractsPerAccount ?? null,
+      loaded: true,
+      error: null,
+      loadedAt: Date.now()
+    };
+  } catch (err) {
+    guardConfig = { ...guardConfig, loaded: false, error: err.message, loadedAt: Date.now() };
+  }
+}
+loadGuardConfig();
+setInterval(loadGuardConfig, 30000); // pick up config edits from the RiskGuard UI within 30s
+
+// ---------------------------------------------------------------------------
+// Lockout sweep — checks RiskGuard lockout state for the accounts currently in
+// the fleet (capped) on a slow cadence, so the widget can badge locked rows
+// and disable their B/S buttons instead of letting the operator hit a rejection.
+// ---------------------------------------------------------------------------
+const lockoutCache = new Map(); // account -> { isLockedOut, checkedAt }
+let lockoutSweepBusy = false;
+
+function checkLockout(account) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({ action: 'status', account });
+    const req = http.request({
+      hostname: NT8_HOST, port: NT8_PORT, path: '/api/lockout', method: 'POST',
+      headers: { 'Authorization': `Bearer ${NT8_TOKEN}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 2000
+    }, (res) => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data).isLockedOut === true); } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.write(body);
+    req.end();
+  });
+}
+
+async function sweepLockouts() {
+  if (lockoutSweepBusy || !latestPayload || !Array.isArray(latestPayload.accounts)) return;
+  lockoutSweepBusy = true;
+  try {
+    const accounts = latestPayload.accounts.slice(0, 30).map(a => a.name).filter(Boolean);
+    const stale = accounts.filter(a => {
+      const c = lockoutCache.get(a);
+      return !c || Date.now() - c.checkedAt > 10000;
+    });
+    await Promise.all(stale.map(async (a) => {
+      const locked = await checkLockout(a);
+      if (locked !== null) lockoutCache.set(a, { isLockedOut: locked, checkedAt: Date.now() });
+    }));
+  } finally {
+    lockoutSweepBusy = false;
+  }
+}
+setInterval(sweepLockouts, 2500);
 
 // 1. NinjaTrader 8 Bridge Fetcher
 async function fetchNt8(path) {
@@ -205,6 +285,42 @@ async function triggerEmergencyFlatten(source = 'HUD') {
     });
 
     req.write(JSON.stringify({ reason: `Operator Panic Flatten (${source})` }));
+    req.end();
+  });
+}
+
+// Proxy an order placement to the NT8 bridge (widget page -> 8635 -> NT8 7890)
+function proxyOrderToNt8(bodyJson) {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: NT8_HOST,
+      port: NT8_PORT,
+      path: '/api/order/atm',
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${NT8_TOKEN}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(bodyJson)
+      },
+      timeout: 5000
+    };
+
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try {
+          resolve({ statusCode: res.statusCode, body: JSON.parse(data) });
+        } catch {
+          resolve({ statusCode: res.statusCode, body: { error: data.slice(0, 300) } });
+        }
+      });
+    });
+
+    req.on('error', (err) => resolve({ statusCode: 502, body: { error: `NT8 bridge: ${err.message}` } }));
+    req.on('timeout', () => { req.destroy(); resolve({ statusCode: 504, body: { error: 'NT8 bridge timeout' } }); });
+
+    req.write(bodyJson);
     req.end();
   });
 }
@@ -407,6 +523,23 @@ const server = http.createServer((req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     });
+  } else if (req.url === '/api/order/atm' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 10000) req.destroy(); });
+    req.on('end', () => {
+      proxyOrderToNt8(body).then(({ statusCode, body: respBody }) => {
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(respBody));
+      });
+    });
+  } else if (req.url === '/api/guard/config') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(guardConfig));
+  } else if (req.url === '/api/lockouts') {
+    const out = {};
+    lockoutCache.forEach((v, k) => { out[k] = v.isLockedOut; });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(out));
   } else if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({

@@ -8,6 +8,7 @@
  * - Copy-Trading Sync Grid: Leader vs Follower Expected vs Actual position validation
  * - Orphan Position Alert & Desync Warning System
  * - Emergency Fleet Flatten Action Button with 2-click confirm & CDP bridge
+ * - Order Ticket: Buy/Sell market entry with a server-side ATM bracket (widget + HUD)
  * - Live Heartbeat & Stream Latency Indicator
  * - Dual Mode Support: TradingView In-Chart HUD & Standalone Floating Desktop Widget
  */
@@ -18,7 +19,7 @@ export const hud = {
   styleId: 'ws-pnl-panel-style',
   name: 'Fleet P&L & Copy-Trading Sync Monitor',
   description: 'Real-time multi-account P&L, positions, open contracts, and copy-trading follower synchronization validator with interactive sorting.',
-  version: '2.3.0',
+  version: '2.4.0',
   defaultPosition: {
     top: 65,
     right: 65,
@@ -341,6 +342,24 @@ export const hud = {
         color: #9db2d4;
         font-weight: 700;
       }
+      .ws-pnl-rel-badge {
+        font-size: 8px;
+        font-weight: 800;
+        padding: 1px 4px;
+        border-radius: 3px;
+        letter-spacing: 0.3px;
+        white-space: nowrap;
+      }
+      .ws-pnl-rel-badge.leader {
+        background: rgba(41, 98, 255, 0.2);
+        color: #5b8def;
+        border: 1px solid rgba(41, 98, 255, 0.5);
+      }
+      .ws-pnl-rel-badge.follower { background: #2a2e39; color: #9db2d4; }
+      .ws-pnl-rel-badge.follower.ok { background: rgba(8, 153, 129, 0.15); color: #089981; }
+      .ws-pnl-rel-badge.follower.mismatch { background: rgba(247, 82, 95, 0.2); color: #f7525f; font-weight: 800; }
+      .ws-pnl-rel-badge.follower.quarantine { background: rgba(171, 71, 188, 0.2); color: #ab47bc; }
+      .ws-pnl-rel-badge.follower.disabled { background: #2a2e39; color: #787b86; }
       .ws-pnl-pos-badge {
         font-weight: 700;
         padding: 2px 6px;
@@ -367,6 +386,157 @@ export const hud = {
       .ws-pnl-money-pos { color: #089981; font-weight: 600; }
       .ws-pnl-money-neg { color: #f7525f; font-weight: 600; }
       .ws-pnl-money-zero { color: #787b86; }
+
+      /* Order Ticket (shared params bar + per-account row buttons) */
+      .ws-pnl-order-ticket {
+        background: #10141d;
+        border-bottom: 1px solid #2a2e39;
+        padding: 6px 10px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        flex-shrink: 0;
+      }
+      .ws-pnl-ot-group {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .ws-pnl-ot-label {
+        font-size: 9px;
+        color: #787b86;
+        text-transform: uppercase;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+      }
+      .ws-pnl-ot-symbol {
+        background: #131722;
+        border: 1px solid #2a2e39;
+        border-radius: 4px;
+        color: #f0f3fa;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 4px 4px;
+        width: 118px;
+        outline: none;
+        cursor: pointer;
+      }
+      .ws-pnl-ot-symbol:focus { border-color: #2962ff; }
+      .ws-pnl-ot-symbol option { background: #131722; color: #d1d4dc; }
+      .ws-pnl-ot-max {
+        font-size: 9px;
+        font-weight: 700;
+        color: #f7a600;
+        white-space: nowrap;
+      }
+      .ws-pnl-guard-chip {
+        font-size: 9px;
+        font-weight: 800;
+        padding: 2px 6px;
+        border-radius: 3px;
+        letter-spacing: 0.3px;
+        white-space: nowrap;
+      }
+      .ws-pnl-guard-chip.shadow { background: rgba(247, 166, 0, 0.15); color: #f7a600; border: 1px solid rgba(247, 166, 0, 0.5); }
+      .ws-pnl-guard-chip.live { background: rgba(8, 153, 129, 0.15); color: #089981; border: 1px solid rgba(8, 153, 129, 0.5); }
+      .ws-pnl-guard-chip.off { background: #2a2e39; color: #787b86; }
+      .ws-pnl-lock-badge {
+        font-size: 9px;
+        font-weight: 800;
+        padding: 1px 4px;
+        border-radius: 3px;
+        background: rgba(247, 82, 95, 0.2);
+        color: #f7525f;
+        white-space: nowrap;
+      }
+      .ws-pnl-ot-row-btn.locked {
+        opacity: 0.25;
+        pointer-events: none;
+      }
+      .ws-pnl-ot-qty {
+        background: #131722;
+        border: 1px solid #2a2e39;
+        border-radius: 4px;
+        color: #f0f3fa;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 4px 4px;
+        width: 42px;
+        text-align: center;
+        outline: none;
+        font-variant-numeric: tabular-nums;
+      }
+      .ws-pnl-ot-qty:focus { border-color: #2962ff; }
+      .ws-pnl-ot-ticks {
+        background: #131722;
+        border: 1px solid #2a2e39;
+        border-radius: 4px;
+        color: #d1d4dc;
+        font-size: 11px;
+        padding: 4px 4px;
+        width: 46px;
+        text-align: center;
+        outline: none;
+        font-variant-numeric: tabular-nums;
+      }
+      .ws-pnl-ot-ticks:focus { border-color: #2962ff; }
+      .ws-pnl-ot-atm {
+        background: #131722;
+        border: 1px solid #2a2e39;
+        border-radius: 4px;
+        color: #d1d4dc;
+        font-size: 11px;
+        padding: 4px 6px;
+        width: 108px;
+        outline: none;
+      }
+      .ws-pnl-ot-atm:focus { border-color: #2962ff; }
+      .ws-pnl-ot-status {
+        font-size: 10px;
+        font-weight: 600;
+        color: #787b86;
+        flex: 1;
+        text-align: right;
+        min-width: 100px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .ws-pnl-ot-status.ok { color: #089981; }
+      .ws-pnl-ot-status.err { color: #f7525f; }
+
+      /* Per-account row trade buttons */
+      .ws-pnl-ot-row-btn {
+        background: transparent;
+        border: 1px solid #2a2e39;
+        color: #787b86;
+        font-size: 9px;
+        font-weight: 800;
+        padding: 2px 7px;
+        border-radius: 3px;
+        cursor: pointer;
+        transition: all 0.12s ease;
+        letter-spacing: 0.4px;
+      }
+      .ws-pnl-ot-row-btn.b:hover {
+        background: #089981;
+        border-color: #089981;
+        color: #fff;
+      }
+      .ws-pnl-ot-row-btn.s:hover {
+        background: #f7525f;
+        border-color: #f7525f;
+        color: #fff;
+      }
+      .ws-pnl-ot-row-btn.busy {
+        opacity: 0.4;
+        pointer-events: none;
+      }
+      .ws-pnl-ot-trade-cell {
+        white-space: nowrap;
+        text-align: center;
+      }
 
       /* Footer */
       .ws-pnl-footer {
@@ -423,6 +593,40 @@ export const hud = {
           <span id="ws-pnl-copier-sync-msg" style="color: #9db2d4;">All relationships verified</span>
         </div>
         <button class="ws-pnl-flatten-btn" id="ws-pnl-btn-flatten" title="Emergency Flatten all open accounts">🚨 PANIC FLATTEN</button>
+      </div>
+      <div class="ws-pnl-order-ticket" id="ws-pnl-order-ticket">
+        <div class="ws-pnl-ot-group">
+          <span class="ws-pnl-ot-label">Symbol</span>
+          <select class="ws-pnl-ot-symbol" id="ws-pnl-ot-symbol">
+            <option value="">…</option>
+          </select>
+          <span class="ws-pnl-ot-max" id="ws-pnl-ot-max" title="Max contracts per RiskGuard config"></span>
+        </div>
+        <div class="ws-pnl-ot-group">
+          <span class="ws-pnl-ot-label">Qty</span>
+          <input type="number" class="ws-pnl-ot-qty" id="ws-pnl-ot-qty" value="1" min="1" max="50" />
+        </div>
+        <div class="ws-pnl-ot-group">
+          <span class="ws-pnl-ot-label">ATM</span>
+          <select class="ws-pnl-ot-atm" id="ws-pnl-ot-atm" title="ATM bracket strategy — AUTO = per-instrument profile. SL/T ticks apply to tick strategies; ATR strategies compute from ATR.">
+            <option value="">AUTO</option>
+            <option value="FixedTicks">FixedTicks</option>
+            <option value="AtrAdaptive">AtrAdaptive</option>
+            <option value="SwingPoint">SwingPoint</option>
+            <option value="DrawdownShield">DrawdownShield</option>
+            <option value="ScaledRunner">ScaledRunner</option>
+            <option value="VolatilityScaled">VolatilityScaled</option>
+            <option value="SessionAdaptive">SessionAdaptive</option>
+            <option value="KellyOptimal">KellyOptimal</option>
+          </select>
+        </div>
+        <div class="ws-pnl-ot-group">
+          <span class="ws-pnl-ot-label">SL/T</span>
+          <input type="number" class="ws-pnl-ot-ticks" id="ws-pnl-ot-stop" value="40" min="1" title="Stop distance in ticks" />
+          <input type="number" class="ws-pnl-ot-ticks" id="ws-pnl-ot-target" value="80" min="1" title="Target distance in ticks" />
+        </div>
+        <span class="ws-pnl-guard-chip off" id="ws-pnl-guard-chip" title="RiskGuard mode">GUARD</span>
+        <span class="ws-pnl-ot-status" id="ws-pnl-ot-status">B/S on each account row</span>
       </div>
       <div class="ws-pnl-toolbar">
         <div class="ws-pnl-view-tabs" id="ws-pnl-view-tabs">
@@ -511,41 +715,23 @@ export const hud = {
         });
       }
 
-      // Emergency Flatten
+      // Emergency Flatten — single click, no confirmation (it's a PANIC button)
       const btnFlatten = panel.querySelector('#ws-pnl-btn-flatten');
       if (btnFlatten) {
-        let flattenConfirm = false;
         btnFlatten.addEventListener('click', async (e) => {
           e.stopPropagation();
-          if (!flattenConfirm) {
-            flattenConfirm = true;
-            btnFlatten.textContent = 'CONFIRM FLATTEN ALL?';
-            btnFlatten.style.background = '#f7525f';
-            btnFlatten.style.color = '#fff';
-            setTimeout(() => {
-              flattenConfirm = false;
-              btnFlatten.textContent = '🚨 PANIC FLATTEN';
-              btnFlatten.style.background = 'rgba(247, 82, 95, 0.15)';
-              btnFlatten.style.color = '#f7525f';
-            }, 4000);
-          } else {
-            btnFlatten.textContent = 'FLATTENING FLEET...';
-            flattenConfirm = false;
-            // Signal to CDP poller
-            panel.setAttribute('data-panic-flatten', Date.now().toString());
-            try {
-              if (window.__TV_PNL_FLATTEN_HOOK) {
-                window.__TV_PNL_FLATTEN_HOOK();
-              }
-            } catch (err) {
-              console.error('Flatten failed:', err);
+          btnFlatten.textContent = 'FLATTENING FLEET...';
+          panel.setAttribute('data-panic-flatten', Date.now().toString());
+          try {
+            if (window.__TV_PNL_FLATTEN_HOOK) {
+              window.__TV_PNL_FLATTEN_HOOK();
             }
-            setTimeout(() => {
-              btnFlatten.textContent = '🚨 PANIC FLATTEN';
-              btnFlatten.style.background = 'rgba(247, 82, 95, 0.15)';
-              btnFlatten.style.color = '#f7525f';
-            }, 2500);
+          } catch (err) {
+            console.error('Flatten failed:', err);
           }
+          setTimeout(() => {
+            btnFlatten.textContent = '🚨 PANIC FLATTEN';
+          }, 2500);
         });
       }
 
@@ -740,20 +926,69 @@ export const hud = {
         tbody.innerHTML = html;
       }
 
+      function otBuildRelIndex() {
+        const rel = { leaders: {}, followers: {} };
+        (state.copierRows || []).forEach(r => {
+          const L = r.leaderAccountName, F = r.followerAccountName;
+          if (!L || !F) return;
+          rel.leaders[L] = (rel.leaders[L] || 0) + 1;
+          rel.followers[F] = r;
+        });
+        return rel;
+      }
+
+      // Relationship badges are injected into each account's name cell by
+      // otApplyRelBadges() after rows exist; rows are stable, badges are
+      // updated in place rather than re-rendered with the table.
+      function otApplyRelBadges() {
+        const rel = otBuildRelIndex();
+        panel.querySelectorAll('tr[data-acc]').forEach(tr => {
+          const name = tr.getAttribute('data-acc');
+          const nameDiv = tr.querySelector('.ws-pnl-acc-name');
+          if (!nameDiv) return;
+          let html = '';
+          if (rel.leaders[name]) {
+            html += '<span class="ws-pnl-rel-badge leader" title="Copy-trader LEADER driving ' + rel.leaders[name] + ' follower account(s)">⚡LEADER·' + rel.leaders[name] + '</span>';
+          }
+          const fr = rel.followers[name];
+          if (fr) {
+            const isMatch = (fr.expectedSide === fr.actualSide && fr.expectedQuantity === fr.actualQuantity);
+            let cls = 'ok', label = 'SYNCED';
+            if (!fr.isEnabled) { cls = 'disabled'; label = 'OFF'; }
+            else if (fr.isQuarantined) { cls = 'quarantine'; label = 'QTN'; }
+            else if (!isMatch) { cls = 'mismatch'; label = 'DESYNC'; }
+            html += '<span class="ws-pnl-rel-badge follower ' + cls + '" title="Copy FOLLOWER of ' + fr.leaderAccountName + ' — ' + label + '">' +
+              '↳' + fr.leaderAccountName + '·' + label + '</span>';
+          }
+          const badgeLayer = tr.querySelector('.ws-pnl-rel-badges');
+          if (!badgeLayer) {
+            const layer = document.createElement('span');
+            layer.className = 'ws-pnl-rel-badges';
+            nameDiv.appendChild(layer);
+            layer.innerHTML = html;
+          } else if (badgeLayer.innerHTML !== html) {
+            badgeLayer.innerHTML = html;
+          }
+        });
+      }
+
       function renderAccountsView() {
         const thead = panel.querySelector('#ws-pnl-thead');
         const tbody = panel.querySelector('#ws-pnl-tbody');
         if (!tbody || !thead) return;
 
-        thead.innerHTML = '<tr>' +
+        const desiredHead = '<tr>' +
           '<th class="sortable" data-sort="name">Account ' + getSortIcon('name') + '</th>' +
           '<th class="sortable" data-sort="pos">Position / Contracts ' + getSortIcon('pos') + '</th>' +
           '<th class="sortable" data-sort="unrealized" style="text-align:right;">Unrealized ' + getSortIcon('unrealized') + '</th>' +
           '<th class="sortable" data-sort="realized" style="text-align:right;">Realized ' + getSortIcon('realized') + '</th>' +
           '<th class="sortable" data-sort="netLiq" style="text-align:right;">Net Liq ' + getSortIcon('netLiq') + '</th>' +
+          '<th style="text-align:center;" title="Market entry with ATM bracket using the shared ticket params">B / S</th>' +
         '</tr>';
-
-        attachHeaderSortListeners();
+        if (thead.innerHTML !== desiredHead) {
+          thead.innerHTML = desiredHead;
+          attachHeaderSortListeners();
+        }
 
         const accounts = state.accounts || [];
         const positions = state.positions || [];
@@ -810,16 +1045,79 @@ export const hud = {
           return state.sortDir === 'asc' ? -diff : diff;
         });
 
-        if (filtered.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#787b86; padding:20px;">No accounts found</td></tr>';
+        // Stable-row rendering: rows are created once per account and reused, so
+        // buttons never move or vanish under the cursor. Only the volatile cell
+        // values are updated in place on each 200ms tick. A full rebuild happens
+        // only when the account SET or its ORDER changes (sort/filter/view).
+        const orderKey = filtered.map(a => a.name).join('\u0001');
+        if (tbody.getAttribute('data-build-key') !== state.currentView + '|' + orderKey) {
+          tbody.setAttribute('data-build-key', state.currentView + '|' + orderKey);
+          tbody.innerHTML = '';
+          if (filtered.length === 0) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = 6;
+            td.style.cssText = 'text-align:center; color:#787b86; padding:20px;';
+            td.textContent = 'No accounts found';
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+          }
+          filtered.forEach(acc => {
+            const tr = document.createElement('tr');
+            tr.setAttribute('data-acc', acc.name);
+            const nameCell = document.createElement('td');
+            const nameDiv = document.createElement('div');
+            nameDiv.className = 'ws-pnl-acc-name';
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = acc.name;
+            const typeSpan = document.createElement('span');
+            typeSpan.className = 'ws-pnl-acc-type';
+            typeSpan.textContent = getAccType(acc.name, acc.provider);
+            nameDiv.appendChild(nameSpan);
+            nameDiv.appendChild(typeSpan);
+            nameCell.appendChild(nameDiv);
+            const posCell = document.createElement('td');
+            const uCell = document.createElement('td');
+            uCell.style.textAlign = 'right';
+            const rCell = document.createElement('td');
+            rCell.style.textAlign = 'right';
+            const liqCell = document.createElement('td');
+            liqCell.style.textAlign = 'right';
+            liqCell.style.fontWeight = '600';
+            liqCell.style.color = '#f0f3fa';
+            const tradeCell = document.createElement('td');
+            tradeCell.className = 'ws-pnl-ot-trade-cell';
+            const bBtn = document.createElement('button');
+            bBtn.className = 'ws-pnl-ot-row-btn b';
+            bBtn.setAttribute('data-ot-acc', acc.name);
+            bBtn.setAttribute('data-ot-side', 'buy');
+            bBtn.textContent = 'B';
+            const sBtn = document.createElement('button');
+            sBtn.className = 'ws-pnl-ot-row-btn s';
+            sBtn.setAttribute('data-ot-acc', acc.name);
+            sBtn.setAttribute('data-ot-side', 'sell');
+            sBtn.textContent = 'S';
+            tradeCell.appendChild(bBtn);
+            tradeCell.appendChild(document.createTextNode(' '));
+            tradeCell.appendChild(sBtn);
+            tr.appendChild(nameCell);
+            tr.appendChild(posCell);
+            tr.appendChild(uCell);
+            tr.appendChild(rCell);
+            tr.appendChild(liqCell);
+            tr.appendChild(tradeCell);
+            tbody.appendChild(tr);
+          });
+        } else if (filtered.length === 0) {
           return;
         }
 
-        let html = '';
         filtered.forEach(acc => {
+          const tr = tbody.querySelector('tr[data-acc="' + CSS.escape(acc.name) + '"]');
+          if (!tr) return;
           const pos = posMap[acc.name];
-          const type = getAccType(acc.name, acc.provider);
-          
+          const cells = tr.children;
+
           let posHtml = '<span class="ws-pnl-pos-badge ws-pnl-pos-flat">0 (FLAT)</span>';
           let uPnl = Number(acc.unrealizedPnL) || 0;
 
@@ -832,7 +1130,7 @@ export const hud = {
             const price = Number(pos.avgPrice || pos.averagePrice || 0);
             const priceStr = price > 0 ? ' @ ' + price.toFixed(2) : '';
             posHtml = '<span class="ws-pnl-pos-badge ' + cls + '">' + (isLong ? 'LONG' : 'SHORT') + ' ' + qty + ' ' + sym + priceStr + '</span>';
-            
+
             if (pos.unrealizedPnL !== undefined && pos.unrealizedPnL !== null) {
               uPnl = Number(pos.unrealizedPnL) || uPnl;
             }
@@ -844,16 +1142,14 @@ export const hud = {
           const uCls = uPnl > 0 ? 'ws-pnl-money-pos' : uPnl < 0 ? 'ws-pnl-money-neg' : 'ws-pnl-money-zero';
           const rCls = rPnl > 0 ? 'ws-pnl-money-pos' : rPnl < 0 ? 'ws-pnl-money-neg' : 'ws-pnl-money-zero';
 
-          html += '<tr>' +
-            '<td><div class="ws-pnl-acc-name"><span>' + acc.name + '</span><span class="ws-pnl-acc-type">' + type + '</span></div></td>' +
-            '<td>' + posHtml + '</td>' +
-            '<td style="text-align:right;" class="' + uCls + '">' + fmtMoney(uPnl) + '</td>' +
-            '<td style="text-align:right;" class="' + rCls + '">' + fmtMoney(rPnl) + '</td>' +
-            '<td style="text-align:right; font-weight:600; color:#f0f3fa;">' + fmtMoney(netLiq) + '</td>' +
-          '</tr>';
+          const posCell = cells[1];
+          if (posCell.innerHTML !== posHtml) posCell.innerHTML = posHtml;
+          if (cells[2].className !== uCls) cells[2].className = uCls;
+          if (cells[2].textContent !== fmtMoney(uPnl)) cells[2].textContent = fmtMoney(uPnl);
+          if (cells[3].className !== rCls) cells[3].className = rCls;
+          if (cells[3].textContent !== fmtMoney(rPnl)) cells[3].textContent = fmtMoney(rPnl);
+          if (cells[4].textContent !== fmtMoney(netLiq)) cells[4].textContent = fmtMoney(netLiq);
         });
-
-        tbody.innerHTML = html;
       }
 
       function renderTable() {
@@ -861,6 +1157,224 @@ export const hud = {
           renderCopierView();
         } else {
           renderAccountsView();
+        }
+      }
+
+      // Order Ticket — shared params bar + per-account B/S buttons in the P&L table
+      const otStatus = panel.querySelector('#ws-pnl-ot-status');
+      const otSymbol = panel.querySelector('#ws-pnl-ot-symbol');
+      const otQty = panel.querySelector('#ws-pnl-ot-qty');
+      const otAtm = panel.querySelector('#ws-pnl-ot-atm');
+      const otStop = panel.querySelector('#ws-pnl-ot-stop');
+      const otTarget = panel.querySelector('#ws-pnl-ot-target');
+      const otMax = panel.querySelector('#ws-pnl-ot-max');
+      const guardChip = panel.querySelector('#ws-pnl-guard-chip');
+      let tbodyDelegated = false;
+
+      // RiskGuard config — drives the ticker list and qty cap. The guard is the
+      // authority; the ticket just renders its rules so a blocked instrument or
+      // oversize is unselectable rather than rejected after the fact.
+      state.guardCfg = state.guardCfg || null;
+      state.lockouts = state.lockouts || {};
+
+      function otQuarterContracts() {
+        // Front + next quarterly codes from today (UTC): Mar/Jun/Sep/Dec
+        const now = new Date();
+        const y0 = now.getUTCFullYear();
+        const m0 = now.getUTCMonth(); // 0-11
+        const quarters = [[2, '03'], [5, '06'], [8, '09'], [11, '12']];
+        const yy = (y) => String(y % 100).padStart(2, '0');
+        const q = [];
+        for (let y = y0; y <= y0 + 1; y++) {
+          quarters.forEach(function (pair) {
+            const mm = pair[0], code = pair[1];
+            if (y === y0 && mm < m0) return; // past quarters out
+            q.push(code + '-' + yy(y));
+          });
+        }
+        return q.slice(0, 2); // front + next
+      }
+
+      function otApplyGuardConfig(cfg) {
+        state.guardCfg = cfg;
+        if (!otSymbol) return;
+        if (!cfg || !cfg.loaded) {
+          guardChip.textContent = 'GUARD?';
+          guardChip.className = 'ws-pnl-guard-chip off';
+          guardChip.title = 'RiskGuard config not readable: ' + (cfg && cfg.error ? cfg.error : 'unknown');
+          return;
+        }
+        const modeCls = cfg.mode === 'live' ? 'live' : cfg.mode === 'shadow' ? 'shadow' : 'off';
+        guardChip.textContent = 'GUARD: ' + String(cfg.mode).toUpperCase();
+        guardChip.className = 'ws-pnl-guard-chip ' + modeCls;
+        guardChip.title = 'RiskGuard ' + cfg.mode + ' — allowed: ' + cfg.allowedRoots.join(', ');
+
+        const contracts = otQuarterContracts();
+        const prev = otSymbol.value;
+        otSymbol.innerHTML = '';
+        (cfg.allowedRoots || []).forEach(root => {
+          contracts.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = root + ' ' + c;
+            opt.textContent = root + ' ' + c;
+            otSymbol.appendChild(opt);
+          });
+        });
+        if (prev && Array.from(otSymbol.options).some(o => o.value === prev)) otSymbol.value = prev;
+        otUpdateQtyCap();
+      }
+
+      function otCurrentRoot() {
+        return (otSymbol?.value || '').split(' ')[0].toUpperCase();
+      }
+
+      function otUpdateQtyCap() {
+        if (!otMax) return;
+        const cfg = state.guardCfg;
+        const root = otCurrentRoot();
+        if (!cfg || !cfg.loaded || !root) { otMax.textContent = ''; return; }
+        const perInstr = cfg.instrumentLimits && cfg.instrumentLimits[root] && cfg.instrumentLimits[root].MaxContracts;
+        const caps = [perInstr, cfg.maxPerAccount, parseInt(otQty?.max, 10) || 50].filter(v => typeof v === 'number' && v > 0);
+        const cap = Math.min(...caps);
+        otMax.textContent = 'max ' + cap;
+        otMax.title = 'RiskGuard cap' + (perInstr ? ' (' + root + ': ' + perInstr + ')' : '') + (cfg.maxPerAccount ? ' / account: ' + cfg.maxPerAccount : '');
+        if (otQty) {
+          otQty.max = String(cap);
+          if ((parseInt(otQty.value, 10) || 1) > cap) otQty.value = String(cap);
+        }
+      }
+
+      async function otFetchGuardConfig() {
+        try {
+          const res = await fetch('/api/guard/config');
+          otApplyGuardConfig(await res.json());
+        } catch { /* keep last */ }
+      }
+      otFetchGuardConfig();
+      setInterval(otFetchGuardConfig, 30000);
+
+      async function otFetchLockouts() {
+        try {
+          const res = await fetch('/api/lockouts');
+          state.lockouts = await res.json();
+          otApplyLockouts();
+        } catch { /* keep last */ }
+      }
+      otFetchLockouts();
+      setInterval(otFetchLockouts, 3000);
+
+      function otApplyLockouts() {
+        panel.querySelectorAll('tr[data-acc]').forEach(tr => {
+          const acc = tr.getAttribute('data-acc');
+          const locked = state.lockouts[acc] === true;
+          tr.querySelectorAll('.ws-pnl-ot-row-btn').forEach(btn => btn.classList.toggle('locked', locked));
+          let badge = tr.querySelector('.ws-pnl-lock-badge');
+          if (locked && !badge) {
+            const nameCell = tr.querySelector('.ws-pnl-acc-name');
+            if (nameCell) {
+              badge = document.createElement('span');
+              badge.className = 'ws-pnl-lock-badge';
+              badge.title = 'RiskGuard lockout active — orders refused';
+              badge.textContent = '🔒LOCKED';
+              nameCell.appendChild(badge);
+            }
+          } else if (!locked && badge) {
+            badge.remove();
+          }
+        });
+      }
+
+      if (otSymbol) otSymbol.addEventListener('change', otUpdateQtyCap);
+
+      function otSetStatus(msg, cls) {
+        if (!otStatus) return;
+        otStatus.textContent = msg;
+        otStatus.className = 'ws-pnl-ot-status' + (cls ? ' ' + cls : '');
+      }
+
+      async function otPlaceOrder(side, account) {
+        const symbol = (otSymbol?.value || '').trim().toUpperCase();
+        const qty = parseInt(otQty?.value, 10) || 0;
+        const strategyName = (otAtm?.value || '').trim() || undefined;
+        const stopTicks = parseInt(otStop?.value, 10) || 0;
+        const targetTicks = parseInt(otTarget?.value, 10) || 0;
+
+        if (!account) return otSetStatus('No account', 'err');
+        if (!symbol) return otSetStatus('Pick a symbol in the ticket bar', 'err');
+        if (qty < 1) return otSetStatus('Qty must be >= 1', 'err');
+        if (!stopTicks || !targetTicks) return otSetStatus('SL/T ticks required', 'err');
+
+        const busyKey = account + '|' + side;
+        state.otBusy = state.otBusy || {};
+        if (state.otBusy[busyKey]) return;
+        state.otBusy[busyKey] = true;
+        otApplyBusy();
+        otSetStatus('Submitting ' + side.toUpperCase() + ' ' + qty + ' ' + symbol + ' on ' + account + '...');
+
+        try {
+          const res = await fetch('/api/order/atm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              symbol, action: side, quantity: qty, account,
+              strategyName, stopTicks, targetTicks,
+              idempotencyKey: 'ot-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
+            })
+          });
+          const json = await res.json().catch(() => ({}));
+          if (res.ok && !json.error) {
+            otSetStatus('OK ' + side.toUpperCase() + ' ' + qty + ' ' + symbol + ' ' + account + ' [' + (json.bracketId || 'bracket') + ']', 'ok');
+          } else {
+            otSetStatus('REJECTED ' + account + ': ' + (json.error || ('HTTP ' + res.status)), 'err');
+          }
+        } catch (err) {
+          otSetStatus('FAILED ' + account + ': ' + err.message, 'err');
+        } finally {
+          state.otBusy[busyKey] = false;
+          otApplyBusy();
+        }
+      }
+
+      // The table re-renders every 200ms; re-apply busy state to the fresh buttons
+      function otApplyBusy() {
+        const busy = state.otBusy || {};
+        panel.querySelectorAll('.ws-pnl-ot-row-btn').forEach(btn => {
+          const key = (btn.getAttribute('data-ot-acc') || '') + '|' + (btn.getAttribute('data-ot-side') || '');
+          btn.classList.toggle('busy', !!busy[key]);
+        });
+      }
+
+      // Merge symbols seen in open positions into the ticker dropdown (keeps the
+      // static list but self-corrects for whatever the fleet is actually trading)
+      function otSyncSymbolOptions(positions) {
+        if (!otSymbol) return;
+        const known = new Set(Array.from(otSymbol.options).map(o => o.value.toUpperCase()));
+        (positions || []).forEach(p => {
+          const sym = (p.symbol || p.instrument || '').toUpperCase();
+          if (!sym || !p.marketPosition || p.marketPosition === 'Flat') return;
+          if (!known.has(sym)) {
+            const opt = document.createElement('option');
+            opt.value = sym;
+            opt.textContent = sym;
+            otSymbol.appendChild(opt);
+            known.add(sym);
+          }
+        });
+      }
+
+      // Event delegation: ONE listener on tbody survives every row rebuild/reuse.
+      // Per-button listeners were destroyed by the 200ms re-render — a click was
+      // eaten whenever innerHTML replaced the node between mousedown and mouseup.
+      if (tbodyDelegated !== true) {
+        tbodyDelegated = true;
+        const tbodyEl = panel.querySelector('#ws-pnl-tbody');
+        if (tbodyEl) {
+          tbodyEl.addEventListener('click', (e) => {
+            const btn = e.target.closest('.ws-pnl-ot-row-btn');
+            if (!btn) return;
+            e.stopPropagation();
+            otPlaceOrder(btn.getAttribute('data-ot-side'), btn.getAttribute('data-ot-acc'));
+          });
         }
       }
 
@@ -968,6 +1482,10 @@ export const hud = {
         }
         if (elFooterTime) elFooterTime.textContent = 'Live \u2022 ' + new Date().toLocaleTimeString();
 
+        otSyncSymbolOptions(state.positions);
+        otApplyBusy();
+        otApplyLockouts();
+        otApplyRelBadges();
         renderTable();
       };
     })

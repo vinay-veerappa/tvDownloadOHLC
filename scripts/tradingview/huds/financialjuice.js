@@ -210,6 +210,30 @@ export const hud = {
       .ws-fj-iframe.active {
         display: block;
       }
+      /* EconCal embed hard-caps its own content at ~350px (#comingUp{width:340px}),
+         so rendering it oversized-and-scaled makes it TINIER. Instead: native size,
+         centered horizontally, with the panel's spare width as dark background. */
+      .ws-fj-iframe.ecocal-fit {
+        width: 420px;
+        max-width: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+      /* Full-width variant — used by the standalone widget, which serves the
+         calendar through its same-origin reverse proxy (/fjcal/) with CSS
+         overrides that stretch the embed to the frame */
+      .ws-fj-iframe.ecocal-full {
+        width: 100%;
+        left: 0;
+        transform: none;
+      }
+      /* Voice player embed renders a large logo that overflows its 52px bar — same treatment */
+      .ws-fj-voice-wrap iframe {
+        width: 200%;
+        height: 200%;
+        transform: scale(0.5);
+        transform-origin: 0 0;
+      }
       body.ws-fj-dragging iframe {
         pointer-events: none !important;
       }
@@ -247,7 +271,7 @@ export const hud = {
         </div>
         <div class="ws-fj-content" id="ws-fj-content">
           <iframe id="ws-fj-frame-headlines" class="ws-fj-iframe ${defaultTab === 'headlines' ? 'active' : ''}" src="https://feed.financialjuice.com/widgets/headlines.aspx"></iframe>
-          <iframe id="ws-fj-frame-ecocal" class="ws-fj-iframe ${defaultTab === 'ecocal' ? 'active' : ''}" ${defaultTab === 'ecocal' ? 'src="https://feed.financialjuice.com/widgets/ecocal.aspx"' : 'data-src="https://feed.financialjuice.com/widgets/ecocal.aspx"'}></iframe>
+          <iframe id="ws-fj-frame-ecocal" class="ws-fj-iframe ecocal-fit ${defaultTab === 'ecocal' ? 'active' : ''}" ${defaultTab === 'ecocal' ? 'src="https://feed.financialjuice.com/widgets/ecocal.aspx"' : 'data-src="https://feed.financialjuice.com/widgets/ecocal.aspx"'}></iframe>
           <iframe id="ws-fj-frame-tickstrike" class="ws-fj-iframe ${defaultTab === 'tickstrike' ? 'active' : ''}" ${defaultTab === 'tickstrike' ? 'src="https://www.financialjuice.com/widgets/ts.aspx"' : 'data-src="https://www.financialjuice.com/widgets/ts.aspx"'}></iframe>
         </div>
       </div>

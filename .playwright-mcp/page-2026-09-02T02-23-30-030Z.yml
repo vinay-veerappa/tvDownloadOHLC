@@ -1,0 +1,1391 @@
+- generic [active] [ref=f5e1]:
+  - generic [ref=f5e6]:
+    - generic [ref=f5e8]:
+      - generic [ref=f5e9]: Time
+      - generic [ref=f5e11]: Actual
+      - generic [ref=f5e12]: Forecast
+      - generic [ref=f5e13]: Previous
+      - generic [ref=f5e14] [cursor=pointer]: 
+    - generic [ref=f5e16]:
+      - generic [ref=f5e17]: September 01
+      - generic [ref=f5e19]:
+        - generic "Australian Real GDP YoY" [ref=f5e20]:
+          - generic [ref=f5e21]: 18:30
+          - link "Australian Real GDP YoY" [ref=f5e25] [cursor=pointer]:
+            - /url: https://www.abs.gov.au/statistics/economy/national-accounts/australian-national-accounts-national-income-expenditure-and-product/sep-2021
+        - generic [ref=f5e26]:
+          - generic [ref=f5e28] [cursor=pointer]: 
+          - generic [ref=f5e29]: 2.1%
+          - generic [ref=f5e30]: 1.8%
+          - generic [ref=f5e31]: 2.5%
+          - generic [ref=f5e32] [cursor=pointer]: 
+      - generic [ref=f5e34]:
+        - generic "Australian Real GDP QoQ" [ref=f5e35]:
+          - generic [ref=f5e36]: 18:30
+          - link "Australian Real GDP QoQ" [ref=f5e40] [cursor=pointer]:
+            - /url: https://www.abs.gov.au/statistics/economy/national-accounts/australian-national-accounts-national-income-expenditure-and-product/sep-2021
+        - generic [ref=f5e41]:
+          - generic [ref=f5e43] [cursor=pointer]: 
+          - generic [ref=f5e44]: 0.4%
+          - generic [ref=f5e45]: 0.3%
+          - generic [ref=f5e46]: 0.3%
+          - generic [ref=f5e47] [cursor=pointer]: 
+      - generic [ref=f5e49]:
+        - generic "RBNZ Rate Statement" [ref=f5e50]: 19:00
+        - generic [ref=f5e55]:
+          - generic [ref=f5e57] [cursor=pointer]: 
+          - generic [ref=f5e58]: "-"
+          - generic [ref=f5e59]: "-"
+          - generic [ref=f5e60]: "-"
+          - generic [ref=f5e61] [cursor=pointer]: 
+      - generic [ref=f5e63]:
+        - generic "RBNZ Monetary Policy Statement" [ref=f5e64]: 19:00
+        - generic [ref=f5e69]:
+          - generic [ref=f5e71] [cursor=pointer]: 
+          - generic [ref=f5e72]: "-"
+          - generic [ref=f5e73]: "-"
+          - generic [ref=f5e74]: "-"
+          - generic [ref=f5e75] [cursor=pointer]: 
+      - generic [ref=f5e77]:
+        - generic "New Zealand Cash Rate" [ref=f5e78]: 19:00
+        - generic [ref=f5e83]:
+          - generic [ref=f5e85] [cursor=pointer]: 
+          - generic [ref=f5e86]: 2.75%
+          - generic [ref=f5e87]: 2.75%
+          - generic [ref=f5e88]: 2.50%
+          - generic [ref=f5e89] [cursor=pointer]: 
+      - generic [ref=f5e92]:
+        - generic [ref=f5e93]: 20:00
+        - generic [ref=f5e96]: RBNZ Press Conference
+      - generic [ref=f5e97]:
+        - generic "French Budget Balance" [ref=f5e98]: 23:45
+        - generic [ref=f5e103]:
+          - generic [ref=f5e105] [cursor=pointer]: 
+          - generic [ref=f5e106]: "-"
+          - generic [ref=f5e107]: "-"
+          - generic [ref=f5e108]: "-106.77B"
+          - generic [ref=f5e109] [cursor=pointer]: 
+      - generic [ref=f5e111]: September 02
+      - generic [ref=f5e114]:
+        - generic [ref=f5e115]: 00:10
+        - generic [ref=f5e118]: ECB's Wunsch Speaks
+      - generic [ref=f5e119]:
+        - generic "Italian PPI MoM" [ref=f5e120]:
+          - generic [ref=f5e121]: 01:00
+          - link "Italian PPI MoM" [ref=f5e125] [cursor=pointer]:
+            - /url: https://www.istat.it/en/prices
+        - generic [ref=f5e126]:
+          - generic [ref=f5e128] [cursor=pointer]: 
+          - generic [ref=f5e129]: "-"
+          - generic [ref=f5e130]: "-"
+          - generic [ref=f5e131]: 0.0%
+          - generic [ref=f5e132] [cursor=pointer]: 
+      - generic [ref=f5e134]:
+        - generic "Italian PPI YoY" [ref=f5e135]:
+          - generic [ref=f5e136]: 01:00
+          - link "Italian PPI YoY" [ref=f5e140] [cursor=pointer]:
+            - /url: https://www.istat.it/en/prices
+        - generic [ref=f5e141]:
+          - generic [ref=f5e143] [cursor=pointer]: 
+          - generic [ref=f5e144]: "-"
+          - generic [ref=f5e145]: "-"
+          - generic [ref=f5e146]: 5.8%
+          - generic [ref=f5e147] [cursor=pointer]: 
+      - generic [ref=f5e149]:
+        - generic "US MBA Mortgage Applications" [ref=f5e150]: 04:00
+        - generic [ref=f5e155]:
+          - generic [ref=f5e157] [cursor=pointer]: 
+          - generic [ref=f5e158]: "-"
+          - generic [ref=f5e159]: "-"
+          - generic [ref=f5e160]: "-1.0%"
+          - generic [ref=f5e161] [cursor=pointer]: 
+      - generic [ref=f5e163]:
+        - generic "US MBA 30-Yr Mortgage Rate" [ref=f5e164]:
+          - generic [ref=f5e165]: 04:00
+          - link "US MBA 30-Yr Mortgage Rate" [ref=f5e169] [cursor=pointer]:
+            - /url: https://www.mba.org/news-research-and-resources/research-and-economics/single-family-research/weekly-applications-survey
+        - generic [ref=f5e170]:
+          - generic [ref=f5e172] [cursor=pointer]: 
+          - generic [ref=f5e173]: "-"
+          - generic [ref=f5e174]: "-"
+          - generic [ref=f5e175]: 6.78%
+          - generic [ref=f5e176] [cursor=pointer]: 
+      - generic [ref=f5e178]:
+        - generic "US ADP Employment Change" [ref=f5e179]:
+          - generic [ref=f5e180]: 05:15
+          - link "US ADP Employment Change" [ref=f5e184] [cursor=pointer]:
+            - /url: https://adpemploymentreport.com/
+        - generic [ref=f5e185]:
+          - generic [ref=f5e187] [cursor=pointer]: 
+          - generic [ref=f5e188]: "-"
+          - generic [ref=f5e189]: 47k
+          - generic [ref=f5e190]: 44k
+          - generic [ref=f5e191] [cursor=pointer]: 
+      - generic [ref=f5e193]:
+        - generic "BoC Rate Decision" [ref=f5e194]:
+          - generic [ref=f5e195]: 06:45
+          - link "BoC Rate Decision" [ref=f5e199] [cursor=pointer]:
+            - /url: https://www.bankofcanada.ca/core-functions/monetary-policy/key-interest-rate/
+        - generic [ref=f5e200]:
+          - generic [ref=f5e202] [cursor=pointer]: 
+          - generic [ref=f5e203]: "-"
+          - generic [ref=f5e204]: 2.25%
+          - generic [ref=f5e205]: 2.25%
+          - generic [ref=f5e206] [cursor=pointer]: 
+      - generic [ref=f5e208]:
+        - generic "BoC Rate Statement" [ref=f5e209]: 06:45
+        - generic [ref=f5e214]:
+          - generic [ref=f5e216] [cursor=pointer]: 
+          - generic [ref=f5e217]: "-"
+          - generic [ref=f5e218]: "-"
+          - generic [ref=f5e219]: "-"
+      - generic [ref=f5e220]:
+        - generic "US Factory Orders MoM" [ref=f5e221]:
+          - generic [ref=f5e222]: 07:00
+          - generic "super fast release" [ref=f5e224]: 
+          - link "US Factory Orders MoM" [ref=f5e226] [cursor=pointer]:
+            - /url: https://www.census.gov/manufacturing/m3/index.html
+        - generic [ref=f5e227]:
+          - generic [ref=f5e229] [cursor=pointer]: 
+          - generic [ref=f5e230]: "-"
+          - generic [ref=f5e231]: 0.7%
+          - generic [ref=f5e232]: "-0.3%"
+          - generic [ref=f5e233] [cursor=pointer]: 
+      - generic [ref=f5e235]:
+        - generic "US Core Durable Goods Revised" [ref=f5e236]: 07:00
+        - generic [ref=f5e241]:
+          - generic [ref=f5e243] [cursor=pointer]: 
+          - generic [ref=f5e244]: "-"
+          - generic [ref=f5e245]: 0.4%
+          - generic [ref=f5e246]: 0.4%
+          - generic [ref=f5e247] [cursor=pointer]: 
+      - generic [ref=f5e249]:
+        - generic "US Durable Goods Revised" [ref=f5e250]:
+          - generic [ref=f5e251]: 07:00
+          - link "US Durable Goods Revised" [ref=f5e255] [cursor=pointer]:
+            - /url: https://www.census.gov/manufacturing/m3/index.html
+        - generic [ref=f5e256]:
+          - generic [ref=f5e258] [cursor=pointer]: 
+          - generic [ref=f5e259]: "-"
+          - generic [ref=f5e260]: 1.1%
+          - generic [ref=f5e261]: 1.1%
+          - generic [ref=f5e262] [cursor=pointer]: 
+      - generic [ref=f5e264]:
+        - generic "EIA Crude Oil Inventories" [ref=f5e265]:
+          - generic [ref=f5e266]: 07:30
+          - generic "super fast release" [ref=f5e268]: 
+          - link "EIA Crude Oil Inventories" [ref=f5e270] [cursor=pointer]:
+            - /url: https://www.eia.gov/petroleum/supply/weekly/
+        - generic [ref=f5e271]:
+          - generic [ref=f5e273] [cursor=pointer]: 
+          - generic [ref=f5e274]: "-"
+          - generic [ref=f5e275]: 0.06M
+          - generic [ref=f5e276]: 0.095M
+          - generic [ref=f5e277] [cursor=pointer]: 
+      - generic [ref=f5e279]:
+        - generic "EIA Gasoline Inventories" [ref=f5e280]:
+          - generic [ref=f5e281]: 07:30
+          - generic "super fast release" [ref=f5e283]: 
+          - link "EIA Gasoline Inventories" [ref=f5e285] [cursor=pointer]:
+            - /url: https://www.eia.gov/petroleum/supply/weekly/
+        - generic [ref=f5e286]:
+          - generic [ref=f5e288] [cursor=pointer]: 
+          - generic [ref=f5e289]: "-"
+          - generic [ref=f5e290]: "-1.6M"
+          - generic [ref=f5e291]: "-2.536M"
+          - generic [ref=f5e292] [cursor=pointer]: 
+      - generic [ref=f5e294]:
+        - generic "EIA Distillate Inventories" [ref=f5e295]:
+          - generic [ref=f5e296]: 07:30
+          - generic "super fast release" [ref=f5e298]: 
+        - generic [ref=f5e300]:
+          - generic [ref=f5e302] [cursor=pointer]: 
+          - generic [ref=f5e303]: "-"
+          - generic [ref=f5e304]: "-1.5M"
+          - generic [ref=f5e305]: "-2.228M"
+          - generic [ref=f5e306] [cursor=pointer]: 
+      - generic [ref=f5e308]:
+        - generic "EIA Crude Cushing Inventories" [ref=f5e309]: 07:30
+        - generic [ref=f5e314]:
+          - generic [ref=f5e316] [cursor=pointer]: 
+          - generic [ref=f5e317]: "-"
+          - generic [ref=f5e318]: "-"
+          - generic [ref=f5e319]: 1.176M
+          - generic [ref=f5e320] [cursor=pointer]: 
+      - generic [ref=f5e322]:
+        - generic "Fed Beige Book" [ref=f5e323]: 11:00
+        - generic [ref=f5e328]:
+          - generic [ref=f5e330] [cursor=pointer]: 
+          - generic [ref=f5e331]: "-"
+          - generic [ref=f5e332]: "-"
+          - generic [ref=f5e333]: "-"
+          - generic [ref=f5e334] [cursor=pointer]: 
+      - generic [ref=f5e337]:
+        - generic [ref=f5e338]: 13:10
+        - generic [ref=f5e341]: RBNZ Officials speak on a Committee
+      - generic [ref=f5e342]:
+        - generic "Broadcom Q3 2026 Earnings" [ref=f5e343]: 13:15
+        - generic [ref=f5e348]:
+          - generic [ref=f5e350] [cursor=pointer]: 
+          - generic [ref=f5e351]: "-"
+          - generic [ref=f5e352]: "-"
+          - generic [ref=f5e353]: "-"
+      - generic [ref=f5e354]:
+        - generic "Australian Services PMI Final" [ref=f5e355]: 16:00
+        - generic [ref=f5e360]:
+          - generic [ref=f5e362] [cursor=pointer]: 
+          - generic [ref=f5e363]: "-"
+          - generic [ref=f5e364]: "-"
+          - generic [ref=f5e365]: "52.9"
+          - generic [ref=f5e366] [cursor=pointer]: 
+      - generic [ref=f5e368]:
+        - generic "Australian Composite PMI Final" [ref=f5e369]: 16:00
+        - generic [ref=f5e374]:
+          - generic [ref=f5e376] [cursor=pointer]: 
+          - generic [ref=f5e377]: "-"
+          - generic [ref=f5e378]: "-"
+          - generic [ref=f5e379]: "52.5"
+          - generic [ref=f5e380] [cursor=pointer]: 
+      - generic [ref=f5e382]:
+        - generic "Japanese Foreign Stock Investment" [ref=f5e383]: 16:50
+        - generic [ref=f5e388]:
+          - generic [ref=f5e390] [cursor=pointer]: 
+          - generic [ref=f5e391]: "-"
+          - generic [ref=f5e392]: "-"
+          - generic [ref=f5e393]: "-869.0B"
+          - generic [ref=f5e394] [cursor=pointer]: 
+      - generic [ref=f5e396]:
+        - generic "Foreign Investment Japanese Stocks" [ref=f5e397]:
+          - generic [ref=f5e398]: 16:50
+          - link "Foreign Investment Japanese Stocks" [ref=f5e402] [cursor=pointer]:
+            - /url: https://www.mof.go.jp/english/international_policy/reference/itn_transactions_in_securities/index.htm
+        - generic [ref=f5e403]:
+          - generic [ref=f5e405] [cursor=pointer]: 
+          - generic [ref=f5e406]: "-"
+          - generic [ref=f5e407]: "-"
+          - generic [ref=f5e408]: "-764.1B"
+          - generic [ref=f5e409] [cursor=pointer]: 
+      - generic [ref=f5e411]:
+        - generic "Foreign Investment Japanese Bonds" [ref=f5e412]: 16:50
+        - generic [ref=f5e417]:
+          - generic [ref=f5e419] [cursor=pointer]: 
+          - generic [ref=f5e420]: "-"
+          - generic [ref=f5e421]: "-"
+          - generic [ref=f5e422]: 435.2B
+          - generic [ref=f5e423] [cursor=pointer]: 
+      - generic [ref=f5e425]:
+        - generic "Japanese Foreign Bond Investment" [ref=f5e426]: 16:50
+        - generic [ref=f5e431]:
+          - generic [ref=f5e433] [cursor=pointer]: 
+          - generic [ref=f5e434]: "-"
+          - generic [ref=f5e435]: "-"
+          - generic [ref=f5e436]: "-1,978.4B"
+          - generic [ref=f5e437] [cursor=pointer]: 
+      - generic [ref=f5e439]:
+        - generic "Japanese Composite PMI Final" [ref=f5e440]: 17:30
+        - generic [ref=f5e445]:
+          - generic [ref=f5e447] [cursor=pointer]: 
+          - generic [ref=f5e448]: "-"
+          - generic [ref=f5e449]: "-"
+          - generic [ref=f5e450]: "53.4"
+          - generic [ref=f5e451] [cursor=pointer]: 
+      - generic [ref=f5e453]:
+        - generic "Japanese Services PMI" [ref=f5e454]:
+          - generic [ref=f5e455]: 17:30
+          - link "Japanese Services PMI" [ref=f5e459] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/Public/Release/PressReleases
+        - generic [ref=f5e460]:
+          - generic [ref=f5e462] [cursor=pointer]: 
+          - generic [ref=f5e463]: "-"
+          - generic [ref=f5e464]: "-"
+          - generic [ref=f5e465]: "52.3"
+          - generic [ref=f5e466] [cursor=pointer]: 
+      - generic [ref=f5e469]:
+        - generic [ref=f5e470]: 18:00
+        - generic [ref=f5e473]: RBA's Jones speaks on a Panel
+      - generic [ref=f5e474]:
+        - generic "Australian Trade Balance" [ref=f5e475]:
+          - generic [ref=f5e476]: 18:30
+          - link "Australian Trade Balance" [ref=f5e480] [cursor=pointer]:
+            - /url: https://www.abs.gov.au/statistics/economy/international-trade/international-trade-goods-and-services-australia/latest-release
+        - generic [ref=f5e481]:
+          - generic [ref=f5e483] [cursor=pointer]: 
+          - generic [ref=f5e484]: "-"
+          - generic [ref=f5e485]: 1500M
+          - generic [ref=f5e486]: 1,929M
+          - generic [ref=f5e487] [cursor=pointer]: 
+      - generic [ref=f5e489]:
+        - generic "Australian Imports" [ref=f5e490]: 18:30
+        - generic [ref=f5e495]:
+          - generic [ref=f5e497] [cursor=pointer]: 
+          - generic [ref=f5e498]: "-"
+          - generic [ref=f5e499]: "-"
+          - generic [ref=f5e500]: "-0.2%"
+          - generic [ref=f5e501] [cursor=pointer]: 
+      - generic [ref=f5e503]:
+        - generic "Australian Exports" [ref=f5e504]: 18:30
+        - generic [ref=f5e509]:
+          - generic [ref=f5e511] [cursor=pointer]: 
+          - generic [ref=f5e512]: "-"
+          - generic [ref=f5e513]: "-"
+          - generic [ref=f5e514]: 9.6%
+          - generic [ref=f5e515] [cursor=pointer]: 
+      - generic [ref=f5e517]:
+        - generic "Chinese Services PMI" [ref=f5e518]:
+          - generic [ref=f5e519]: 18:45
+          - link "Chinese Services PMI" [ref=f5e523] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/Public/Release/PressReleases
+        - generic [ref=f5e524]:
+          - generic [ref=f5e526] [cursor=pointer]: 
+          - generic [ref=f5e527]: "-"
+          - generic [ref=f5e528]: "50.6"
+          - generic [ref=f5e529]: "50.4"
+          - generic [ref=f5e530] [cursor=pointer]: 
+      - generic [ref=f5e533]:
+        - generic [ref=f5e534]: 22:15
+        - generic [ref=f5e537]: RBA's Hunter Testimony
+      - generic [ref=f5e538]:
+        - generic "Swiss CPI YoY" [ref=f5e539]:
+          - generic [ref=f5e540]: 23:30
+          - link "Swiss CPI YoY" [ref=f5e544] [cursor=pointer]:
+            - /url: https://www.bfs.admin.ch/bfs/en/home/news/whats-new.html
+        - generic [ref=f5e545]:
+          - generic [ref=f5e547] [cursor=pointer]: 
+          - generic [ref=f5e548]: "-"
+          - generic [ref=f5e549]: 0.5%
+          - generic [ref=f5e550]: 0.4%
+          - generic [ref=f5e551] [cursor=pointer]: 
+      - generic [ref=f5e553]:
+        - generic "Swiss CPI MoM" [ref=f5e554]:
+          - generic [ref=f5e555]: 23:30
+          - link "Swiss CPI MoM" [ref=f5e559] [cursor=pointer]:
+            - /url: https://www.bfs.admin.ch/bfs/en/home/news/whats-new.html
+        - generic [ref=f5e560]:
+          - generic [ref=f5e562] [cursor=pointer]: 
+          - generic [ref=f5e563]: "-"
+          - generic [ref=f5e564]: 0%
+          - generic [ref=f5e565]: "-0.1%"
+          - generic [ref=f5e566] [cursor=pointer]: 
+      - generic [ref=f5e568]:
+        - generic "Swiss Core CPI YoY" [ref=f5e569]: 23:30
+        - generic [ref=f5e574]:
+          - generic [ref=f5e576] [cursor=pointer]: 
+          - generic [ref=f5e577]: "-"
+          - generic [ref=f5e578]: 0.3%
+          - generic [ref=f5e579]: 0.3%
+          - generic [ref=f5e580] [cursor=pointer]: 
+      - generic [ref=f5e582]: September 03
+      - generic [ref=f5e584]:
+        - generic "Swiss GDP YoY" [ref=f5e585]:
+          - generic [ref=f5e586]: 00:00
+          - link "Swiss GDP YoY" [ref=f5e590] [cursor=pointer]:
+            - /url: https://www.seco.admin.ch/seco/en/home/wirtschaftslage---wirtschaftspolitik/Wirtschaftslage/bip-quartalsschaetzungen-.html
+        - generic [ref=f5e591]:
+          - generic [ref=f5e593] [cursor=pointer]: 
+          - generic [ref=f5e594]: "-"
+          - generic [ref=f5e595]: 2.2%
+          - generic [ref=f5e596]: 0.5%
+          - generic [ref=f5e597] [cursor=pointer]: 
+      - generic [ref=f5e599]:
+        - generic "Swiss GDP QoQ" [ref=f5e600]:
+          - generic [ref=f5e601]: 00:00
+          - link "Swiss GDP QoQ" [ref=f5e605] [cursor=pointer]:
+            - /url: https://www.seco.admin.ch/seco/en/home/wirtschaftslage---wirtschaftspolitik/Wirtschaftslage/bip-quartalsschaetzungen-.html
+        - generic [ref=f5e606]:
+          - generic [ref=f5e608] [cursor=pointer]: 
+          - generic [ref=f5e609]: "-"
+          - generic [ref=f5e610]: 1.7%
+          - generic [ref=f5e611]: 0.7%
+          - generic [ref=f5e612] [cursor=pointer]: 
+      - generic [ref=f5e614]:
+        - generic "Turkish CPI YoY" [ref=f5e615]:
+          - generic [ref=f5e616]: 00:00
+          - link "Turkish CPI YoY" [ref=f5e620] [cursor=pointer]:
+            - /url: https://data.tuik.gov.tr/Kategori/GetKategori?p=Enflasyon-ve-Fiyat-106
+        - generic [ref=f5e621]:
+          - generic [ref=f5e623] [cursor=pointer]: 
+          - generic [ref=f5e624]: "-"
+          - generic [ref=f5e625]: 31.6%
+          - generic [ref=f5e626]: 31.75%
+          - generic [ref=f5e627] [cursor=pointer]: 
+      - generic [ref=f5e629]:
+        - generic "Turkish CPI MoM" [ref=f5e630]:
+          - generic [ref=f5e631]: 00:00
+          - link "Turkish CPI MoM" [ref=f5e635] [cursor=pointer]:
+            - /url: https://data.tuik.gov.tr/Kategori/GetKategori?p=Enflasyon-ve-Fiyat-106
+        - generic [ref=f5e636]:
+          - generic [ref=f5e638] [cursor=pointer]: 
+          - generic [ref=f5e639]: "-"
+          - generic [ref=f5e640]: 1.92%
+          - generic [ref=f5e641]: 1.78%
+          - generic [ref=f5e642] [cursor=pointer]: 
+      - generic [ref=f5e644]:
+        - generic "Italian Composite PMI" [ref=f5e645]: 00:45
+        - generic [ref=f5e650]:
+          - generic [ref=f5e652] [cursor=pointer]: 
+          - generic [ref=f5e653]: "-"
+          - generic [ref=f5e654]: "53.1"
+          - generic [ref=f5e655]: "52.5"
+      - generic [ref=f5e656]:
+        - generic "Italian Services PMI" [ref=f5e657]:
+          - generic [ref=f5e658]: 00:45
+          - link "Italian Services PMI" [ref=f5e662] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e663]:
+          - generic [ref=f5e665] [cursor=pointer]: 
+          - generic [ref=f5e666]: "-"
+          - generic [ref=f5e667]: "53.4"
+          - generic [ref=f5e668]: "52.5"
+      - generic [ref=f5e669]:
+        - generic "French Composite PMI" [ref=f5e670]:
+          - generic [ref=f5e671]: 00:50
+          - link "French Composite PMI" [ref=f5e675] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e676]:
+          - generic [ref=f5e678] [cursor=pointer]: 
+          - generic [ref=f5e679]: "-"
+          - generic [ref=f5e680]: "48.8"
+          - generic [ref=f5e681]: "48.8"
+      - generic [ref=f5e682]:
+        - generic "French Services PMI" [ref=f5e683]:
+          - generic [ref=f5e684]: 00:50
+          - link "French Services PMI" [ref=f5e688] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e689]:
+          - generic [ref=f5e691] [cursor=pointer]: 
+          - generic [ref=f5e692]: "-"
+          - generic [ref=f5e693]: "48.4"
+          - generic [ref=f5e694]: "48.4"
+          - generic [ref=f5e695] [cursor=pointer]: 
+      - generic [ref=f5e697]:
+        - generic "German Composite PMI Final" [ref=f5e698]:
+          - generic [ref=f5e699]: 00:55
+          - link "German Composite PMI Final" [ref=f5e703] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e704]:
+          - generic [ref=f5e706] [cursor=pointer]: 
+          - generic [ref=f5e707]: "-"
+          - generic [ref=f5e708]: "51"
+          - generic [ref=f5e709]: "51.0"
+      - generic [ref=f5e710]:
+        - generic "German Services PMI Final" [ref=f5e711]:
+          - generic [ref=f5e712]: 00:55
+          - link "German Services PMI Final" [ref=f5e716] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e717]:
+          - generic [ref=f5e719] [cursor=pointer]: 
+          - generic [ref=f5e720]: "-"
+          - generic [ref=f5e721]: "48.5"
+          - generic [ref=f5e722]: "48.5"
+      - generic [ref=f5e723]:
+        - generic "Eurozone Services PMI Final" [ref=f5e724]:
+          - generic [ref=f5e725]: 01:00
+          - link "Eurozone Services PMI Final" [ref=f5e729] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e730]:
+          - generic [ref=f5e732] [cursor=pointer]: 
+          - generic [ref=f5e733]: "-"
+          - generic [ref=f5e734]: "51.7"
+          - generic [ref=f5e735]: "51.7"
+      - generic [ref=f5e736]:
+        - generic "Eurozone Composite Final PMI" [ref=f5e737]:
+          - generic [ref=f5e738]: 01:00
+          - link "Eurozone Composite Final PMI" [ref=f5e742] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e743]:
+          - generic [ref=f5e745] [cursor=pointer]: 
+          - generic [ref=f5e746]: "-"
+          - generic [ref=f5e747]: "52.1"
+          - generic [ref=f5e748]: "52.1"
+          - generic [ref=f5e749] [cursor=pointer]: 
+      - generic [ref=f5e751]:
+        - generic "UK Services PMI Final" [ref=f5e752]:
+          - generic [ref=f5e753]: 01:30
+          - link "UK Services PMI Final" [ref=f5e757] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e758]:
+          - generic [ref=f5e760] [cursor=pointer]: 
+          - generic [ref=f5e761]: "-"
+          - generic [ref=f5e762]: "52.8"
+          - generic [ref=f5e763]: "52.8"
+          - generic [ref=f5e764] [cursor=pointer]: 
+      - generic [ref=f5e766]:
+        - generic "UK Composite PMI Final" [ref=f5e767]:
+          - generic [ref=f5e768]: 01:30
+          - link "UK Composite PMI Final" [ref=f5e772] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e773]:
+          - generic [ref=f5e775] [cursor=pointer]: 
+          - generic [ref=f5e776]: "-"
+          - generic [ref=f5e777]: "52.5"
+          - generic [ref=f5e778]: "52.5"
+          - generic [ref=f5e779] [cursor=pointer]: 
+      - generic [ref=f5e781]:
+        - generic "French 20 Yr OAT Yield" [ref=f5e782]: 01:50
+        - generic [ref=f5e787]:
+          - generic [ref=f5e789] [cursor=pointer]: 
+          - generic [ref=f5e790]: "-"
+          - generic [ref=f5e791]: "-"
+          - generic [ref=f5e792]: 4.27%
+          - generic [ref=f5e793] [cursor=pointer]: 
+      - generic [ref=f5e795]:
+        - generic "French 20 Yr OAT Bid-to-Cover" [ref=f5e796]: 01:50
+        - generic [ref=f5e801]:
+          - generic [ref=f5e803] [cursor=pointer]: 
+          - generic [ref=f5e804]: "-"
+          - generic [ref=f5e805]: "-"
+          - generic [ref=f5e806]: "2.78"
+          - generic [ref=f5e807] [cursor=pointer]: 
+      - generic [ref=f5e809]:
+        - generic "French 15 Yr OAT Yield" [ref=f5e810]: 01:50
+        - generic [ref=f5e815]:
+          - generic [ref=f5e817] [cursor=pointer]: 
+          - generic [ref=f5e818]: "-"
+          - generic [ref=f5e819]: "-"
+          - generic [ref=f5e820]: 4.03%
+          - generic [ref=f5e821] [cursor=pointer]: 
+      - generic [ref=f5e823]:
+        - generic "French 15 Yr OAT Bid-to-Cover" [ref=f5e824]: 01:50
+        - generic [ref=f5e829]:
+          - generic [ref=f5e831] [cursor=pointer]: 
+          - generic [ref=f5e832]: "-"
+          - generic [ref=f5e833]: "-"
+          - generic [ref=f5e834]: "2.1"
+          - generic [ref=f5e835] [cursor=pointer]: 
+      - generic [ref=f5e837]:
+        - generic "French 10 Yr OAT Yield" [ref=f5e838]: 01:50
+        - generic [ref=f5e843]:
+          - generic [ref=f5e845] [cursor=pointer]: 
+          - generic [ref=f5e846]: "-"
+          - generic [ref=f5e847]: "-"
+          - generic [ref=f5e848]: 3.9%
+          - generic [ref=f5e849] [cursor=pointer]: 
+      - generic [ref=f5e851]:
+        - generic "French 10 Yr OAT Bid-to-Cover" [ref=f5e852]: 01:50
+        - generic [ref=f5e857]:
+          - generic [ref=f5e859] [cursor=pointer]: 
+          - generic [ref=f5e860]: "-"
+          - generic [ref=f5e861]: "-"
+          - generic [ref=f5e862]: "2.33"
+          - generic [ref=f5e863] [cursor=pointer]: 
+      - generic [ref=f5e865]:
+        - generic "Eurozone PPI MoM" [ref=f5e866]:
+          - generic [ref=f5e867]: 02:00
+          - link "Eurozone PPI MoM" [ref=f5e871] [cursor=pointer]:
+            - /url: https://ec.europa.eu/eurostat/web/main/news/euro-indicators
+        - generic [ref=f5e872]:
+          - generic [ref=f5e874] [cursor=pointer]: 
+          - generic [ref=f5e875]: "-"
+          - generic [ref=f5e876]: 1.2%
+          - generic [ref=f5e877]: "-0.3%"
+          - generic [ref=f5e878] [cursor=pointer]: 
+      - generic [ref=f5e880]:
+        - generic "Eurozone PPI YoY" [ref=f5e881]:
+          - generic [ref=f5e882]: 02:00
+          - link "Eurozone PPI YoY" [ref=f5e886] [cursor=pointer]:
+            - /url: https://ec.europa.eu/eurostat/web/main/news/euro-indicators
+        - generic [ref=f5e887]:
+          - generic [ref=f5e889] [cursor=pointer]: 
+          - generic [ref=f5e890]: "-"
+          - generic [ref=f5e891]: 5.35%
+          - generic [ref=f5e892]: 4.6%
+          - generic [ref=f5e893] [cursor=pointer]: 
+      - generic [ref=f5e895]:
+        - generic "US Challenger Layoffs" [ref=f5e896]:
+          - generic [ref=f5e897]: 02:30
+          - link "US Challenger Layoffs" [ref=f5e901] [cursor=pointer]:
+            - /url: https://www.challengergray.com/blog/?fwp_blog_categories=covid-coverage%2Cjob-cuts-report
+        - generic [ref=f5e902]:
+          - generic [ref=f5e904] [cursor=pointer]: 
+          - generic [ref=f5e905]: "-"
+          - generic [ref=f5e906]: "-"
+          - generic [ref=f5e907]: 33.429k
+          - generic [ref=f5e908] [cursor=pointer]: 
+      - generic [ref=f5e910]:
+        - generic "US Trade Balance" [ref=f5e911]:
+          - generic [ref=f5e912]: 05:30
+          - generic "super fast release" [ref=f5e914]: 
+          - link "US Trade Balance" [ref=f5e916] [cursor=pointer]:
+            - /url: https://www.bea.gov/news/current-releases
+        - generic [ref=f5e917]:
+          - generic [ref=f5e919] [cursor=pointer]: 
+          - generic [ref=f5e920]: "-"
+          - generic [ref=f5e921]: "-90.3B"
+          - generic [ref=f5e922]: "-73.3B"
+          - generic [ref=f5e923] [cursor=pointer]: 
+      - generic [ref=f5e925]:
+        - generic "US Initial Jobless Claims" [ref=f5e926]:
+          - generic [ref=f5e927]: 05:30
+          - generic "super fast release" [ref=f5e929]: 
+          - link "US Initial Jobless Claims" [ref=f5e931] [cursor=pointer]:
+            - /url: https://www.dol.gov/
+        - generic [ref=f5e932]:
+          - generic [ref=f5e934] [cursor=pointer]: 
+          - generic [ref=f5e935]: "-"
+          - generic [ref=f5e936]: 205k
+          - generic [ref=f5e937]: 203k
+          - generic [ref=f5e938] [cursor=pointer]: 
+      - generic [ref=f5e940]:
+        - generic "Canadian Trade Balance" [ref=f5e941]:
+          - generic [ref=f5e942]: 05:30
+          - generic "super fast release" [ref=f5e944]: 
+          - link "Canadian Trade Balance" [ref=f5e946] [cursor=pointer]:
+            - /url: https://www150.statcan.gc.ca/n1/en/subjects/international_trade
+        - generic [ref=f5e947]:
+          - generic [ref=f5e949] [cursor=pointer]: 
+          - generic [ref=f5e950]: "-"
+          - generic [ref=f5e951]: 3.175B
+          - generic [ref=f5e952]: 3.86B
+          - generic [ref=f5e953] [cursor=pointer]: 
+      - generic [ref=f5e955]:
+        - generic "US Continued Jobless Claims" [ref=f5e956]:
+          - generic [ref=f5e957]: 05:30
+          - generic "super fast release" [ref=f5e959]: 
+          - link "US Continued Jobless Claims" [ref=f5e961] [cursor=pointer]:
+            - /url: https://www.dol.gov/
+        - generic [ref=f5e962]:
+          - generic [ref=f5e964] [cursor=pointer]: 
+          - generic [ref=f5e965]: "-"
+          - generic [ref=f5e966]: 1.785M
+          - generic [ref=f5e967]: 1.778M
+          - generic [ref=f5e968] [cursor=pointer]: 
+      - generic [ref=f5e971]:
+        - generic [ref=f5e972]: 05:30
+        - generic [ref=f5e975]: Fed's Waller Speaks
+      - generic [ref=f5e976]:
+        - generic "US Productivity Revised" [ref=f5e977]:
+          - generic [ref=f5e978]: 05:30
+          - link "US Productivity Revised" [ref=f5e982] [cursor=pointer]:
+            - /url: https://www.bls.gov/news.release/pdf/prod2.pdf
+        - generic [ref=f5e983]:
+          - generic [ref=f5e985] [cursor=pointer]: 
+          - generic [ref=f5e986]: "-"
+          - generic [ref=f5e987]: 1.4%
+          - generic [ref=f5e988]: 1.4%
+          - generic [ref=f5e989] [cursor=pointer]: 
+      - generic [ref=f5e991]:
+        - generic "US Labor Costs Revised" [ref=f5e992]:
+          - generic [ref=f5e993]: 05:30
+          - link "US Labor Costs Revised" [ref=f5e997] [cursor=pointer]:
+            - /url: https://www.bls.gov/lpc/
+        - generic [ref=f5e998]:
+          - generic [ref=f5e1000] [cursor=pointer]: 
+          - generic [ref=f5e1001]: "-"
+          - generic [ref=f5e1002]: 1.3%
+          - generic [ref=f5e1003]: 1.3%
+          - generic [ref=f5e1004] [cursor=pointer]: 
+      - generic [ref=f5e1006]:
+        - generic "Canadian Labor Productivity Rate" [ref=f5e1007]:
+          - generic [ref=f5e1008]: 05:30
+          - generic "super fast release" [ref=f5e1010]: 
+          - link "Canadian Labor Productivity Rate" [ref=f5e1012] [cursor=pointer]:
+            - /url: https://www150.statcan.gc.ca/n1/dai-quo/ssi/homepage/2/2_2_2_0-fra.htm?HPA=1
+        - generic [ref=f5e1013]:
+          - generic [ref=f5e1015] [cursor=pointer]: 
+          - generic [ref=f5e1016]: "-"
+          - generic [ref=f5e1017]: "-"
+          - generic [ref=f5e1018]: "-0.5%"
+          - generic [ref=f5e1019] [cursor=pointer]: 
+      - generic [ref=f5e1021]:
+        - generic "US S&P Services PMI Final" [ref=f5e1022]:
+          - generic [ref=f5e1023]: 06:45
+          - link "US S&P Services PMI Final" [ref=f5e1027] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e1028]:
+          - generic [ref=f5e1030] [cursor=pointer]: 
+          - generic [ref=f5e1031]: "-"
+          - generic [ref=f5e1032]: "56.8"
+          - generic [ref=f5e1033]: "56.8"
+          - generic [ref=f5e1034] [cursor=pointer]: 
+      - generic [ref=f5e1036]:
+        - generic "US S&P Composite PMI Final" [ref=f5e1037]: 06:45
+        - generic [ref=f5e1042]:
+          - generic [ref=f5e1044] [cursor=pointer]: 
+          - generic [ref=f5e1045]: "-"
+          - generic [ref=f5e1046]: "56"
+          - generic [ref=f5e1047]: "56.0"
+          - generic [ref=f5e1048] [cursor=pointer]: 
+      - generic [ref=f5e1050]:
+        - generic "US ISM Services PMI" [ref=f5e1051]:
+          - generic [ref=f5e1052]: 07:00
+          - link "US ISM Services PMI" [ref=f5e1056] [cursor=pointer]:
+            - /url: https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/
+        - generic [ref=f5e1057]:
+          - generic [ref=f5e1059] [cursor=pointer]: 
+          - generic [ref=f5e1060]: "-"
+          - generic [ref=f5e1061]: "54.1"
+          - generic [ref=f5e1062]: "54.1"
+          - generic [ref=f5e1063] [cursor=pointer]: 
+      - generic [ref=f5e1065]:
+        - generic "US ISM Services Prices Paid" [ref=f5e1066]: 07:00
+        - generic [ref=f5e1071]:
+          - generic [ref=f5e1073] [cursor=pointer]: 
+          - generic [ref=f5e1074]: "-"
+          - generic [ref=f5e1075]: "70"
+          - generic [ref=f5e1076]: "70.3"
+          - generic [ref=f5e1077] [cursor=pointer]: 
+      - generic [ref=f5e1079]:
+        - generic "US ISM Services Employment" [ref=f5e1080]: 07:00
+        - generic [ref=f5e1085]:
+          - generic [ref=f5e1087] [cursor=pointer]: 
+          - generic [ref=f5e1088]: "-"
+          - generic [ref=f5e1089]: "49"
+          - generic [ref=f5e1090]: "47.4"
+          - generic [ref=f5e1091] [cursor=pointer]: 
+      - generic [ref=f5e1093]:
+        - generic "US ISM Services New Orders" [ref=f5e1094]: 07:00
+        - generic [ref=f5e1099]:
+          - generic [ref=f5e1101] [cursor=pointer]: 
+          - generic [ref=f5e1102]: "-"
+          - generic [ref=f5e1103]: "57"
+          - generic [ref=f5e1104]: "57.2"
+          - generic [ref=f5e1105] [cursor=pointer]: 
+      - generic [ref=f5e1107]:
+        - generic "EIA Natural Gas Change BCF" [ref=f5e1108]:
+          - generic [ref=f5e1109]: 07:30
+          - generic "super fast release" [ref=f5e1111]: 
+          - link "EIA Natural Gas Change BCF" [ref=f5e1113] [cursor=pointer]:
+            - /url: http://ir.eia.gov/ngs/ngs.html
+        - generic [ref=f5e1114]:
+          - generic [ref=f5e1116] [cursor=pointer]: 
+          - generic [ref=f5e1117]: "-"
+          - generic [ref=f5e1118]: 32B
+          - generic [ref=f5e1119]: 15B
+          - generic [ref=f5e1120] [cursor=pointer]: 
+      - generic [ref=f5e1122]:
+        - generic "US 4-Week Bill High Yield" [ref=f5e1123]: 08:30
+        - generic [ref=f5e1128]:
+          - generic [ref=f5e1130] [cursor=pointer]: 
+          - generic [ref=f5e1131]: "-"
+          - generic [ref=f5e1132]: "-"
+          - generic [ref=f5e1133]: "-"
+          - generic [ref=f5e1134] [cursor=pointer]: 
+      - generic [ref=f5e1136]:
+        - generic "US 4-Week Bill Bid-to-Cover" [ref=f5e1137]: 08:30
+        - generic [ref=f5e1142]:
+          - generic [ref=f5e1144] [cursor=pointer]: 
+          - generic [ref=f5e1145]: "-"
+          - generic [ref=f5e1146]: "-"
+          - generic [ref=f5e1147]: "-"
+          - generic [ref=f5e1148] [cursor=pointer]: 
+      - generic [ref=f5e1151]:
+        - generic [ref=f5e1152]: 12:00
+        - generic [ref=f5e1155]: Fed's Hammack Speaks
+      - generic [ref=f5e1156]:
+        - generic "S. Korean Current Account Bal NSA" [ref=f5e1157]:
+          - generic [ref=f5e1158]: 16:00
+          - link "S. Korean Current Account Bal NSA" [ref=f5e1162] [cursor=pointer]:
+            - /url: https://www.bok.or.kr/eng/main/main.do
+        - generic [ref=f5e1163]:
+          - generic [ref=f5e1165] [cursor=pointer]: 
+          - generic [ref=f5e1166]: "-"
+          - generic [ref=f5e1167]: "-"
+          - generic [ref=f5e1168]: 49.73B
+          - generic [ref=f5e1169] [cursor=pointer]: 
+      - generic [ref=f5e1171]:
+        - generic "Japanese All Household Spending YoY" [ref=f5e1172]: 16:30
+        - generic [ref=f5e1177]:
+          - generic [ref=f5e1179] [cursor=pointer]: 
+          - generic [ref=f5e1180]: "-"
+          - generic [ref=f5e1181]: "-1.6%"
+          - generic [ref=f5e1182]: "-3.3%"
+          - generic [ref=f5e1183] [cursor=pointer]: 
+      - generic [ref=f5e1185]:
+        - generic "Japanese All Household Spending MoM" [ref=f5e1186]:
+          - generic [ref=f5e1187]: 16:30
+          - link "Japanese All Household Spending MoM" [ref=f5e1191] [cursor=pointer]:
+            - /url: http://www.stat.go.jp/english/data/kakei/156.html
+        - generic [ref=f5e1192]:
+          - generic [ref=f5e1194] [cursor=pointer]: 
+          - generic [ref=f5e1195]: "-"
+          - generic [ref=f5e1196]: "-"
+          - generic [ref=f5e1197]: "-6.4%"
+          - generic [ref=f5e1198] [cursor=pointer]: 
+      - generic [ref=f5e1200]:
+        - generic "German Industrial Orders MoM" [ref=f5e1201]:
+          - generic [ref=f5e1202]: 23:00
+          - link "German Industrial Orders MoM" [ref=f5e1206] [cursor=pointer]:
+            - /url: https://www.destatis.de/SiteGlobals/Forms/Suche/Presse/EN/Pressesuche_Formular.html?nn=263424
+        - generic [ref=f5e1207]:
+          - generic [ref=f5e1209] [cursor=pointer]: 
+          - generic [ref=f5e1210]: "-"
+          - generic [ref=f5e1211]: 0.3%
+          - generic [ref=f5e1212]: 3.1%
+          - generic [ref=f5e1213] [cursor=pointer]: 
+      - generic [ref=f5e1215]: September 04
+      - generic [ref=f5e1217]:
+        - generic "Italian Retail Sales MoM" [ref=f5e1218]:
+          - generic [ref=f5e1219]: 01:00
+          - link "Italian Retail Sales MoM" [ref=f5e1223] [cursor=pointer]:
+            - /url: https://www.istat.it/en/
+        - generic [ref=f5e1224]:
+          - generic [ref=f5e1226] [cursor=pointer]: 
+          - generic [ref=f5e1227]: "-"
+          - generic [ref=f5e1228]: "-"
+          - generic [ref=f5e1229]: "-0.10%"
+          - generic [ref=f5e1230] [cursor=pointer]: 
+      - generic [ref=f5e1232]:
+        - generic "Italian Retail Sales NSA YoY" [ref=f5e1233]:
+          - generic [ref=f5e1234]: 01:00
+          - link "Italian Retail Sales NSA YoY" [ref=f5e1238] [cursor=pointer]:
+            - /url: https://www.istat.it/en/
+        - generic [ref=f5e1239]:
+          - generic [ref=f5e1241] [cursor=pointer]: 
+          - generic [ref=f5e1242]: "-"
+          - generic [ref=f5e1243]: "-"
+          - generic [ref=f5e1244]: 3.10%
+          - generic [ref=f5e1245] [cursor=pointer]: 
+      - generic [ref=f5e1247]:
+        - generic "UK Construction PMI" [ref=f5e1248]:
+          - generic [ref=f5e1249]: 01:30
+          - link "UK Construction PMI" [ref=f5e1253] [cursor=pointer]:
+            - /url: https://www.markiteconomics.com/public/Release/PressReleases
+        - generic [ref=f5e1254]:
+          - generic [ref=f5e1256] [cursor=pointer]: 
+          - generic [ref=f5e1257]: "-"
+          - generic [ref=f5e1258]: "46"
+          - generic [ref=f5e1259]: "44.7"
+          - generic [ref=f5e1260] [cursor=pointer]: 
+      - generic [ref=f5e1263]:
+        - generic [ref=f5e1264]: 01:50
+        - generic [ref=f5e1267]: BoE's Gov. Bailey Speaks
+      - generic [ref=f5e1268]:
+        - generic "Eurozone Retail Sales YoY" [ref=f5e1269]:
+          - generic [ref=f5e1270]: 02:00
+          - link "Eurozone Retail Sales YoY" [ref=f5e1274] [cursor=pointer]:
+            - /url: https://ec.europa.eu/eurostat/web/main/news/euro-indicators
+        - generic [ref=f5e1275]:
+          - generic [ref=f5e1277] [cursor=pointer]: 
+          - generic [ref=f5e1278]: "-"
+          - generic [ref=f5e1279]: 1.1%
+          - generic [ref=f5e1280]: 0.7%
+          - generic [ref=f5e1281] [cursor=pointer]: 
+      - generic [ref=f5e1283]:
+        - generic "Eurozone Retail Sales MoM" [ref=f5e1284]:
+          - generic [ref=f5e1285]: 02:00
+          - link "Eurozone Retail Sales MoM" [ref=f5e1289] [cursor=pointer]:
+            - /url: https://ec.europa.eu/eurostat/web/main/news/euro-indicators
+        - generic [ref=f5e1290]:
+          - generic [ref=f5e1292] [cursor=pointer]: 
+          - generic [ref=f5e1293]: "-"
+          - generic [ref=f5e1294]: 0.3%
+          - generic [ref=f5e1295]: "-0.3%"
+          - generic [ref=f5e1296] [cursor=pointer]: 
+      - generic [ref=f5e1299]:
+        - generic [ref=f5e1300]: 02:00
+        - generic [ref=f5e1303]: ECB's Lane Speaks
+      - generic [ref=f5e1304]:
+        - generic "US Unemployment Rate" [ref=f5e1305]:
+          - generic [ref=f5e1306]: 05:30
+          - generic "super fast release" [ref=f5e1308]: 
+          - link "US Unemployment Rate" [ref=f5e1310] [cursor=pointer]:
+            - /url: https://www.bls.gov/bls/newsrels.htm#latest-releases
+        - generic [ref=f5e1311]:
+          - generic [ref=f5e1313] [cursor=pointer]: 
+          - generic [ref=f5e1314]: "-"
+          - generic [ref=f5e1315]: 4.1%
+          - generic [ref=f5e1316]: 4.1%
+          - generic [ref=f5e1317] [cursor=pointer]: 
+      - generic [ref=f5e1319]:
+        - generic "Canadian Unemployment Rate" [ref=f5e1320]:
+          - generic [ref=f5e1321]: 05:30
+          - generic "super fast release" [ref=f5e1323]: 
+        - generic [ref=f5e1325]:
+          - generic [ref=f5e1327] [cursor=pointer]: 
+          - generic [ref=f5e1328]: "-"
+          - generic [ref=f5e1329]: 6.4%
+          - generic [ref=f5e1330]: 6.4%
+          - generic [ref=f5e1331] [cursor=pointer]: 
+      - generic [ref=f5e1333]:
+        - generic "US Nonfarm Payrolls" [ref=f5e1334]:
+          - generic [ref=f5e1335]: 05:30
+          - generic "super fast release" [ref=f5e1337]: 
+          - link "US Nonfarm Payrolls" [ref=f5e1339] [cursor=pointer]:
+            - /url: https://www.bls.gov/news.release/empsit.toc.htm
+        - generic [ref=f5e1340]:
+          - generic [ref=f5e1342] [cursor=pointer]: 
+          - generic [ref=f5e1343]: "-"
+          - generic [ref=f5e1344]: 55k
+          - generic [ref=f5e1345]: "-23k"
+          - generic [ref=f5e1346] [cursor=pointer]: 
+      - generic [ref=f5e1348]:
+        - generic "Canadian Employment Change" [ref=f5e1349]:
+          - generic [ref=f5e1350]: 05:30
+          - generic "super fast release" [ref=f5e1352]: 
+          - link "Canadian Employment Change" [ref=f5e1354] [cursor=pointer]:
+            - /url: https://www150.statcan.gc.ca/n1/dai-quo/cal3-eng.htm
+        - generic [ref=f5e1355]:
+          - generic [ref=f5e1357] [cursor=pointer]: 
+          - generic [ref=f5e1358]: "-"
+          - generic [ref=f5e1359]: 15k
+          - generic [ref=f5e1360]: 75.1k
+          - generic [ref=f5e1361] [cursor=pointer]: 
+      - generic [ref=f5e1363]:
+        - generic "US Average Earnings YoY" [ref=f5e1364]:
+          - generic [ref=f5e1365]: 05:30
+          - generic "super fast release" [ref=f5e1367]: 
+        - generic [ref=f5e1369]:
+          - generic [ref=f5e1371] [cursor=pointer]: 
+          - generic [ref=f5e1372]: "-"
+          - generic [ref=f5e1373]: 3.1%
+          - generic [ref=f5e1374]: 3.2%
+          - generic [ref=f5e1375] [cursor=pointer]: 
+      - generic [ref=f5e1377]:
+        - generic "US Private Payrolls" [ref=f5e1378]:
+          - generic [ref=f5e1379]: 05:30
+          - generic "super fast release" [ref=f5e1381]: 
+        - generic [ref=f5e1383]:
+          - generic [ref=f5e1385] [cursor=pointer]: 
+          - generic [ref=f5e1386]: "-"
+          - generic [ref=f5e1387]: 50k
+          - generic [ref=f5e1388]: 30k
+          - generic [ref=f5e1389] [cursor=pointer]: 
+      - generic [ref=f5e1391]:
+        - generic "US Average Workweek Hrs" [ref=f5e1392]: 05:30
+        - generic [ref=f5e1397]:
+          - generic [ref=f5e1399] [cursor=pointer]: 
+          - generic [ref=f5e1400]: "-"
+          - generic [ref=f5e1401]: "34.3"
+          - generic [ref=f5e1402]: "34.3"
+          - generic [ref=f5e1403] [cursor=pointer]: 
+      - generic [ref=f5e1405]:
+        - generic "US Average Earnings MoM" [ref=f5e1406]:
+          - generic [ref=f5e1407]: 05:30
+          - generic "super fast release" [ref=f5e1409]: 
+          - link "US Average Earnings MoM" [ref=f5e1411] [cursor=pointer]:
+            - /url: https://www.bls.gov/bls/newsrels.htm#latest-releases
+        - generic [ref=f5e1412]:
+          - generic [ref=f5e1414] [cursor=pointer]: 
+          - generic [ref=f5e1415]: "-"
+          - generic [ref=f5e1416]: 0.3%
+          - generic [ref=f5e1417]: 0.1%
+          - generic [ref=f5e1418] [cursor=pointer]: 
+      - generic [ref=f5e1420]:
+        - generic "Canadian Participation Rate" [ref=f5e1421]:
+          - generic [ref=f5e1422]: 05:30
+          - generic "super fast release" [ref=f5e1424]: 
+        - generic [ref=f5e1426]:
+          - generic [ref=f5e1428] [cursor=pointer]: 
+          - generic [ref=f5e1429]: "-"
+          - generic [ref=f5e1430]: 65.1%
+          - generic [ref=f5e1431]: 65.1%
+          - generic [ref=f5e1432] [cursor=pointer]: 
+      - generic [ref=f5e1434]:
+        - generic "US Manufacturing Payrolls" [ref=f5e1435]:
+          - generic [ref=f5e1436]: 05:30
+          - link "US Manufacturing Payrolls" [ref=f5e1440] [cursor=pointer]:
+            - /url: https://www.bls.gov/bls/newsrels.htm#latest-releases
+        - generic [ref=f5e1441]:
+          - generic [ref=f5e1443] [cursor=pointer]: 
+          - generic [ref=f5e1444]: "-"
+          - generic [ref=f5e1445]: 5k
+          - generic [ref=f5e1446]: 5k
+          - generic [ref=f5e1447] [cursor=pointer]: 
+      - generic [ref=f5e1449]:
+        - generic "US Labor Force Participation" [ref=f5e1450]:
+          - generic [ref=f5e1451]: 05:30
+          - link "US Labor Force Participation" [ref=f5e1455] [cursor=pointer]:
+            - /url: https://www.bls.gov/bls/newsrels.htm#latest-releases
+        - generic [ref=f5e1456]:
+          - generic [ref=f5e1458] [cursor=pointer]: 
+          - generic [ref=f5e1459]: "-"
+          - generic [ref=f5e1460]: 61.4%
+          - generic [ref=f5e1461]: 61.4%
+          - generic [ref=f5e1462] [cursor=pointer]: 
+      - generic [ref=f5e1464]:
+        - generic "US Government Payrolls" [ref=f5e1465]: 05:30
+        - generic [ref=f5e1470]:
+          - generic [ref=f5e1472] [cursor=pointer]: 
+          - generic [ref=f5e1473]: "-"
+          - generic [ref=f5e1474]: "-"
+          - generic [ref=f5e1475]: "-53k"
+          - generic [ref=f5e1476] [cursor=pointer]: 
+      - generic [ref=f5e1478]:
+        - generic "Canadian Average Hourly Earnings YoY" [ref=f5e1479]: 05:30
+        - generic [ref=f5e1484]:
+          - generic [ref=f5e1486] [cursor=pointer]: 
+          - generic [ref=f5e1487]: "-"
+          - generic [ref=f5e1488]: 2.9%
+          - generic [ref=f5e1489]: 3.00%
+          - generic [ref=f5e1490] [cursor=pointer]: 
+      - generic [ref=f5e1492]:
+        - generic "Canadian Ivey PMI" [ref=f5e1493]:
+          - generic [ref=f5e1494]: 07:00
+          - link "Canadian Ivey PMI" [ref=f5e1498] [cursor=pointer]:
+            - /url: https://iveypmi.uwo.ca/
+        - generic [ref=f5e1499]:
+          - generic [ref=f5e1501] [cursor=pointer]: 
+          - generic [ref=f5e1502]: "-"
+          - generic [ref=f5e1503]: "-"
+          - generic [ref=f5e1504]: "55.1"
+          - generic [ref=f5e1505] [cursor=pointer]: 
+      - generic [ref=f5e1507]:
+        - generic "US Baker Hughes Total Rig Count" [ref=f5e1508]: 10:00
+        - generic [ref=f5e1513]:
+          - generic [ref=f5e1515] [cursor=pointer]: 
+          - generic [ref=f5e1516]: "-"
+          - generic [ref=f5e1517]: "-"
+          - generic [ref=f5e1518]: "588"
+          - generic [ref=f5e1519] [cursor=pointer]: 
+      - generic [ref=f5e1521]:
+        - generic "US Baker Hughes Oil Rig Count" [ref=f5e1522]: 10:00
+        - generic [ref=f5e1527]:
+          - generic [ref=f5e1529] [cursor=pointer]: 
+          - generic [ref=f5e1530]: "-"
+          - generic [ref=f5e1531]: "-"
+          - generic [ref=f5e1532]: "447"
+          - generic [ref=f5e1533] [cursor=pointer]: 
+      - generic [ref=f5e1535]: September 06
+      - generic [ref=f5e1537]:
+        - generic "US Holiday" [ref=f5e1538]: 21:00
+        - generic [ref=f5e1543]:
+          - generic [ref=f5e1545] [cursor=pointer]: 
+          - generic [ref=f5e1546]: "-"
+          - generic [ref=f5e1547]: "-"
+          - generic [ref=f5e1548]: "-"
+          - generic [ref=f5e1549] [cursor=pointer]: 
+      - generic [ref=f5e1551]: September 07
+      - generic [ref=f5e1553]:
+        - generic "US AI Summit (All Day)" [ref=f5e1554]: 21:00
+        - generic [ref=f5e1559]:
+          - generic [ref=f5e1561] [cursor=pointer]: 
+          - generic [ref=f5e1562]: "-"
+          - generic [ref=f5e1563]: "-"
+          - generic [ref=f5e1564]: "-"
+      - generic [ref=f5e1565]: September 08
+      - generic [ref=f5e1567]:
+        - generic "US API Gasoline Stock Change" [ref=f5e1568]: 13:30
+        - generic [ref=f5e1573]:
+          - generic [ref=f5e1575] [cursor=pointer]: 
+          - generic [ref=f5e1576]: "-"
+          - generic [ref=f5e1577]: "-"
+          - generic [ref=f5e1578]: 0.3M
+          - generic [ref=f5e1579] [cursor=pointer]: 
+      - generic [ref=f5e1581]:
+        - generic "US API Distillate Stock Change" [ref=f5e1582]: 13:30
+        - generic [ref=f5e1587]:
+          - generic [ref=f5e1589] [cursor=pointer]: 
+          - generic [ref=f5e1590]: "-"
+          - generic [ref=f5e1591]: "-"
+          - generic [ref=f5e1592]: "-0.3M"
+          - generic [ref=f5e1593] [cursor=pointer]: 
+      - generic [ref=f5e1595]:
+        - generic "US API Cushing Stock Change" [ref=f5e1596]: 13:30
+        - generic [ref=f5e1601]:
+          - generic [ref=f5e1603] [cursor=pointer]: 
+          - generic [ref=f5e1604]: "-"
+          - generic [ref=f5e1605]: "-"
+          - generic [ref=f5e1606]: 0.2M
+          - generic [ref=f5e1607] [cursor=pointer]: 
+      - generic [ref=f5e1609]:
+        - generic "US API Crude Oil Stock Change" [ref=f5e1610]: 13:30
+        - generic [ref=f5e1615]:
+          - generic [ref=f5e1617] [cursor=pointer]: 
+          - generic [ref=f5e1618]: "-"
+          - generic [ref=f5e1619]: "-"
+          - generic [ref=f5e1620]: "-2.6M"
+          - generic [ref=f5e1621] [cursor=pointer]: 
+      - generic [ref=f5e1623]: September 09
+      - generic [ref=f5e1626]:
+        - generic [ref=f5e1627]: 07:00
+        - generic [ref=f5e1630]: Apple iPhone Event (Tentative)
+      - generic [ref=f5e1631]:
+        - generic "EIA STEO Report (Tentative)" [ref=f5e1632]: 09:00
+        - generic [ref=f5e1637]:
+          - generic [ref=f5e1639] [cursor=pointer]: 
+          - generic [ref=f5e1640]: "-"
+          - generic [ref=f5e1641]: "-"
+          - generic [ref=f5e1642]: "-"
+          - generic [ref=f5e1643] [cursor=pointer]: 
+      - generic [ref=f5e1645]: September 10
+      - generic [ref=f5e1647]:
+        - generic "OPEC Monthly Report" [ref=f5e1648]: 05:00
+        - generic [ref=f5e1653]:
+          - generic [ref=f5e1655] [cursor=pointer]: 
+          - generic [ref=f5e1656]: "-"
+          - generic [ref=f5e1657]: "-"
+          - generic [ref=f5e1658]: "-"
+          - generic [ref=f5e1659] [cursor=pointer]: 
+      - generic [ref=f5e1661]: September 11
+      - generic [ref=f5e1663]:
+        - generic "IEA Monthly Oil Report" [ref=f5e1664]: 01:00
+        - generic [ref=f5e1669]:
+          - generic [ref=f5e1671] [cursor=pointer]: 
+          - generic [ref=f5e1672]: "-"
+          - generic [ref=f5e1673]: "-"
+          - generic [ref=f5e1674]: "-"
+      - generic [ref=f5e1675]: September 16
+      - generic [ref=f5e1677]:
+        - generic "FOMC Rate Statement & SEP" [ref=f5e1678]: 11:00
+        - generic [ref=f5e1683]:
+          - generic [ref=f5e1685] [cursor=pointer]: 
+          - generic [ref=f5e1686]: "-"
+          - generic [ref=f5e1687]: "-"
+          - generic [ref=f5e1688]: "-"
+          - generic [ref=f5e1689] [cursor=pointer]: 
+      - generic [ref=f5e1692]:
+        - generic [ref=f5e1693]: 11:30
+        - generic [ref=f5e1696]: FOMC Press Conference
+      - generic [ref=f5e1697]: September 18
+      - generic [ref=f5e1699]:
+        - generic "Monthly OPEX (Triple Witch)" [ref=f5e1700]: 13:00
+        - generic [ref=f5e1705]:
+          - generic [ref=f5e1707] [cursor=pointer]: 
+          - generic [ref=f5e1708]: "-"
+          - generic [ref=f5e1709]: "-"
+          - generic [ref=f5e1710]: "-"
+          - generic [ref=f5e1711] [cursor=pointer]: 
+      - generic [ref=f5e1713]: September 23
+      - generic [ref=f5e1716]:
+        - generic [ref=f5e1717]: 21:00
+        - generic [ref=f5e1720]: China's XI State Visit to The US (All Day)
+      - generic [ref=f5e1721]: September 30
+      - generic [ref=f5e1723]:
+        - generic "Potential US Govt Shutdown (Tentative)" [ref=f5e1724]: 22:00
+        - generic [ref=f5e1729]:
+          - generic [ref=f5e1731] [cursor=pointer]: 
+          - generic [ref=f5e1732]: "-"
+          - generic [ref=f5e1733]: "-"
+          - generic [ref=f5e1734]: "-"
+      - generic [ref=f5e1735]: October 06
+      - generic [ref=f5e1737]:
+        - generic "EIA STEO Report Winter Outlook (Tent.)" [ref=f5e1738]: 09:00
+        - generic [ref=f5e1743]:
+          - generic [ref=f5e1745] [cursor=pointer]: 
+          - generic [ref=f5e1746]: "-"
+          - generic [ref=f5e1747]: "-"
+          - generic [ref=f5e1748]: "-"
+      - generic [ref=f5e1749]: October 11
+      - generic [ref=f5e1751]:
+        - generic "IMF & World Bank Meetings" [ref=f5e1752]: 21:00
+        - generic [ref=f5e1757]:
+          - generic [ref=f5e1759] [cursor=pointer]: 
+          - generic [ref=f5e1760]: "-"
+          - generic [ref=f5e1761]: "-"
+          - generic [ref=f5e1762]: "-"
+          - generic [ref=f5e1763] [cursor=pointer]: 
+      - generic [ref=f5e1765]: October 12
+      - generic [ref=f5e1767]:
+        - generic "IMF & World Bank Meetings" [ref=f5e1768]: 21:00
+        - generic [ref=f5e1773]:
+          - generic [ref=f5e1775] [cursor=pointer]: 
+          - generic [ref=f5e1776]: "-"
+          - generic [ref=f5e1777]: "-"
+          - generic [ref=f5e1778]: "-"
+          - generic [ref=f5e1779] [cursor=pointer]: 
+      - generic [ref=f5e1781]: October 13
+      - generic [ref=f5e1783]:
+        - generic "OPEC Monthly Report" [ref=f5e1784]: 05:00
+        - generic [ref=f5e1789]:
+          - generic [ref=f5e1791] [cursor=pointer]: 
+          - generic [ref=f5e1792]: "-"
+          - generic [ref=f5e1793]: "-"
+          - generic [ref=f5e1794]: "-"
+          - generic [ref=f5e1795] [cursor=pointer]: 
+      - generic [ref=f5e1797]:
+        - generic "IMF & World Bank Meetings" [ref=f5e1798]: 21:00
+        - generic [ref=f5e1803]:
+          - generic [ref=f5e1805] [cursor=pointer]: 
+          - generic [ref=f5e1806]: "-"
+          - generic [ref=f5e1807]: "-"
+          - generic [ref=f5e1808]: "-"
+          - generic [ref=f5e1809] [cursor=pointer]: 
+      - generic [ref=f5e1811]: October 14
+      - generic [ref=f5e1813]:
+        - generic "IEA Monthly Oil Report" [ref=f5e1814]: 01:00
+        - generic [ref=f5e1819]:
+          - generic [ref=f5e1821] [cursor=pointer]: 
+          - generic [ref=f5e1822]: "-"
+          - generic [ref=f5e1823]: "-"
+          - generic [ref=f5e1824]: "-"
+      - generic [ref=f5e1825]:
+        - generic "IMF & World Bank Meetings" [ref=f5e1826]: 21:00
+        - generic [ref=f5e1831]:
+          - generic [ref=f5e1833] [cursor=pointer]: 
+          - generic [ref=f5e1834]: "-"
+          - generic [ref=f5e1835]: "-"
+          - generic [ref=f5e1836]: "-"
+          - generic [ref=f5e1837] [cursor=pointer]: 
+      - generic [ref=f5e1839]: October 15
+      - generic [ref=f5e1841]:
+        - generic "IMF & World Bank Meetings" [ref=f5e1842]: 21:00
+        - generic [ref=f5e1847]:
+          - generic [ref=f5e1849] [cursor=pointer]: 
+          - generic [ref=f5e1850]: "-"
+          - generic [ref=f5e1851]: "-"
+          - generic [ref=f5e1852]: "-"
+          - generic [ref=f5e1853] [cursor=pointer]: 
+      - generic [ref=f5e1855]: October 16
+      - generic [ref=f5e1857]:
+        - generic "Monthly OPEX" [ref=f5e1858]: 13:00
+        - generic [ref=f5e1863]:
+          - generic [ref=f5e1865] [cursor=pointer]: 
+          - generic [ref=f5e1866]: "-"
+          - generic [ref=f5e1867]: "-"
+          - generic [ref=f5e1868]: "-"
+          - generic [ref=f5e1869] [cursor=pointer]: 
+      - generic [ref=f5e1871]:
+        - generic "IMF & World Bank Meetings" [ref=f5e1872]: 21:00
+        - generic [ref=f5e1877]:
+          - generic [ref=f5e1879] [cursor=pointer]: 
+          - generic [ref=f5e1880]: "-"
+          - generic [ref=f5e1881]: "-"
+          - generic [ref=f5e1882]: "-"
+          - generic [ref=f5e1883] [cursor=pointer]: 
+      - generic [ref=f5e1885]: October 17
+      - generic [ref=f5e1887]:
+        - generic "IMF & World Bank Meetings" [ref=f5e1888]: 21:00
+        - generic [ref=f5e1893]:
+          - generic [ref=f5e1895] [cursor=pointer]: 
+          - generic [ref=f5e1896]: "-"
+          - generic [ref=f5e1897]: "-"
+          - generic [ref=f5e1898]: "-"
+          - generic [ref=f5e1899] [cursor=pointer]: 
+      - generic [ref=f5e1901]: October 28
+      - generic [ref=f5e1903]:
+        - generic "FOMC Rate Statement" [ref=f5e1904]: 11:00
+        - generic [ref=f5e1909]:
+          - generic [ref=f5e1911] [cursor=pointer]: 
+          - generic [ref=f5e1912]: "-"
+          - generic [ref=f5e1913]: "-"
+          - generic [ref=f5e1914]: "-"
+          - generic [ref=f5e1915] [cursor=pointer]: 
+      - generic [ref=f5e1918]:
+        - generic [ref=f5e1919]: 11:30
+        - generic [ref=f5e1922]: FOMC Press Conference
+      - generic [ref=f5e1923]: November 10
+      - generic [ref=f5e1925]:
+        - generic "EIA STEO Report (Tentative)" [ref=f5e1926]: 10:00
+        - generic [ref=f5e1931]:
+          - generic [ref=f5e1933] [cursor=pointer]: 
+          - generic [ref=f5e1934]: "-"
+          - generic [ref=f5e1935]: "-"
+          - generic [ref=f5e1936]: "-"
+          - generic [ref=f5e1937] [cursor=pointer]: 
+      - generic [ref=f5e1939]: November 11
+      - generic [ref=f5e1941]:
+        - generic "OPEC Monthly Report" [ref=f5e1942]: 06:00
+        - generic [ref=f5e1947]:
+          - generic [ref=f5e1949] [cursor=pointer]: 
+          - generic [ref=f5e1950]: "-"
+          - generic [ref=f5e1951]: "-"
+          - generic [ref=f5e1952]: "-"
+          - generic [ref=f5e1953] [cursor=pointer]: 
+      - generic [ref=f5e1955]: November 13
+      - generic [ref=f5e1957]:
+        - generic "IEA Monthly Oil Report" [ref=f5e1958]: 02:00
+        - generic [ref=f5e1963]:
+          - generic [ref=f5e1965] [cursor=pointer]: 
+          - generic [ref=f5e1966]: "-"
+          - generic [ref=f5e1967]: "-"
+          - generic [ref=f5e1968]: "-"
+      - generic [ref=f5e1969]: November 20
+      - generic [ref=f5e1971]:
+        - generic "Monthly OPEX" [ref=f5e1972]: 14:00
+        - generic [ref=f5e1977]:
+          - generic [ref=f5e1979] [cursor=pointer]: 
+          - generic [ref=f5e1980]: "-"
+          - generic [ref=f5e1981]: "-"
+          - generic [ref=f5e1982]: "-"
+          - generic [ref=f5e1983] [cursor=pointer]: 
+      - generic [ref=f5e1985]: November 23
+      - generic [ref=f5e1987]:
+        - generic "US Treasury QRA Estimates" [ref=f5e1988]: 12:00
+        - generic [ref=f5e1993]:
+          - generic [ref=f5e1995] [cursor=pointer]: 
+          - generic [ref=f5e1996]: "-"
+          - generic [ref=f5e1997]: "-"
+          - generic [ref=f5e1998]: "-"
+          - generic [ref=f5e1999] [cursor=pointer]: 
+      - generic [ref=f5e2001]: November 25
+      - generic [ref=f5e2003]:
+        - generic "US Holiday" [ref=f5e2004]: 22:00
+        - generic [ref=f5e2009]:
+          - generic [ref=f5e2011] [cursor=pointer]: 
+          - generic [ref=f5e2012]: "-"
+          - generic [ref=f5e2013]: "-"
+          - generic [ref=f5e2014]: "-"
+          - generic [ref=f5e2015] [cursor=pointer]: 
+      - generic [ref=f5e2017]: November 27
+      - generic [ref=f5e2019]:
+        - generic "Early Market Close" [ref=f5e2020]: 11:00
+        - generic [ref=f5e2025]:
+          - generic [ref=f5e2027] [cursor=pointer]: 
+          - generic [ref=f5e2028]: "-"
+          - generic [ref=f5e2029]: "-"
+          - generic [ref=f5e2030]: "-"
+          - generic [ref=f5e2031] [cursor=pointer]: 
+      - generic [ref=f5e2033]: December 08
+      - generic [ref=f5e2035]:
+        - generic "EIA STEO Report (Tentative)" [ref=f5e2036]: 10:00
+        - generic [ref=f5e2041]:
+          - generic [ref=f5e2043] [cursor=pointer]: 
+          - generic [ref=f5e2044]: "-"
+          - generic [ref=f5e2045]: "-"
+          - generic [ref=f5e2046]: "-"
+          - generic [ref=f5e2047] [cursor=pointer]: 
+      - generic [ref=f5e2049]: December 09
+      - generic [ref=f5e2051]:
+        - generic "FOMC Rate Statement & SEP" [ref=f5e2052]: 12:00
+        - generic [ref=f5e2057]:
+          - generic [ref=f5e2059] [cursor=pointer]: 
+          - generic [ref=f5e2060]: "-"
+          - generic [ref=f5e2061]: "-"
+          - generic [ref=f5e2062]: "-"
+          - generic [ref=f5e2063] [cursor=pointer]: 
+      - generic [ref=f5e2066]:
+        - generic [ref=f5e2067]: 12:30
+        - generic [ref=f5e2070]: FOMC Press Conference
+      - generic [ref=f5e2071]: December 11
+      - generic [ref=f5e2073]:
+        - generic "IEA Monthly Oil Report" [ref=f5e2074]: 02:00
+        - generic [ref=f5e2079]:
+          - generic [ref=f5e2081] [cursor=pointer]: 
+          - generic [ref=f5e2082]: "-"
+          - generic [ref=f5e2083]: "-"
+          - generic [ref=f5e2084]: "-"
+      - generic [ref=f5e2085]: December 14
+      - generic [ref=f5e2087]:
+        - generic "OPEC Monthly Report" [ref=f5e2088]: 06:00
+        - generic [ref=f5e2093]:
+          - generic [ref=f5e2095] [cursor=pointer]: 
+          - generic [ref=f5e2096]: "-"
+          - generic [ref=f5e2097]: "-"
+          - generic [ref=f5e2098]: "-"
+          - generic [ref=f5e2099] [cursor=pointer]: 
+      - generic [ref=f5e2101]: December 18
+      - generic [ref=f5e2103]:
+        - generic "Monthly OPEX (Triple Witch)" [ref=f5e2104]: 14:00
+        - generic [ref=f5e2109]:
+          - generic [ref=f5e2111] [cursor=pointer]: 
+          - generic [ref=f5e2112]: "-"
+          - generic [ref=f5e2113]: "-"
+          - generic [ref=f5e2114]: "-"
+          - generic [ref=f5e2115] [cursor=pointer]: 
+      - generic [ref=f5e2117]: December 24
+      - generic [ref=f5e2119]:
+        - generic "Early Market Close" [ref=f5e2120]: 11:00
+        - generic [ref=f5e2125]:
+          - generic [ref=f5e2127] [cursor=pointer]: 
+          - generic [ref=f5e2128]: "-"
+          - generic [ref=f5e2129]: "-"
+          - generic [ref=f5e2130]: "-"
+          - generic [ref=f5e2131] [cursor=pointer]: 
+      - generic [ref=f5e2133]:
+        - generic "US Holiday" [ref=f5e2134]: 22:00
+        - generic [ref=f5e2139]:
+          - generic [ref=f5e2141] [cursor=pointer]: 
+          - generic [ref=f5e2142]: "-"
+          - generic [ref=f5e2143]: "-"
+          - generic [ref=f5e2144]: "-"
+          - generic [ref=f5e2145] [cursor=pointer]: 
+      - generic [ref=f5e2147]: March 31
+      - generic [ref=f5e2149]:
+        - generic "First Round Votes on French President (Tentative)" [ref=f5e2150]: 22:00
+        - generic [ref=f5e2155]:
+          - generic [ref=f5e2157] [cursor=pointer]: 
+          - generic [ref=f5e2158]: "-"
+          - generic [ref=f5e2159]: "-"
+          - generic [ref=f5e2160]: "-"
+  - link "By FinancialJuice" [ref=f5e3] [cursor=pointer]:
+    - /url: https://www.financialjuice.com/home?widget=cal

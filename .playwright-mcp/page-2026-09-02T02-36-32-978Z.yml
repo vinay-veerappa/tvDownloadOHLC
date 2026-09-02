@@ -1,0 +1,23 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e6]: FinancialJuice HUD
+      - generic [ref=e7]: SQUAWK
+    - generic [ref=e8]:
+      - button "🔊 Squawk" [ref=e9] [cursor=pointer]
+      - button "🌓" [ref=e10] [cursor=pointer]
+      - button "🗕" [ref=e11] [cursor=pointer]
+      - button "✕" [ref=e12] [cursor=pointer]
+  - generic [ref=e13]:
+    - generic [ref=e14]:
+      - button "📰 Headlines" [ref=e15] [cursor=pointer]
+      - button "📅 Econ Calendar" [active] [ref=e16] [cursor=pointer]
+      - button "⚡ TickStrike" [ref=e17] [cursor=pointer]
+    - iframe [ref=e19]:
+      - generic [ref=f1e3] [cursor=pointer]:
+        - generic [ref=f1e4]: LAUNCH
+        - generic [ref=f1e10]:
+          - generic [ref=f1e11]: DELAYED
+          - generic [ref=f1e12]: VOICE NEWS
+          - text: 
+    - iframe [ref=e22]

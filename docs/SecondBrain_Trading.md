@@ -116,6 +116,24 @@ Wait for the first 5 minutes of any hour:
 
 ---
 
+## 5. Options Gamma (GEX) Regimes & Asymmetric Strategy Gating (PatternProfits Empirical Model)
+*Detailed Reference*: [GAMMA_REGIME_STRATEGY_GATING.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/options/GAMMA_REGIME_STRATEGY_GATING.md)
+
+### 5.1 The Core Asymmetric Principle
+Options Gamma Regime is an **ASYMMETRIC VETO FILTER**, not a trade confirmation signal.
+* **Textbook Myth**: Negative Gamma ($\Gamma < 0$) = "Dealers sell into drops $\rightarrow$ ride breakouts into a runaway trend day."
+* **Empirical Reality (PatternProfits / Ben)**: Negative Gamma produces **extreme speed and overshoots, but ZERO sustained continuation**, leading to **double breaks of the Opening Range** and violent round-trips.
+
+### 5.2 Regime-Based Bot & Strategy Selection Matrix
+| Regime Condition | Active Strategy / Bot | Inactive / VETOED Bots | Execution Rule |
+| :--- | :--- | :--- | :--- |
+| **Positive Gamma ($\Gamma > 0$)**<br>Pin Odds $>20\%$, Compressed Walls | **`IBFadeBot` (Play 3)**<br>Discretionary FVG Sweeps | **`IBBreakoutBot` (Play 1)**<br>`IBRetestBot` (Play 2) | **Fade Extremes**: Dealers dampen moves. Target IB Mid (TP1) & opposite boundary (TP2). |
+| **Negative Gamma ($\Gamma < 0$)**<br>*Inside* Put/Call Walls ($<10\%$ Pin Odds) | **STAND ASIDE (Preferred)**<br>Discretionary Overshoot Fades | **`IBBreakoutBot` (Play 1)**<br>ORB Continuation Algos | **VETO Breakout Algos**: High risk of round-trip. If trading, enforce +10 bps lock (`CoverTheQueen`). |
+| **Negative Gamma ($\Gamma < 0$)**<br>*Accepted Outside* Put or Call Wall | **`IBBreakoutBot` (Play 1)**<br>**`IBRetestBot` (Play 2)** | **`IBFadeBot` (Play 3)** | **Runaway Expansion**: Join momentum after close-confirmed break outside major wall. |
+
+### 5.3 Governing Psychological Maxim
+> *"A losing trifecta is variance, not a rule change — nothing here changes the framework, it's just what negative gamma does. Standing aside on a good-looking setup in a hostile regime is a victory of discipline, not a missed opportunity."* — **PatternProfits (Ben)**
+
 ---
 
 ## 6. Session Profiler Logic (Structural Outcome)
