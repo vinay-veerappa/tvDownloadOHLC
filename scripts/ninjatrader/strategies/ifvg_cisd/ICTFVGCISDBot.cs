@@ -75,9 +75,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         private Indicators.Vinay.ICTFVGCISDIndicator ictIndicator;
 
-        // MTF 1-Minute Execution State
+        // TTrades "Let the Wick Form, Trade the Body" MTF State
         private int armedDirection = 0;
         private int armedBar = 0;
+        private int lastArmed5mBar = -1;
+        private int wickState = 0; // 0 = Idle, 1 = Waiting for Wick pullback, 2 = Wick inside PD Array
+        private double pdArrayHigh = double.NaN;
+        private double pdArrayLow = double.NaN;
+        private double protectedSwing = double.NaN;
         private double customMtfLimit = double.NaN;
         private double customMtfStop = double.NaN;
 
@@ -85,7 +90,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void SetStrategyDefaults()
         {
-            Description = "Institutional ICT CISD & FVG Strategy with 5m Structure + 1m Precision Entry and Cover The Queen scale-out.";
+            Description = "Institutional ICT CISD & FVG Strategy (TTrades 'Let the Wick Form, Trade the Body') with 5m Structure + 1m Precision Entry and Cover The Queen scale-out.";
             Name = "ICTFVGCISDBot";
 
             // Policy & Risk Defaults
@@ -110,9 +115,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             RequireExternalSweep = false;  // Modular toggle
             QueenTargetBps = 10.0;         // +10 Basis Points (0.10%)
             RunnerTargetBps = 30.0;        // +30 Basis Points (0.30%)
-            StopLossBps = 2.5;             // 2.5 Basis Points institutional micro-stop
+            StopLossBps = 5.0;             // 5.0 Basis Points default stop ceiling
             MinRiskBps = 2.0;              // 2 Basis Points risk floor
-            MaxRiskBps = 15.0;             // 15 Basis Points risk ceiling
+            MaxRiskBps = 12.0;             // 12 Basis Points risk ceiling
             EnableMidlineReclaims = true;
 
             AddSecondaryTimeframe = true;
@@ -124,8 +129,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (UseMtfExecution)
             {
                 AddSecondaryTimeframe = true;
-                if (StopLossBps > 3.0)
-                    StopLossBps = 2.5; // Compressed micro-stop for 1m execution
             }
         }
 
@@ -144,6 +147,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             armedDirection = 0;
             armedBar = 0;
+            wickState = 0;
+            pdArrayHigh = double.NaN;
+            pdArrayLow = double.NaN;
+            protectedSwing = double.NaN;
             customMtfLimit = double.NaN;
             customMtfStop = double.NaN;
         }
@@ -153,58 +160,120 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (ictIndicator == null) return 0;
 
             // ──────────────────────────────────────────────────────────
-            // 1. MULTI-TIMEFRAME EXECUTION (5m Structure + 1m Micro-Entry)
+            // 1. MULTI-TIMEFRAME EXECUTION: TTrades "Let the Wick Form, Trade the Body"
             // ──────────────────────────────────────────────────────────
             if (AddSecondaryTimeframe && BarsArray.Length > 1)
             {
                 if (CurrentBars[0] < 20 || CurrentBars[1] < 50) return 0;
 
-                // Check 5m CISD Signal on secondary series (BarsArray[1])
-                int sig5m = ictIndicator.SignalSeries.GetValueAt(CurrentBars[1]);
-                if (sig5m != 0)
+                // Step 1 & 2: Check 5m CISD Signal & Displacement on secondary series (BarsArray[1])
+                if (CurrentBars[1] != lastArmed5mBar)
                 {
-                    armedDirection = sig5m;
-                    armedBar = CurrentBars[0];
+                    lastArmed5mBar = CurrentBars[1];
+                    int sig5m = ictIndicator.SignalSeries.GetValueAt(CurrentBars[1]);
+                    if (sig5m != 0)
+                    {
+                        armedDirection = sig5m;
+                        armedBar = CurrentBars[0];
+                        wickState = 1; // Waiting for wick pullback into PD Array
+
+                        double c5 = Closes[1][0];
+                        double o5 = Opens[1][0];
+                        double h5_0 = Highs[1][0];
+                        double l5_0 = Lows[1][0];
+                        double h5_2 = Highs[1][2];
+                        double l5_2 = Lows[1][2];
+                        double cisdLvl = ictIndicator.CisdLevelSeries.GetValueAt(CurrentBars[1]);
+
+                        if (sig5m == 1)
+                        {
+                            bool isFvg = (l5_0 > h5_2);
+                            pdArrayHigh = isFvg ? l5_0 : Math.Max(cisdLvl, c5);
+                            pdArrayLow = isFvg ? h5_2 : Math.Min(cisdLvl, o5);
+                        }
+                        else
+                        {
+                            bool isFvg = (h5_0 < l5_2);
+                            pdArrayHigh = isFvg ? l5_2 : Math.Max(cisdLvl, o5);
+                            pdArrayLow = isFvg ? h5_0 : Math.Min(cisdLvl, c5);
+                        }
+                        protectedSwing = double.NaN;
+                    }
                 }
 
-                // Check if armed window is still valid (within 15 1-minute bars / 3 candles)
-                if (armedDirection != 0 && (CurrentBars[0] - armedBar) <= 15)
+                // Step 3 & 4: Manage Wick Formation & Confirmation Window (Within 25 1-minute bars)
+                if (armedDirection != 0 && (CurrentBars[0] - armedBar) <= 25)
                 {
+                    double c0 = Closes[0][0];
+                    double o0 = Opens[0][0];
                     double h0 = Highs[0][0];
                     double l0 = Lows[0][0];
-                    double h2 = Highs[0][2];
-                    double l2 = Lows[0][2];
 
-                    if (armedDirection == 1 && l0 > h2) // 1m Bullish FVG
+                    // Step 3: "Let the Wick Form" -> Price enters PD Array
+                    if (wickState == 1)
                     {
-                        customMtfLimit = h2;
-                        customMtfStop = customMtfLimit - (customMtfLimit * (StopLossBps / 10000.0));
-                        armedDirection = 0; // Trigger consumed
-
-                        if (DrawVisuals)
+                        if (armedDirection == 1 && l0 <= pdArrayHigh)
                         {
-                            Draw.ArrowUp(this, "MTF_Buy_" + CurrentBar, false, 0, Low[0] - (4 * TickSize), Brushes.LimeGreen);
-                            Draw.Text(this, "MTF_Buy_Txt_" + CurrentBar, false, "1m FVG BUY", 0, Low[0] - (10 * TickSize), 0, Brushes.LimeGreen, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                            wickState = 2;
+                            protectedSwing = l0;
                         }
-                        return 1;
+                        else if (armedDirection == -1 && h0 >= pdArrayLow)
+                        {
+                            wickState = 2;
+                            protectedSwing = h0;
+                        }
                     }
-                    else if (armedDirection == -1 && h0 < l2) // 1m Bearish FVG
-                    {
-                        customMtfLimit = l2;
-                        customMtfStop = customMtfLimit + (customMtfLimit * (StopLossBps / 10000.0));
-                        armedDirection = 0; // Trigger consumed
 
-                        if (DrawVisuals)
+                    // Step 4: "Wick Confirmation" inside/rejecting PD Array
+                    if (wickState == 2)
+                    {
+                        if (armedDirection == 1)
+                            protectedSwing = double.IsNaN(protectedSwing) ? l0 : Math.Min(protectedSwing, l0);
+                        else
+                            protectedSwing = double.IsNaN(protectedSwing) ? h0 : Math.Max(protectedSwing, h0);
+
+                        // 1m candle turns back in trend direction (Wick Formed!)
+                        bool confirmed = (armedDirection == 1 && c0 > o0) || (armedDirection == -1 && c0 < o0);
+
+                        if (confirmed)
                         {
-                            Draw.ArrowDown(this, "MTF_Sell_" + CurrentBar, false, 0, High[0] + (4 * TickSize), Brushes.Magenta);
-                            Draw.Text(this, "MTF_Sell_Txt_" + CurrentBar, false, "1m FVG SELL", 0, High[0] + (10 * TickSize), 0, Brushes.Magenta, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                            double stopDist = Math.Abs(c0 - protectedSwing) + (1.0 * TickSize);
+                            double riskBps = (stopDist / c0) * 10000.0;
+
+                            // Squeeze filter: valid between MinRiskBps (2.0) and MaxRiskBps (12.0)
+                            if (riskBps >= MinRiskBps && riskBps <= MaxRiskBps)
+                            {
+                                int tradeDir = armedDirection;
+                                customMtfLimit = double.NaN; // Market fill on 1m confirmation close
+                                customMtfStop = tradeDir == 1 ? protectedSwing - (1.0 * TickSize) : protectedSwing + (1.0 * TickSize);
+
+                                // Reset state
+                                armedDirection = 0;
+                                wickState = 0;
+
+                                if (DrawVisuals)
+                                {
+                                    if (tradeDir == 1)
+                                    {
+                                        Draw.ArrowUp(this, "TTrades_Buy_" + CurrentBar, false, 0, Low[0] - (4 * TickSize), Brushes.LimeGreen);
+                                        Draw.Text(this, "TTrades_Buy_Txt_" + CurrentBar, false, "WICK FORMED\nTRADE BODY", 0, Low[0] - (10 * TickSize), 0, Brushes.LimeGreen, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                                    }
+                                    else
+                                    {
+                                        Draw.ArrowDown(this, "TTrades_Sell_" + CurrentBar, false, 0, High[0] + (4 * TickSize), Brushes.Magenta);
+                                        Draw.Text(this, "TTrades_Sell_Txt_" + CurrentBar, false, "WICK FORMED\nTRADE BODY", 0, High[0] + (10 * TickSize), 0, Brushes.Magenta, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                                    }
+                                }
+
+                                return tradeDir;
+                            }
                         }
-                        return -1;
                     }
                 }
-                else if (armedDirection != 0 && (CurrentBars[0] - armedBar) > 15)
+                else if (armedDirection != 0 && (CurrentBars[0] - armedBar) > 25)
                 {
-                    armedDirection = 0; // Disarm on timeout
+                    armedDirection = 0;
+                    wickState = 0;
                 }
 
                 return 0;
