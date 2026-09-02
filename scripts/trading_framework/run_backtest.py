@@ -32,6 +32,7 @@ from scripts.trading_framework.config.config_loader import load_config
 from scripts.libs_py.data.loader import DataLoader
 from scripts.trading_framework.strategies.registry import get_strategy
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
+from scripts.trading_framework.core.nt8_parity_backtester import NT8ParityBacktester
 from scripts.trading_framework.core.mfe_mae import compute_mfe_mae
 from scripts.trading_framework.reporting.tearsheet import generate_tearsheet
 from scripts.trading_framework.reporting.mfe_mae_report import (
@@ -199,11 +200,31 @@ def run_research_pipeline(args):
     print("* Generating signals...")
     signals = strategy.generate_signals(df, best_params) 
     
-    # 4. Vectorized Backtest
-    print("* Running backtest engine...")
-    engine = VectorizedBacktester()
-    # Mocking result structure for now (matches engine.run output)
-    result = engine.run(signals, df, {'leverage': 1.0})
+    # 4. Backtest Engine Execution
+    print(f"* Running backtest engine ({args.engine})...")
+    if getattr(args, "engine", "nt8_parity") == "nt8_parity":
+        engine = NT8ParityBacktester(
+            account_size=config.account_risk.starting_equity,
+            max_trades_per_day=getattr(config.account_risk, "max_trades_per_day", 3),
+            max_consecutive_losers=getattr(config.account_risk, "max_consecutive_losers", 2),
+            pause_minutes=getattr(config.account_risk, "pause_minutes", 30),
+            hard_stop_losers=getattr(config.account_risk, "hard_stop_losers", 3),
+            daily_max_loss=config.account_risk.daily_loss_limit,
+            contracts=2,
+        )
+        risk_dict = {
+            'ticker': args.ticker,
+            'queen_bps': 10.0,
+            'runner_bps': 30.0,
+            'earliest_entry_hhmm': 945,
+            'latest_entry_hhmm': 1530,
+            'flatten_hhmm': 1555,
+            'filter_lunch': True,
+        }
+        result = engine.run(signals, df, risk_dict)
+    else:
+        engine = VectorizedBacktester()
+        result = engine.run(signals, df, {'leverage': 1.0})
     
     # 5. Advanced Research Analysis (MFE/MAE)
     print("* Computing MFE/MAE excursions...")
@@ -319,6 +340,7 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default="scripts/trading_framework/config/sessions.yaml", help="Path to YAML config")
     parser.add_argument("--optimize", action="store_true", help="Run Optuna optimization study")
     parser.add_argument("--trials", type=int, default=20, help="Number of optimization trials")
+    parser.add_argument("--engine", type=str, default="nt8_parity", choices=["nt8_parity", "vectorized"], help="Backtest engine: nt8_parity (ADR-024) or legacy vectorized")
     
     args = parser.parse_args()
     run_research_pipeline(args)
