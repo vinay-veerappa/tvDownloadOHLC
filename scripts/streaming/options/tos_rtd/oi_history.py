@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterator
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 OI_HISTORY_PATH = REPO_ROOT / "data" / "options" / "history" / "oi" / "oi_book.jsonl"
 
 
