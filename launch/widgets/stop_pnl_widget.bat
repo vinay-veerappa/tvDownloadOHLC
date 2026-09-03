@@ -1,9 +1,10 @@
 @echo off
+:: Stop the Fleet P&L widget server (Rust trading_daemon) - mirrors old stop behavior.
 title Fleet P^&L Widget - Stop
-echo Stopping Fleet P^&L ^& Copier Widget server...
+echo Stopping Fleet P^&L ^& Copier daemon...
 
 cd /d %~dp0..\..
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\tradingview\launch_pnl_widget.ps1" -Stop
+call "%~dp0..\stop_trading_daemon.bat"
 
 echo.
 echo Widget stopped.

@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+    "trading_daemon",
+    "nt8_parity_core",
+    "broker_sentinel",
+]

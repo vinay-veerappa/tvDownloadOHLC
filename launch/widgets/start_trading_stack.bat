@@ -34,15 +34,21 @@ if !errorlevel! equ 0 (
 echo.
 
 :: -----------------------------------------------------------
-:: 1. Fleet P&L widget + TV streamer (ONE unified engine, port 8635)
+:: 1. Fleet P&L widget + TV streamer (ONE unified Rust daemon, port 8635)
 :: -----------------------------------------------------------
-echo [START] Fleet P^&L widget / streamer engine...
+echo [START] Fleet P^&L daemon (Rust trading_daemon)...
 powershell -NoProfile -Command "try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8635/health' -TimeoutSec 2; if ($h.status -eq 'ok') { exit 0 } else { exit 1 } } catch { exit 1 }"
 if !errorlevel! equ 0 (
     echo         ALREADY RUNNING - skipping.
 ) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\tradingview\start_pnl_streamer.ps1" -Background
-    echo         Started on port 8635 ^(widget + TV CDP pump^).
+    start "TRADING_DAEMON" /min "%~dp0..\start_trading_daemon.bat"
+    timeout /t 4 >nul
+    powershell -NoProfile -Command "try { $h = Invoke-RestMethod -Uri 'http://127.0.0.1:8635/health' -TimeoutSec 2; if ($h.status -eq 'ok') { exit 0 } else { exit 1 } } catch { exit 1 }"
+    if !errorlevel! equ 0 (
+        echo         Started on port 8635 ^(Rust daemon: widget + TV CDP pump^).
+    ) else (
+        echo         FAILED to start on 8635 - check logs\trading_daemon.log
+    )
 )
 echo.
 

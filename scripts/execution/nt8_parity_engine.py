@@ -46,6 +46,11 @@ class NT8Trade:
     exit_reason: str
     queen_hit: bool
     runner_hit: bool
+    mfe_points: float = 0.0
+    mae_points: float = 0.0
+    mfe_bps: float = 0.0
+    mae_bps: float = 0.0
+    is_reentry: bool = False
 
 
 class NT8ParityEngine:
@@ -296,14 +301,16 @@ class NT8ParityEngine:
         signals_5m: pd.Series,
         queen_bps: float = 10.0,
         runner_bps: float = 30.0,
-        stop_loss_bps: float = 2.5,
+        stop_loss_bps: float = 5.0,
         earliest_entry_hhmm: int = 945,
         latest_entry_hhmm: int = 1530,
         flatten_hhmm: int = 1555,
         filter_lunch: bool = True,
+        allow_reentry: bool = True,
     ) -> pd.DataFrame:
         """
         Multi-Timeframe Simulation: 5m Structure/CISD + 1m FVG Precision Entry.
+        Includes bar-by-bar MFE/MAE excursion tracking and Confirmed Re-entry Protocol.
         """
         times_1m = df_1m.index
         opens_1m = df_1m["open"].to_numpy(dtype=np.float64)
@@ -324,6 +331,12 @@ class NT8ParityEngine:
         active_tp1 = 0.0
         active_tp2 = 0.0
         queen_filled = False
+        cur_mfe_pts = 0.0
+        cur_mae_pts = 0.0
+        is_cur_reentry = False
+        reentry_armed = False
+        reentry_dir = 0
+        reentry_time = None
 
         # State
         cur_day = None
@@ -349,8 +362,9 @@ class NT8ParityEngine:
                 daily_pnl = 0.0
                 armed_dir = 0
                 armed_time = None
+                reentry_armed = False
 
-            # 1. Manage open position
+            # 1. Manage open position & track MFE/MAE
             if in_pos:
                 closed = False
                 pnl_pts = 0.0
@@ -358,6 +372,11 @@ class NT8ParityEngine:
                 r_hit = False
 
                 if pos_dir == 1:
+                    fav = h0 - pos_entry_price
+                    adv = pos_entry_price - l0
+                    if fav > cur_mfe_pts: cur_mfe_pts = fav
+                    if adv > cur_mae_pts: cur_mae_pts = adv
+
                     if not queen_filled and h0 >= active_tp1:
                         queen_filled = True
                         active_sl = pos_entry_price
@@ -383,6 +402,11 @@ class NT8ParityEngine:
                         closed = True
 
                 elif pos_dir == -1:
+                    fav = pos_entry_price - l0
+                    adv = h0 - pos_entry_price
+                    if fav > cur_mfe_pts: cur_mfe_pts = fav
+                    if adv > cur_mae_pts: cur_mae_pts = adv
+
                     if not queen_filled and l0 <= active_tp1:
                         queen_filled = True
                         active_sl = pos_entry_price
@@ -414,11 +438,16 @@ class NT8ParityEngine:
                     slip_usd = (self.slippage_ticks * self.tick_size * self.point_value) * self.contracts
                     net_usd = gross_usd - comm_usd - slip_usd
 
+                    mfe_b = (cur_mfe_pts / pos_entry_price) * 10000.0 if pos_entry_price > 0 else 0.0
+                    mae_b = (cur_mae_pts / pos_entry_price) * 10000.0 if pos_entry_price > 0 else 0.0
+
                     trades.append(NT8Trade(
                         entry_time=pos_entry_time, exit_time=t, direction="Long" if pos_dir == 1 else "Short",
                         entry_price=pos_entry_price, exit_price=active_tp2 if r_hit else (active_sl if "Stop" in reason else c0),
                         leg1_points=q_pts, leg2_points=r_pts, total_points=pnl_pts,
                         total_pnl_usd=net_usd, exit_reason=reason, queen_hit=queen_filled, runner_hit=r_hit,
+                        mfe_points=cur_mfe_pts, mae_points=cur_mae_pts, mfe_bps=mfe_b, mae_bps=mae_b,
+                        is_reentry=is_cur_reentry,
                     ))
 
                     daily_pnl += net_usd
@@ -426,17 +455,25 @@ class NT8ParityEngine:
                         consecutive_losers += 1
                         if consecutive_losers >= self.max_consecutive_losers:
                             pause_until_time = t + pd.Timedelta(minutes=self.pause_minutes)
+                        # Re-Entry Protocol: If stopped out on tight SL, arm for 1 confirmed re-entry
+                        if allow_reentry and not is_cur_reentry and "Stop" in reason:
+                            reentry_armed = True
+                            reentry_dir = pos_dir
+                            reentry_time = t
                     else:
                         consecutive_losers = 0
+                        reentry_armed = False
 
             # 2. Check 5m CISD signals at 5m bar closures
             if t in sig_map:
                 armed_dir = sig_map[t]
                 armed_time = t
 
-            # 3. Check 1m FVG Entry Trigger when armed
-            if not in_pos and armed_dir != 0:
-                is_paused = (pause_until_time is not None and t < pause_until_time)
+            # 3. Check 1m FVG Entry Trigger (or Confirmed Re-Entry)
+            target_dir = reentry_dir if reentry_armed else armed_dir
+            t_ref = reentry_time if reentry_armed else armed_time
+            if not in_pos and target_dir != 0:
+                is_paused = (pause_until_time is not None and t < pause_until_time) and not reentry_armed
                 hit_hard_stop = (consecutive_losers >= self.hard_stop_losers)
                 hit_daily_max = (daily_pnl <= -self.daily_max_loss)
                 hm = int(hhmm)
@@ -444,9 +481,9 @@ class NT8ParityEngine:
                 if filter_lunch and (1200 <= hm <= 1330):
                     in_time = False
 
-                bars_armed = (t - armed_time).total_seconds() / 60.0 if armed_time else 999.0
-                if bars_armed <= 15.0 and in_time and daily_trades < self.max_trades_per_day and not is_paused and not hit_hard_stop and not hit_daily_max:
-                    if armed_dir == 1 and l0 > h2:  # 1m Bullish FVG
+                bars_armed = (t - t_ref).total_seconds() / 60.0 if t_ref else 999.0
+                if bars_armed <= 20.0 and in_time and daily_trades < self.max_trades_per_day and not is_paused and not hit_hard_stop and not hit_daily_max:
+                    if target_dir == 1 and l0 > h2:  # 1m Bullish FVG
                         entry_p = self.round_tick(h2)
                         active_sl = self.round_tick(entry_p - (entry_p * (stop_loss_bps / 10000.0)))
                         active_tp1 = self.round_tick(entry_p + (entry_p * (queen_bps / 10000.0)))
@@ -456,9 +493,13 @@ class NT8ParityEngine:
                         pos_dir = 1
                         in_pos = True
                         queen_filled = False
+                        cur_mfe_pts = 0.0
+                        cur_mae_pts = 0.0
+                        is_cur_reentry = reentry_armed
                         daily_trades += 1
                         armed_dir = 0
-                    elif armed_dir == -1 and h0 < l2:  # 1m Bearish FVG
+                        reentry_armed = False
+                    elif target_dir == -1 and h0 < l2:  # 1m Bearish FVG
                         entry_p = self.round_tick(l2)
                         active_sl = self.round_tick(entry_p + (entry_p * (stop_loss_bps / 10000.0)))
                         active_tp1 = self.round_tick(entry_p - (entry_p * (queen_bps / 10000.0)))
@@ -468,9 +509,15 @@ class NT8ParityEngine:
                         pos_dir = -1
                         in_pos = True
                         queen_filled = False
+                        cur_mfe_pts = 0.0
+                        cur_mae_pts = 0.0
+                        is_cur_reentry = reentry_armed
                         daily_trades += 1
                         armed_dir = 0
-                elif bars_armed > 15.0:
+                        reentry_armed = False
+                elif bars_armed > 20.0:
                     armed_dir = 0
+                    reentry_armed = False
 
         return pd.DataFrame([t.__dict__ for t in trades])
+

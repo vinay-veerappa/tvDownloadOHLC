@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -12,6 +12,15 @@ env/
 logs/*.log
 web/logs/
 **/tsbuildinfo
+
+# Rust build artifacts
+target/
+crates/**/target/
+*.pyd
+# Rust crate source exceptions: the daemon's embedded widget HTML is source, not
+# output; and crates/*/src/bin/ is source that the bare `bin/` rule would swallow.
+!crates/trading_daemon/assets/widget.html
+!crates/*/src/bin/**
 
 # agent-loop --mode docs output. Model artifacts, regenerated on demand; not
 # source, and not to be reviewed as if a human wrote them.
@@ -68,6 +77,13 @@ obj/
 *.exe
 *.dll
 args.json
+
+# Rust crate source exceptions: the daemon's embedded widget HTML is source, not
+# output; crates/*/src/bin/ is source the bare bin/ rule would swallow. Negations
+# must sit AFTER the broad rules they override.
+!crates/trading_daemon/assets/widget.html
+!crates/broker_sentinel/src/bin/
+!crates/broker_sentinel/src/bin/**
 
 # Credentials & Secrets (STRICT EXCLUSION)
 secrets.json

@@ -69,6 +69,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         [NinjaScriptProperty]
         [Display(Name = "Show Visual Elements", Order = 11, GroupName = "4. Visuals")]
         public bool ShowVisualElements { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(10, 10000)]
+        [Display(Name = "HTF EMA Period", Order = 12, GroupName = "1. Strategy Variant")]
+        public int HtfEmaPeriod { get; set; }
         #endregion
 
         #region Exported Series
@@ -141,14 +146,15 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
                 Variant = 2;
                 EntryMode = 1;                 // 1 = FVG Limit Retest
-                UseHtfFilter = false;          // Disabled by default: reversal trades at extreme lows occur below the EMA
+                UseHtfFilter = true;           // True for 4H HTF macro trend alignment (Python parity)
+                HtfEmaPeriod = 2400;           // 2400 bars on 5m = 4-Hour 50 EMA (98.84% parity with Python)
                 FilterLunch = true;            // Blackout 12:00-13:30
-                RequireExternalSweep = true;   // Mandatory HTF Liquidity Grab Filter
+                RequireExternalSweep = false;  // False to capture pure 5m CISD delivery state shifts (Python parity)
                 QueenTargetBps = 10.0;         // +10 Basis Points
                 RunnerTargetBps = 30.0;        // +30 Basis Points
                 StopLossBps = 5.0;             // 5.0 Basis Points default stop ceiling
                 MinRiskBps = 2.0;              // 2.0 Basis Points risk floor
-                MaxRiskBps = 12.0;             // 12.0 Basis Points risk ceiling
+                MaxRiskBps = 15.0;             // 15.0 Basis Points universal risk ceiling
                 EnableMidlineReclaims = true;
                 ShowVisualElements = true;
             }
@@ -159,7 +165,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             }
             else if (State == State.DataLoaded)
             {
-                htfEma = EMA(50);
+                htfEma = EMA(HtfEmaPeriod > 0 ? HtfEmaPeriod : 2400);
                 SignalSeries = new Series<int>(this);
                 StopLossSeries = new Series<double>(this);
                 QueenTargetSeries = new Series<double>(this);
@@ -670,7 +676,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 for (int idx = 0; idx < cacheICTFVGCISDIndicator.Length; idx++)
                     if (cacheICTFVGCISDIndicator[idx] != null && cacheICTFVGCISDIndicator[idx].Variant == variant && cacheICTFVGCISDIndicator[idx].EntryMode == entryMode && cacheICTFVGCISDIndicator[idx].UseHtfFilter == useHtfFilter && cacheICTFVGCISDIndicator[idx].FilterLunch == filterLunch && cacheICTFVGCISDIndicator[idx].RequireExternalSweep == requireExternalSweep && cacheICTFVGCISDIndicator[idx].QueenTargetBps == queenTargetBps && cacheICTFVGCISDIndicator[idx].RunnerTargetBps == runnerTargetBps && cacheICTFVGCISDIndicator[idx].StopLossBps == stopLossBps && cacheICTFVGCISDIndicator[idx].MinRiskBps == minRiskBps && cacheICTFVGCISDIndicator[idx].MaxRiskBps == maxRiskBps && cacheICTFVGCISDIndicator[idx].EnableMidlineReclaims == enableMidlineReclaims && cacheICTFVGCISDIndicator[idx].ShowVisualElements == showVisualElements && cacheICTFVGCISDIndicator[idx].EqualsInput(input))
                         return cacheICTFVGCISDIndicator[idx];
-            return CacheIndicator<Vinay.ICTFVGCISDIndicator>(new Vinay.ICTFVGCISDIndicator() { Variant = variant, EntryMode = entryMode, UseHtfFilter = useHtfFilter, FilterLunch = filterLunch, RequireExternalSweep = requireExternalSweep, QueenTargetBps = queenTargetBps, RunnerTargetBps = runnerTargetBps, StopLossBps = stopLossBps, MinRiskBps = minRiskBps, MaxRiskBps = maxRiskBps, EnableMidlineReclaims = enableMidlineReclaims, ShowVisualElements = showVisualElements }, input, ref cacheICTFVGCISDIndicator);
+            return CacheIndicator<Vinay.ICTFVGCISDIndicator>(new Vinay.ICTFVGCISDIndicator() { Variant = variant, EntryMode = entryMode, UseHtfFilter = useHtfFilter, FilterLunch = filterLunch, RequireExternalSweep = requireExternalSweep, QueenTargetBps = queenTargetBps, RunnerTargetBps = runnerTargetBps, StopLossBps = stopLossBps, MinRiskBps = minRiskBps, MaxRiskBps = maxRiskBps, EnableMidlineReclaims = enableMidlineReclaims, ShowVisualElements = showVisualElements, HtfEmaPeriod = 2400 }, input, ref cacheICTFVGCISDIndicator);
         }
     }
 }

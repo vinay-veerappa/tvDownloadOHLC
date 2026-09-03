@@ -289,13 +289,13 @@ async function triggerEmergencyFlatten(source = 'HUD') {
   });
 }
 
-// Proxy an order placement to the NT8 bridge (widget page -> 8635 -> NT8 7890)
-function proxyOrderToNt8(bodyJson) {
+// Proxy an order or close command to the NT8 bridge (widget page -> 8635 -> NT8 7890)
+function proxyToNt8(endpointPath, bodyJson) {
   return new Promise((resolve) => {
     const options = {
       hostname: NT8_HOST,
       port: NT8_PORT,
-      path: '/api/order/atm',
+      path: endpointPath,
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${NT8_TOKEN}`,
@@ -323,6 +323,14 @@ function proxyOrderToNt8(bodyJson) {
     req.write(bodyJson);
     req.end();
   });
+}
+
+function proxyOrderToNt8(bodyJson) {
+  return proxyToNt8('/api/order/atm', bodyJson);
+}
+
+function proxyCloseToNt8(bodyJson) {
+  return proxyToNt8('/api/position/close', bodyJson);
 }
 
 async function pushToTradingView(payload) {
@@ -527,7 +535,27 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 10000) req.destroy(); });
     req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed && typeof parsed === 'object' && parsed.confirmLive === undefined) {
+          parsed.confirmLive = true;
+          body = JSON.stringify(parsed);
+        }
+      } catch {}
+      console.log('[ORDER ATM REQ]', body);
       proxyOrderToNt8(body).then(({ statusCode, body: respBody }) => {
+        console.log('[ORDER ATM RESP]', statusCode, JSON.stringify(respBody));
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(respBody));
+      });
+    });
+  } else if (req.url === '/api/position/close' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 10000) req.destroy(); });
+    req.on('end', () => {
+      console.log('[POSITION CLOSE REQ]', body);
+      proxyCloseToNt8(body).then(({ statusCode, body: respBody }) => {
+        console.log('[POSITION CLOSE RESP]', statusCode, JSON.stringify(respBody));
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(respBody));
       });

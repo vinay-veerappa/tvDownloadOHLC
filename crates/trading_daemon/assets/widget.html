@@ -1,49 +1,44 @@
-/**
- * Trading Account P&L, Position & Copy-Trading Fleet Monitor HUD.
- * 
- * Features:
- * - Instantaneous live P&L, position, and balance updates (< 200ms refresh)
- * - Interactive Multi-Column Sorting (Account, Position/Contracts, Unrealized, Realized, Net Liq, Sync Status)
- * - Explicit Open Contracts Display in summary, header badge, tab, and account rows
- * - Copy-Trading Sync Grid: Leader vs Follower Expected vs Actual position validation
- * - Orphan Position Alert & Desync Warning System
- * - Emergency Fleet Flatten Action Button with 2-click confirm & CDP bridge
- * - Order Ticket: Buy/Sell market entry with a server-side ATM bracket (widget + HUD)
- * - Live Heartbeat & Stream Latency Indicator
- * - Dual Mode Support: TradingView In-Chart HUD & Standalone Floating Desktop Widget
- */
-
-export const hud = {
-  id: 'account_pnl',
-  domId: 'ws-pnl-panel',
-  styleId: 'ws-pnl-panel-style',
-  name: 'Fleet P&L & Copy-Trading Sync Monitor',
-  description: 'Real-time multi-account P&L, positions, open contracts, and copy-trading follower synchronization validator with interactive sorting.',
-  version: '2.4.0',
-  defaultPosition: {
-    top: 65,
-    right: 65,
-    width: 570,
-    height: 640,
-    minWidth: 420,
-    minHeight: 280
-  },
-
-  getCss: (options = {}) => {
-    const initOpacity = options.opacity ?? 0.96;
-    const width = options.width ?? 570;
-    const height = options.height ?? 640;
-
-    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fleet P&L & Copier Monitor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #131722;
+      color: #d1d4dc;
+      font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+    }
+    #ws-pnl-panel {
+      position: relative !important;
+      top: 0 !important;
+      right: 0 !important;
+      left: 0 !important;
+      bottom: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: 100vw !important;
+      max-height: 100vh !important;
+      border-radius: 0 !important;
+      border: none !important;
+      box-shadow: none !important;
+      resize: none !important;
+    }
+    
       #ws-pnl-panel {
         position: fixed;
-        top: ${options.top ?? 65}px;
-        right: ${options.right ?? 65}px;
-        width: ${width}px;
-        height: ${height}px;
+        top: 0px;
+        right: 0px;
+        width: 100%px;
+        height: 100%px;
         min-width: 420px;
         min-height: 280px;
-        background: rgba(19, 23, 34, ${initOpacity});
+        background: rgba(19, 23, 34, 0.98);
         border: 1px solid #2a2e39;
         border-radius: 10px;
         box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05);
@@ -566,11 +561,12 @@ export const hud = {
         color: #5d606b;
         flex-shrink: 0;
       }
-    `;
-  },
-
-  getHtml: (options = {}) => {
-    return `
+    
+  </style>
+</head>
+<body>
+  <div id="ws-pnl-panel">
+    
       <div class="ws-pnl-header" id="ws-pnl-drag-handle">
         <div class="ws-pnl-title-box">
           <div class="ws-pnl-dot" id="ws-pnl-status-dot"></div>
@@ -675,10 +671,12 @@ export const hud = {
         <span id="ws-pnl-last-update">Connecting stream...</span>
         <span id="ws-pnl-acc-count">0 accounts</span>
       </div>
-    `;
-  },
+    
+  </div>
 
-  initScript: `
+  <script>
+    const panel = document.getElementById('ws-pnl-panel');
+    (
     (function(panel) {
       window.__TV_PNL_STATE__ = window.__TV_PNL_STATE__ || {
         accounts: [],
@@ -1064,7 +1062,7 @@ export const hud = {
         // buttons never move or vanish under the cursor. Only the volatile cell
         // values are updated in place on each 200ms tick. A full rebuild happens
         // only when the account SET or its ORDER changes (sort/filter/view).
-        const orderKey = filtered.map(a => a.name).join('\u0001');
+        const orderKey = filtered.map(a => a.name).join('');
         if (tbody.getAttribute('data-build-key') !== state.currentView + '|' + orderKey) {
           tbody.setAttribute('data-build-key', state.currentView + '|' + orderKey);
           tbody.innerHTML = '';
@@ -1551,7 +1549,7 @@ export const hud = {
           const ctrFoot = totalOpenContracts > 0 ? ' | ' + totalOpenContracts + ' contract' + (totalOpenContracts > 1 ? 's' : '') + ' open' : ' | Flat';
           elFooterCount.textContent = state.accounts.length + ' accounts | ' + (data.activeAccountsCount || 0) + ' active' + ctrFoot;
         }
-        if (elFooterTime) elFooterTime.textContent = 'Live \u2022 ' + new Date().toLocaleTimeString();
+        if (elFooterTime) elFooterTime.textContent = 'Live • ' + new Date().toLocaleTimeString();
 
         otSyncSymbolOptions(state.positions);
         otApplyBusy();
@@ -1560,5 +1558,50 @@ export const hud = {
         renderTable();
       };
     })
-  `
-};
+  )(panel);
+
+    // Local Polling from this Node Server (Port 8635)
+    let isPolling = false;
+    async function updateFromLocalEngine() {
+      if (isPolling) return;
+      isPolling = true;
+      try {
+        const res = await fetch('/api/data');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        
+        if (data && data.accounts) {
+          if (window.__TV_HUDS__ && typeof window.__TV_HUDS__.update === 'function') {
+            window.__TV_HUDS__.update('account_pnl', data);
+          }
+          const dot = document.getElementById('ws-pnl-status-dot');
+          if (dot) dot.classList.remove('offline');
+        } else {
+          throw new Error('No data');
+        }
+      } catch (err) {
+        const dot = document.getElementById('ws-pnl-status-dot');
+        if (dot) dot.classList.add('offline');
+        const badge = document.getElementById('ws-pnl-bridge-badge');
+        if (badge) {
+          badge.textContent = 'OFFLINE';
+          badge.className = 'ws-pnl-badge offline';
+        }
+        const footerTime = document.getElementById('ws-pnl-last-update');
+        if (footerTime) footerTime.textContent = 'NT8 Offline';
+      } finally {
+        isPolling = false;
+      }
+    }
+
+    // Direct Local 200ms Poll
+    updateFromLocalEngine();
+    setInterval(updateFromLocalEngine, 200);
+
+    // Hook Panic Flatten to local proxy
+    window.__TV_PNL_FLATTEN_HOOK = function() {
+      fetch('/api/flatten', { method: 'POST' }).catch(console.error);
+    };
+  </script>
+</body>
+</html>
