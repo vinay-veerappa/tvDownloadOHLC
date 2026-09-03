@@ -498,7 +498,11 @@ TOS_RTD_SYMBOL_CONFIG: dict[str, dict] = {
         # path enough expiries for meaningful macro wall detection.
         # Each expiry adds ~400 COM topics (200 strikes × C+P).
         "num_expiries": 6,
-        "min_oi_floor": 25,
+        "min_oi_floor": 10,
+        # NQ weekly OI is much thinner and more ATM-concentrated than ES, so
+        # widen the hint-match tolerance and lower the OI floor to recover
+        # the real OI tail (was 25 / 1.5x → 4 strikes only).
+        "hint_tolerance_mult": 2.5,
     },
     "/ES": {
         "strike_tiers": [(100, 5.0), (300, 10.0), (600, 25.0)],

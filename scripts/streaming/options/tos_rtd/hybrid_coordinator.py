@@ -1028,7 +1028,10 @@ class HybridCoordinator:
             tiers = sc.get("strike_tiers")
 
             sym_hints = set(hints.get(sym, []))
-            tolerance = hint_tolerance_mult * self._strike_spacing_for(sym)
+            # Per-symbol tolerance override (e.g. NQ needs a wider net because
+            # its weekly OI is thinner); falls back to the caller's default.
+            sym_tol = sc.get("hint_tolerance_mult", hint_tolerance_mult)
+            tolerance = sym_tol * self._strike_spacing_for(sym)
 
             for exp in expiries:
                 option_syms = OptionSymbolBuilder.build_symbols(
