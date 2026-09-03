@@ -581,14 +581,11 @@ unsafe fn paint_pnl(d: &mut Dc, f: &Fonts, ui: &UiState, w: i32, h: i32) {
             d.text("S", sb.left + (22 - tw) / 2, d.y + 6, d.th.red, f.tiny);
             HITS.lock().unwrap().push((sb, Hit::Sell(a.name.clone())));
             // C
-            let confirming = ui.close_confirm.as_deref() == Some(a.name.as_str())
-                && now_ms() < ui.close_confirm_at;
             let cb = RECT { left: bx + 44, top: d.y + 3, right: bx + 64, bottom: d.y + 21 };
-            let (ctxt, cfg, cbg) = if confirming { ("sure?", d.th.red, d.th.red_bg) } else { ("C", d.th.dim, d.th.card) };
-            d.round(&cb, cbg, if confirming { d.th.red } else { d.th.border }, 4);
-            let tw = d.text_w(ctxt, f.tiny);
-            d.text(ctxt, cb.left + (22 - tw) / 2, d.y + 6, cfg, f.tiny);
-            HITS.lock().unwrap().push((cb, if confirming { Hit::CloseConfirm(a.name.clone()) } else { Hit::Close(a.name.clone()) }));
+            d.round(&cb, d.th.card, d.th.border, 4);
+            let tw = d.text_w("C", f.tiny);
+            d.text("C", cb.left + (22 - tw) / 2, d.y + 6, d.th.dim, f.tiny);
+            HITS.lock().unwrap().push((cb, Hit::Close(a.name.clone())));
         }
 
         d.y += row_h;
@@ -710,12 +707,7 @@ unsafe fn paint_all(hdc: HDC, w: i32, h: i32) {
     d.pill(&cgr, cgt, cfg, cbg, cfg, fonts.tiny);
 
     // panic button
-    let armed = ui.panic_armed && now_ms() < ui.panic_armed_until;
-    let (ptxt, pfg, pbg, pbd) = if armed {
-        ("CONFIRM FLATTEN ALL?", RGB(255, 255, 255), RGB(178, 40, 32), RGB(178, 40, 32))
-    } else {
-        ("PANIC FLATTEN", th.red, th.card, th.red)
-    };
+    let (ptxt, pfg, pbg, pbd) = ("PANIC FLATTEN", th.red, th.card, th.red);
     let prc = RECT { left: w - 200, top: 8, right: w - 10, bottom: 32 };
     d.round(&prc, pbg, pbd, 6);
     {
@@ -855,10 +847,16 @@ fn place_order(side: &'static str, account: &str) {
         let (code, body_txt) = fire("/api/order/atm", body);
         with_ui(|u| { u.busy.remove(&format!("{}|{}", acc, side)); });
         if code == 200 && !body_txt.contains("\"error\"") {
-            let bracket = serde_json::from_str::<serde_json::Value>(&body_txt).ok()
-                .and_then(|v| v.get("bracketId").and_then(|b| b.as_str()).map(|s| s.to_string()))
-                .unwrap_or_else(|| "bracket".into());
-            set_status(&format!("OK {} {} {} {} [{}]", side.to_uppercase(), qty, symbol, acc, bracket), 1);
+            let v = serde_json::from_str::<serde_json::Value>(&body_txt).ok().unwrap_or_default();
+            let strat = v.get("strategyName").and_then(|x| x.as_str()).unwrap_or("?").to_string();
+            let sp = v.get("stopPrice").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let tp = v.get("targetPrice").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            if sp > 0.0 && tp > 0.0 {
+                set_status(&format!("OK {} {} {} [{} SL {:.2} TP {:.2}]", side.to_uppercase(), qty, symbol, strat, sp, tp), 1);
+            } else {
+                let bracket = v.get("bracketId").and_then(|b| b.as_str()).unwrap_or("bracket").to_string();
+                set_status(&format!("OK {} {} {} [{}]", side.to_uppercase(), qty, symbol, bracket), 1);
+            }
         } else {
             let err = serde_json::from_str::<serde_json::Value>(&body_txt).ok()
                 .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()))
@@ -874,7 +872,7 @@ fn close_position(account: &str) {
     let dup = with_ui(|u| { if u.busy.contains(&key) { true } else { u.busy.insert(key.clone()); false } });
     if dup { return; }
     let acc = account.to_string();
-    let body = serde_json::json!({ "account": acc, "symbol": "ALL" }).to_string();
+    let body = serde_json::json!({ "account": acc }).to_string();
     std::thread::spawn(move || {
         let (code, _) = fire("/api/position/close", body);
         with_ui(|u| { u.busy.remove(&format!("{}|close", acc)); });
@@ -999,17 +997,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
             if let Some(h) = hit {
                 match h {
                     Hit::Panic => {
-                        let fire_now = with_ui(|u| {
-                            if u.panic_armed && now_ms() < u.panic_armed_until {
-                                u.panic_armed = false;
-                                true
-                            } else {
-                                u.panic_armed = true;
-                                u.panic_armed_until = now_ms() + 3000;
-                                false
-                            }
-                        });
-                        if fire_now { panic_flatten(); } else { repaint = true; }
+                        panic_flatten();
                     }
                     Hit::Tab(t) => { with_ui(|u| { u.tab = t; }); repaint = true; }
                     Hit::Filter => { with_ui(|u| u.show_all = !u.show_all); repaint = true; }
@@ -1022,17 +1010,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
                     }
                     Hit::Buy(acc) => place_order("buy", &acc),
                     Hit::Sell(acc) => place_order("sell", &acc),
-                    Hit::Close(acc) => {
-                        with_ui(|u| {
-                            u.close_confirm = Some(acc.clone());
-                            u.close_confirm_at = now_ms() + 3000;
-                        });
-                        repaint = true;
-                    }
-                    Hit::CloseConfirm(acc) => {
-                        with_ui(|u| u.close_confirm = None);
-                        close_position(&acc);
-                    }
+                    Hit::Close(acc) => close_position(&acc),
+                    Hit::CloseConfirm(acc) => close_position(&acc),
                 }
             }
             if repaint { invalidate(); }
