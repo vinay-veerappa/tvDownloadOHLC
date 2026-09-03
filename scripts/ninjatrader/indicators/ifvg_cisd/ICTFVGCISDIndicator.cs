@@ -141,7 +141,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
 
                 Variant = 2;
                 EntryMode = 1;                 // 1 = FVG Limit Retest
-                UseHtfFilter = true;           // 4H Trend Alignment
+                UseHtfFilter = false;          // Disabled by default: reversal trades at extreme lows occur below the EMA
                 FilterLunch = true;            // Blackout 12:00-13:30
                 RequireExternalSweep = true;   // Mandatory HTF Liquidity Grab Filter
                 QueenTargetBps = 10.0;         // +10 Basis Points
@@ -465,21 +465,27 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 h4Low = Math.Min(h4Low, Low[k]);
             }
 
-            bool hasExtSweepBull = CheckRejectionSweepBull(prevDayL, 3) ||
-                                   CheckRejectionSweepBull(lastLondonL, 3) ||
-                                   CheckRejectionSweepBull(lastAsiaL, 3) ||
-                                   CheckRejectionSweepBull(lastNyAmL, 3) ||
-                                   CheckRejectionSweepBull(h1Low, 3) ||
-                                   CheckRejectionSweepBull(h4Low, 3) ||
-                                   CheckFvgTapBull(3);
+            string sweepSourceBull = "";
+            if (CheckRejectionSweepBull(prevDayL, 8)) sweepSourceBull = "PDL (" + prevDayL.ToString("F2") + ")";
+            else if (CheckRejectionSweepBull(lastLondonL, 8)) sweepSourceBull = "London Low (" + lastLondonL.ToString("F2") + ")";
+            else if (CheckRejectionSweepBull(lastAsiaL, 8)) sweepSourceBull = "Asia Low (" + lastAsiaL.ToString("F2") + ")";
+            else if (CheckRejectionSweepBull(lastNyAmL, 8)) sweepSourceBull = "NY AM Low (" + lastNyAmL.ToString("F2") + ")";
+            else if (CheckRejectionSweepBull(h1Low, 8)) sweepSourceBull = "1H Low (" + h1Low.ToString("F2") + ")";
+            else if (CheckRejectionSweepBull(h4Low, 8)) sweepSourceBull = "4H Low (" + h4Low.ToString("F2") + ")";
+            else if (CheckFvgTapBull(8)) sweepSourceBull = "HTF Bullish FVG Tap";
 
-            bool hasExtSweepBear = CheckRejectionSweepBear(prevDayH, 3) ||
-                                   CheckRejectionSweepBear(lastLondonH, 3) ||
-                                   CheckRejectionSweepBear(lastAsiaH, 3) ||
-                                   CheckRejectionSweepBear(lastNyAmH, 3) ||
-                                   CheckRejectionSweepBear(h1High, 3) ||
-                                   CheckRejectionSweepBear(h4High, 3) ||
-                                   CheckFvgTapBear(3);
+            bool hasExtSweepBull = !string.IsNullOrEmpty(sweepSourceBull);
+
+            string sweepSourceBear = "";
+            if (CheckRejectionSweepBear(prevDayH, 8)) sweepSourceBear = "PDH (" + prevDayH.ToString("F2") + ")";
+            else if (CheckRejectionSweepBear(lastLondonH, 8)) sweepSourceBear = "London High (" + lastLondonH.ToString("F2") + ")";
+            else if (CheckRejectionSweepBear(lastAsiaH, 8)) sweepSourceBear = "Asia High (" + lastAsiaH.ToString("F2") + ")";
+            else if (CheckRejectionSweepBear(lastNyAmH, 8)) sweepSourceBear = "NY AM High (" + lastNyAmH.ToString("F2") + ")";
+            else if (CheckRejectionSweepBear(h1High, 8)) sweepSourceBear = "1H High (" + h1High.ToString("F2") + ")";
+            else if (CheckRejectionSweepBear(h4High, 8)) sweepSourceBear = "4H High (" + h4High.ToString("F2") + ")";
+            else if (CheckFvgTapBear(8)) sweepSourceBear = "HTF Bearish FVG Tap";
+
+            bool hasExtSweepBear = !string.IsNullOrEmpty(sweepSourceBear);
 
             bool inLunch = FilterLunch && (hhmm >= 1200 && hhmm <= 1330);
 
@@ -517,7 +523,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                             string tag = "CISD_Bull_" + CurrentBar;
                             Draw.ArrowUp(this, tag, false, 0, l0 - (6 * TickSize), Brushes.Gold);
                             string modeStr = EntryMode == 0 ? "MKT" : (EntryMode == 1 ? "LMT FVG" : "LMT CE");
-                            Draw.Text(this, tag + "_txt", false, $"CISD BUY {modeStr} ({riskBps:F1}bps)", 0, l0 - (14 * TickSize), 0, Brushes.Gold, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                            Draw.Text(this, tag + "_txt", false, $"BULLISH CISD BUY {modeStr}\nSwept: {sweepSourceBull}\nLevel: {activeLevel:F2} ({riskBps:F1}bps)", 0, l0 - (14 * TickSize), 0, Brushes.Gold, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                            Draw.Line(this, tag + "_line", false, 6, activeLevel, 0, activeLevel, Brushes.Gold, DashStyleHelper.Solid, 2);
                         }
 
                         painThreshold = h0;
@@ -561,7 +568,8 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                             string tag = "CISD_Bear_" + CurrentBar;
                             Draw.ArrowDown(this, tag, false, 0, h0 + (6 * TickSize), Brushes.Cyan);
                             string modeStr = EntryMode == 0 ? "MKT" : (EntryMode == 1 ? "LMT FVG" : "LMT CE");
-                            Draw.Text(this, tag + "_txt", false, $"CISD SELL {modeStr} ({riskBps:F1}bps)", 0, h0 + (14 * TickSize), 0, Brushes.Cyan, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                            Draw.Text(this, tag + "_txt", false, $"BEARISH CISD SELL {modeStr}\nSwept: {sweepSourceBear}\nLevel: {activeLevel:F2} ({riskBps:F1}bps)", 0, h0 + (14 * TickSize), 0, Brushes.Cyan, new SimpleFont("Arial", 9), System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                            Draw.Line(this, tag + "_line", false, 6, activeLevel, 0, activeLevel, Brushes.Cyan, DashStyleHelper.Solid, 2);
                         }
 
                         painThreshold = l0;

@@ -110,7 +110,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             EntryMode = 1;                 // 1 = FVG Limit Touch
             UseMtfExecution = true;        // Multi-Timeframe: 5m Structure + 1m Precision Entry
             UseStage2Distribution = false;
-            UseHtfFilter = true;           // Pro-Trend 4H Orderflow
+            UseHtfFilter = false;          // Disabled: reversal trades at extreme lows occur below EMA
             FilterLunch = true;            // Blackout 12:00-13:30
             RequireExternalSweep = true;   // Mandatory Turtle Soup Liquidity Sweep Filter
             QueenTargetBps = 10.0;         // +10 Basis Points (0.10%)
@@ -255,15 +255,37 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                                 if (DrawVisuals)
                                 {
+                                    string tag = "TTrades_" + CurrentBar;
+                                    double entryP = c0;
+                                    double qPts = entryP * (QueenTargetBps / 10000.0);
+                                    double rPts = entryP * (RunnerTargetBps / 10000.0);
+                                    double tp1 = tradeDir == 1 ? entryP + qPts : entryP - qPts;
+                                    double tp2 = tradeDir == 1 ? entryP + rPts : entryP - rPts;
+                                    double sl = customMtfStop;
+
                                     if (tradeDir == 1)
                                     {
-                                        Draw.ArrowUp(this, "TTrades_Buy_" + CurrentBar, false, 0, Low[0] - (4 * TickSize), Brushes.LimeGreen);
-                                        Draw.Text(this, "TTrades_Buy_Txt_" + CurrentBar, false, "WICK FORMED\nTRADE BODY", 0, Low[0] - (10 * TickSize), 0, Brushes.LimeGreen, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                                        Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (4 * TickSize), Brushes.LimeGreen);
+                                        Draw.Text(this, tag + "_Txt", false, $"BUY LONG (Wick Rejection -> Trade Body)\nEntry: {entryP:F2} | SL: {sl:F2} ({riskBps:F1}bps)\nTP1: {tp1:F2} | TP2: {tp2:F2}", 0, Low[0] - (14 * TickSize), 0, Brushes.LimeGreen, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+
+                                        if (!double.IsNaN(pdArrayHigh) && !double.IsNaN(pdArrayLow))
+                                            Draw.Rectangle(this, tag + "_PDZone", false, 15, pdArrayHigh, 0, pdArrayLow, Brushes.Transparent, Brushes.DarkGreen, 20);
+
+                                        Draw.Line(this, tag + "_SL", false, 8, sl, 0, sl, Brushes.Red, DashStyleHelper.Dash, 2);
+                                        Draw.Line(this, tag + "_TP1", false, 8, tp1, 0, tp1, Brushes.LimeGreen, DashStyleHelper.Dash, 2);
+                                        Draw.Line(this, tag + "_TP2", false, 8, tp2, 0, tp2, Brushes.LimeGreen, DashStyleHelper.Solid, 2);
                                     }
                                     else
                                     {
-                                        Draw.ArrowDown(this, "TTrades_Sell_" + CurrentBar, false, 0, High[0] + (4 * TickSize), Brushes.Magenta);
-                                        Draw.Text(this, "TTrades_Sell_Txt_" + CurrentBar, false, "WICK FORMED\nTRADE BODY", 0, High[0] + (10 * TickSize), 0, Brushes.Magenta, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                                        Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (4 * TickSize), Brushes.Magenta);
+                                        Draw.Text(this, tag + "_Txt", false, $"SELL SHORT (Wick Rejection -> Trade Body)\nEntry: {entryP:F2} | SL: {sl:F2} ({riskBps:F1}bps)\nTP1: {tp1:F2} | TP2: {tp2:F2}", 0, High[0] + (14 * TickSize), 0, Brushes.Magenta, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+
+                                        if (!double.IsNaN(pdArrayHigh) && !double.IsNaN(pdArrayLow))
+                                            Draw.Rectangle(this, tag + "_PDZone", false, 15, pdArrayHigh, 0, pdArrayLow, Brushes.Transparent, Brushes.DarkRed, 20);
+
+                                        Draw.Line(this, tag + "_SL", false, 8, sl, 0, sl, Brushes.Red, DashStyleHelper.Dash, 2);
+                                        Draw.Line(this, tag + "_TP1", false, 8, tp1, 0, tp1, Brushes.Magenta, DashStyleHelper.Dash, 2);
+                                        Draw.Line(this, tag + "_TP2", false, 8, tp2, 0, tp2, Brushes.Magenta, DashStyleHelper.Solid, 2);
                                     }
                                 }
 
@@ -300,15 +322,30 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (sig != 0 && DrawVisuals)
             {
                 string tag = "CISD_Strat_" + CurrentBar;
+                double entryP = Close[0];
+                double sl = ictIndicator.StopLossSeries[0];
+                double tp1 = ictIndicator.QueenTargetSeries[0];
+                double tp2 = ictIndicator.RunnerTargetSeries[0];
+                double riskPts = Math.Abs(entryP - sl);
+                double riskBps = (riskPts / entryP) * 10000.0;
+
                 if (sig == 1)
                 {
-                    Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (6 * TickSize), Brushes.Gold);
-                    Draw.Text(this, tag + "_Txt", false, "CISD BUY", 0, Low[0] - (14 * TickSize), 0, Brushes.Gold, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                    Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (6 * TickSize), Brushes.LimeGreen);
+                    Draw.Text(this, tag + "_Txt", false, $"BUY LONG (CISD Reversal)\nEntry: {entryP:F2} | SL: {sl:F2} ({riskBps:F1}bps)\nTP1: {tp1:F2} | TP2: {tp2:F2}", 0, Low[0] - (14 * TickSize), 0, Brushes.LimeGreen, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+
+                    Draw.Line(this, tag + "_SL", false, 8, sl, 0, sl, Brushes.Red, DashStyleHelper.Dash, 2);
+                    Draw.Line(this, tag + "_TP1", false, 8, tp1, 0, tp1, Brushes.LimeGreen, DashStyleHelper.Dash, 2);
+                    Draw.Line(this, tag + "_TP2", false, 8, tp2, 0, tp2, Brushes.LimeGreen, DashStyleHelper.Solid, 2);
                 }
                 else if (sig == -1)
                 {
-                    Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (6 * TickSize), Brushes.Cyan);
-                    Draw.Text(this, tag + "_Txt", false, "CISD SELL", 0, High[0] + (14 * TickSize), 0, Brushes.Cyan, new SimpleFont("Arial", 10), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+                    Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (6 * TickSize), Brushes.Magenta);
+                    Draw.Text(this, tag + "_Txt", false, $"SELL SHORT (CISD Reversal)\nEntry: {entryP:F2} | SL: {sl:F2} ({riskBps:F1}bps)\nTP1: {tp1:F2} | TP2: {tp2:F2}", 0, High[0] + (14 * TickSize), 0, Brushes.Magenta, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+
+                    Draw.Line(this, tag + "_SL", false, 8, sl, 0, sl, Brushes.Red, DashStyleHelper.Dash, 2);
+                    Draw.Line(this, tag + "_TP1", false, 8, tp1, 0, tp1, Brushes.Magenta, DashStyleHelper.Dash, 2);
+                    Draw.Line(this, tag + "_TP2", false, 8, tp2, 0, tp2, Brushes.Magenta, DashStyleHelper.Solid, 2);
                 }
             }
             return sig;
