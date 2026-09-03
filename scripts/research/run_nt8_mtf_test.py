@@ -55,7 +55,7 @@ def main():
     valid = res_cfg.json()["results"][-1].get("value")
     print(f"CheckSettingsValid: {valid}")
 
-    # Baseline entry check
+    # Baseline entry count check
     base_payload = {
         "ui": True,
         "ops": [
@@ -63,12 +63,12 @@ def main():
             {"op": "invoke", "target": {"result": 0}, "method": "get_Item", "args": [{"type": "System.Int32", "value": 4}]},
             {"op": "getProp", "target": {"result": 1}, "member": "ViewModel"},
             {"op": "getProp", "target": {"result": 2}, "member": "LogEntries"},
-            {"op": "invoke", "target": {"result": 3}, "method": "get_Item", "args": [{"type": "System.Int32", "value": 0}]}
+            {"op": "getProp", "target": {"result": 3}, "member": "Count"}
         ]
     }
     r_base = requests.post("http://localhost:7890/api/dev/reflect", headers=HEADERS, json=base_payload)
-    baseline_str = r_base.json()["results"][-1].get("toString", "")
-    print(f"Current Latest Entry:\n  {baseline_str[:80]}...")
+    base_count = r_base.json()["results"][-1].get("value", 0)
+    print(f"Current LogEntries Count: {base_count}")
 
     # Run
     print("\nFiring Strategy Analyzer Run...")
@@ -86,7 +86,7 @@ def main():
     # Poll for completion
     print("Polling for backtest completion in NT8...")
     completed = False
-    for p in range(30):
+    for p in range(40):
         time.sleep(5)
         poll_payload = {
             "ui": True,
@@ -95,14 +95,13 @@ def main():
                 {"op": "invoke", "target": {"result": 0}, "method": "get_Item", "args": [{"type": "System.Int32", "value": 4}]},
                 {"op": "getProp", "target": {"result": 1}, "member": "ViewModel"},
                 {"op": "getProp", "target": {"result": 2}, "member": "LogEntries"},
-                {"op": "invoke", "target": {"result": 3}, "method": "get_Item", "args": [{"type": "System.Int32", "value": 0}]}
+                {"op": "getProp", "target": {"result": 3}, "member": "Count"}
             ]
         }
         res_poll = requests.post("http://localhost:7890/api/dev/reflect", headers=HEADERS, json=poll_payload)
-        cur_str = res_poll.json()["results"][-1].get("toString", "")
-        if cur_str and cur_str != baseline_str:
+        cur_count = res_poll.json()["results"][-1].get("value", 0)
+        if cur_count > base_count:
             print(f"\nSUCCESS! Backtest completed at poll {p+1} ({(p+1)*5}s)!")
-            print(f"New Entry:\n  {cur_str[:90]}...")
             completed = True
             break
         print(f"  Simulation running... ({(p+1)*5}s)")

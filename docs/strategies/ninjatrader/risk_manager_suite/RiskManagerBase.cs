@@ -120,8 +120,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// When false, Close5m/High5m/Low5m helpers MUST NOT be called.
         /// </summary>
         [NinjaScriptProperty]
-        [Display(Name = "Add Secondary Timeframe (5m)", Order = 0, GroupName = "Timeframe")]
+        [Display(Name = "Add Secondary Timeframe (5m/15m)", Order = 0, GroupName = "Timeframe")]
         public bool AddSecondaryTimeframe { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Secondary Timeframe Minutes", Order = 1, GroupName = "Timeframe")]
+        public int SecondaryTimeframeMinutes { get; set; } = 15;
 
         /// <summary>
         /// When true, emits verbose [DBG]/[DIAG] Log() diagnostics for every gate in
@@ -236,7 +240,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 // Range-based strategies set AddSecondaryTimeframe=false and override
                 // GetCurrentATR() to return their range-based risk metric.
                 if (AddSecondaryTimeframe)
-                    AddDataSeries(BarsPeriodType.Minute, 5);
+                    AddDataSeries(BarsPeriodType.Minute, SecondaryTimeframeMinutes > 0 ? SecondaryTimeframeMinutes : 15);
             }
             else if (State == State.DataLoaded)
             {

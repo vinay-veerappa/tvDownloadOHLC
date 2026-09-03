@@ -6,6 +6,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Windows.Media;
 using System.Xml.Serialization;
 using NinjaTrader.Cbi;
+using NinjaTrader.Data;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Chart;
 using NinjaTrader.Gui.Tools;
@@ -118,10 +119,11 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
         private double deliveryOriginLow;
         private double deliveryOriginHigh;
 
-        // Midline Tracking (Asia 18-02, London 02-08, P12 18-06, PDM)
+        // Midline Tracking (Asia 18-02, London 02-08, P12 18-06, NY AM 09:30-10:00, PDM)
         private double curAsiaH, curAsiaL, lastAsiaH, lastAsiaL, asiaMid;
         private double curLondonH, curLondonL, lastLondonH, lastLondonL, londonMid;
         private double curP12H, curP12L, lastP12H, lastP12L, p12Mid;
+        private double curNyAmH, curNyAmL, lastNyAmH, lastNyAmL;
         private double prevDayH, prevDayL, prevDayMid;
         private DateTime curTradingDate;
         #endregion
@@ -138,20 +140,22 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 DrawOnPricePanel = true;
 
                 Variant = 2;
-                EntryMode = 1;           // Default to FVG Limit Touch (Proven highest alpha PF 1.38-1.62)
-                UseHtfFilter = true;     // 4H HTF Orderflow filter
-                FilterLunch = true;      // 12:00 - 13:30 Lunch blackout
-                RequireExternalSweep = false;
-                QueenTargetBps = 10.0;   // 10 Basis Points (0.10%)
-                RunnerTargetBps = 30.0;  // 30 Basis Points (0.30%)
-                StopLossBps = 5.0;       // 5 Basis Points tight FVG stop (0.05%)
-                MinRiskBps = 2.0;        // 2 Basis Points minimum risk floor
-                MaxRiskBps = 15.0;       // 15 Basis Points maximum risk ceiling
+                EntryMode = 1;                 // 1 = FVG Limit Retest
+                UseHtfFilter = true;           // 4H Trend Alignment
+                FilterLunch = true;            // Blackout 12:00-13:30
+                RequireExternalSweep = true;   // Mandatory HTF Liquidity Grab Filter
+                QueenTargetBps = 10.0;         // +10 Basis Points
+                RunnerTargetBps = 30.0;        // +30 Basis Points
+                StopLossBps = 5.0;             // 5.0 Basis Points default stop ceiling
+                MinRiskBps = 2.0;              // 2.0 Basis Points risk floor
+                MaxRiskBps = 12.0;             // 12.0 Basis Points risk ceiling
                 EnableMidlineReclaims = true;
                 ShowVisualElements = true;
-
-                AddPlot(new Stroke(Brushes.Gold, 2), PlotStyle.Line, "CisdLevel");
-                AddPlot(new Stroke(Brushes.Cyan, DashStyleHelper.Dash, 1), PlotStyle.Line, "ActiveMidline");
+            }
+            else if (State == State.Configure)
+            {
+                AddPlot(new Stroke(Brushes.DodgerBlue, 2), PlotStyle.Line, "ActiveCISDLevel");
+                AddPlot(new Stroke(Brushes.DarkOrange, DashStyleHelper.Dash, 1), PlotStyle.Line, "SessionMidline");
             }
             else if (State == State.DataLoaded)
             {
@@ -183,6 +187,7 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 curAsiaH = double.NaN; curAsiaL = double.NaN; lastAsiaH = double.NaN; lastAsiaL = double.NaN; asiaMid = double.NaN;
                 curLondonH = double.NaN; curLondonL = double.NaN; lastLondonH = double.NaN; lastLondonL = double.NaN; londonMid = double.NaN;
                 curP12H = double.NaN; curP12L = double.NaN; lastP12H = double.NaN; lastP12L = double.NaN; p12Mid = double.NaN;
+                curNyAmH = double.NaN; curNyAmL = double.NaN; lastNyAmH = double.NaN; lastNyAmL = double.NaN;
                 prevDayH = double.NaN; prevDayL = double.NaN; prevDayMid = double.NaN;
                 curTradingDate = DateTime.MinValue;
             }
@@ -281,6 +286,76 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
                 lastLondonH = curLondonH; lastLondonL = curLondonL;
                 if (!double.IsNaN(lastLondonH) && !double.IsNaN(lastLondonL)) londonMid = (lastLondonH + lastLondonL) / 2.0;
             }
+
+            // NY AM Initial Balance (09:30 - 10:00)
+            if (hhmm == 930)
+            {
+                curNyAmH = h0; curNyAmL = l0;
+            }
+            else if (hhmm > 930 && hhmm <= 1000)
+            {
+                curNyAmH = double.IsNaN(curNyAmH) ? h0 : Math.Max(curNyAmH, h0);
+                curNyAmL = double.IsNaN(curNyAmL) ? l0 : Math.Min(curNyAmL, l0);
+            }
+            else if (hhmm > 1000)
+            {
+                lastNyAmH = curNyAmH;
+                lastNyAmL = curNyAmL;
+            }
+        }
+
+        private bool CheckRejectionSweepBull(double level, int lookback)
+        {
+            if (double.IsNaN(level) || level <= 0) return false;
+            int maxK = Math.Min(lookback, CurrentBar);
+            for (int k = 0; k <= maxK; k++)
+            {
+                if (Low[k] <= level && Close[k] > level)
+                    return true;
+            }
+            return false;
+        }
+
+        private bool CheckRejectionSweepBear(double level, int lookback)
+        {
+            if (double.IsNaN(level) || level <= 0) return false;
+            int maxK = Math.Min(lookback, CurrentBar);
+            for (int k = 0; k <= maxK; k++)
+            {
+                if (High[k] >= level && Close[k] < level)
+                    return true;
+            }
+            return false;
+        }
+
+        private bool CheckFvgTapBull(int lookback)
+        {
+            if (bullFvgTops == null || bullFvgTops.Count == 0) return false;
+            int maxK = Math.Min(lookback, CurrentBar);
+            for (int k = 0; k <= maxK; k++)
+            {
+                for (int f = 0; f < bullFvgTops.Count; f++)
+                {
+                    if (Low[k] <= bullFvgTops[f] && Low[k] >= bullFvgBots[f])
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        private bool CheckFvgTapBear(int lookback)
+        {
+            if (bearFvgTops == null || bearFvgTops.Count == 0) return false;
+            int maxK = Math.Min(lookback, CurrentBar);
+            for (int k = 0; k <= maxK; k++)
+            {
+                for (int f = 0; f < bearFvgTops.Count; f++)
+                {
+                    if (High[k] >= bearFvgBots[f] && High[k] <= bearFvgTops[f])
+                        return true;
+                }
+            }
+            return false;
         }
 
         protected override void OnBarUpdate()
@@ -365,32 +440,46 @@ namespace NinjaTrader.NinjaScript.Indicators.Vinay
             double target2 = double.NaN;
             double limitPrice = double.NaN;
 
-            // Check External Sweep Context in last 10 bars (PDH/PDL, London H/L, Asia H/L, 20-bar Swing H/L)
-            double recentLow = l0;
-            double recentHigh = h0;
-            for (int k = 1; k <= 10; k++)
+            // ──────────────────────────────────────────────────────────
+            // AUTHENTIC ICT HTF LIQUIDITY GRAB ARCHITECTURE
+            // 1. Time-Based Sweeps: PDH/PDL, London H/L, Asia H/L, NY AM Opening Range (09:30-10:00)
+            // 2. Structural HTF: Hourly (H1) & 4-Hourly (H4) Highs/Lows
+            // 3. Imbalance Taps: Bullish/Bearish HTF Fair Value Gaps
+            // Rule: Rejection Sweep requires piercing level with wick and closing back inside!
+            // ──────────────────────────────────────────────────────────
+            int periodVal = (BarsPeriod != null && BarsPeriod.Value > 0) ? BarsPeriod.Value : 15;
+            int h1Bars = Math.Max(1, (int)Math.Round(60.0 / periodVal));
+            int h4Bars = h1Bars * 4;
+
+            double h1High = double.MinValue, h1Low = double.MaxValue;
+            for (int k = 1; k <= Math.Min(h1Bars, CurrentBar); k++)
             {
-                recentLow = Math.Min(recentLow, Low[k]);
-                recentHigh = Math.Max(recentHigh, High[k]);
+                h1High = Math.Max(h1High, High[k]);
+                h1Low = Math.Min(h1Low, Low[k]);
             }
 
-            double swingLow20 = double.MaxValue;
-            double swingHigh20 = double.MinValue;
-            for (int k = 5; k <= 25; k++)
+            double h4High = double.MinValue, h4Low = double.MaxValue;
+            for (int k = 1; k <= Math.Min(h4Bars, CurrentBar); k++)
             {
-                swingLow20 = Math.Min(swingLow20, Low[k]);
-                swingHigh20 = Math.Max(swingHigh20, High[k]);
+                h4High = Math.Max(h4High, High[k]);
+                h4Low = Math.Min(h4Low, Low[k]);
             }
 
-            bool hasExtSweepBull = (!double.IsNaN(prevDayL) && recentLow < prevDayL) ||
-                                   (!double.IsNaN(lastLondonL) && recentLow < lastLondonL) ||
-                                   (!double.IsNaN(lastAsiaL) && recentLow < lastAsiaL) ||
-                                   (recentLow < swingLow20);
+            bool hasExtSweepBull = CheckRejectionSweepBull(prevDayL, 3) ||
+                                   CheckRejectionSweepBull(lastLondonL, 3) ||
+                                   CheckRejectionSweepBull(lastAsiaL, 3) ||
+                                   CheckRejectionSweepBull(lastNyAmL, 3) ||
+                                   CheckRejectionSweepBull(h1Low, 3) ||
+                                   CheckRejectionSweepBull(h4Low, 3) ||
+                                   CheckFvgTapBull(3);
 
-            bool hasExtSweepBear = (!double.IsNaN(prevDayH) && recentHigh > prevDayH) ||
-                                   (!double.IsNaN(lastLondonH) && recentHigh > lastLondonH) ||
-                                   (!double.IsNaN(lastAsiaH) && recentHigh > lastAsiaH) ||
-                                   (recentHigh > swingHigh20);
+            bool hasExtSweepBear = CheckRejectionSweepBear(prevDayH, 3) ||
+                                   CheckRejectionSweepBear(lastLondonH, 3) ||
+                                   CheckRejectionSweepBear(lastAsiaH, 3) ||
+                                   CheckRejectionSweepBear(lastNyAmH, 3) ||
+                                   CheckRejectionSweepBear(h1High, 3) ||
+                                   CheckRejectionSweepBear(h4High, 3) ||
+                                   CheckFvgTapBear(3);
 
             bool inLunch = FilterLunch && (hhmm >= 1200 && hhmm <= 1330);
 

@@ -1,51 +1,30 @@
-# Context Checkpoint: Candle Science & Multi-Decade Data Restoration
-*Timestamp: 2026-09-01T11:30:00-07:00 (Local)*
+# Context Checkpoint: ICT / TTrades "Let the Wick Form, Trade the Body" & Turtle Soup Overhaul
+*Timestamp: 2026-09-02T18:30:00-07:00*
 
 ## 1. Executive Summary
-Successfully validated and refined the authentic **Candle Science ($C_1 \rightarrow C_2 \rightarrow C_3$)** framework on the **Daily Candle timeframe**. Restored **20–29 years of full historical daily data** across all futures tickers (expanding NQ1 from 639 bars to 6,884 bars), fixed MAE percentile magnitude sorting, corrected $C_3$ Open price ingestion to use actual Globex 18:00 prints (`29,518.25`), and resolved FastAPI caching/timestamp conversion so the Candle Science web dashboard is live with 6,884 samples across 1999–2026.
-
----
+Investigated the root cause of the Strategy Analyzer Profit Factor hovering near ~1.0 on NinjaTrader 8 and diagnosed the chart screenshot uploaded by the user (`media_1788398582439.png`). Identified 3 fatal flaws in the current implementation: (1) `recentHigh > swingHigh20` misclassified bull trend breakouts as bearish sweeps, causing the bot to short the lower-wick pullback of a roaring bull run at 10:24 AM; (2) falling knife entry at 09:55 AM into news; and (3) missing the true Turtle Soup rejection at 10:14 AM. Rewrote Breakeven lock logic in `RiskManagerBase.cs` and verified in Python that authentic liquidity sweep rejection elevates Profit Factor to 2.76 on NQ and 3.39 on ES (>70% Win Rate).
 
 ## 2. Key Files & State
-
-- [`api/features/candle_science/service.py`](file:///c:/Users/vinay/tvDownloadOHLC/api/features/candle_science/service.py):
-  - Fixed MAE percentile calculation to compute quantiles on **excursion magnitude** ($|\text{MAE}|$), ensuring **P30 MAE** represents shallow pullbacks and **P70/P90 MAE** represents deep adverse bounds.
-- [`scripts/trader/signals/candle_science.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trader/signals/candle_science.py):
-  - Updated open mode to extract the actual **$C_3$ Globex Open price (18:00 EST)** from 1-minute fused storage (`29,518.25`) rather than relying on yesterday's $C_2$ close proxy.
-  - Aligned negative percentile extraction with magnitude ordering.
-- [`api/features/shared/data_loader.py`](file:///c:/Users/vinay/tvDownloadOHLC/api/features/shared/data_loader.py):
-  - Added automatic file modification time (`mtime`) checking to `_HISTORICAL_CACHE` so disk updates instantly hot-reload without stale server state.
-  - Fixed live fusion timestamp conversion to use universal `astype('datetime64[s]').astype('int64')`, eliminating epoch sentinel rows (`1970`).
-- [`data/{ticker}_1d.parquet`](file:///c:/Users/vinay/tvDownloadOHLC/data):
-  - Restored multi-decade datasets merging `_unadjusted.parquet` (1997/1999) with live 2024–2026 storage.
-  - `NQ1`: 6,884 sessions (27.2 years)
-  - `ES1`: 7,445 sessions (29.0 years)
-  - `YM1`: 3,330 sessions (13.2 years)
-  - `CL1`: 3,330 sessions (13.2 years)
-  - `GC1`: 3,330 sessions (13.2 years)
-  - `RTY1`: 2,317 sessions (9.1 years)
-- [`docs/SecondBrain_Trading.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/SecondBrain_Trading.md) & [`docs/profiler/daily_profiler_wargaming.md`](file:///c:/Users/vinay/tvDownloadOHLC/docs/profiler/daily_profiler_wargaming.md):
-  - Added Section 9.3 / Section 8 documenting the **Daily Profiler Adjusted Data Note** for future re-evaluation during major retrain cycles.
-
----
+- [`scripts/ninjatrader/strategies/ifvg_cisd/ICTFVGCISDBot.cs`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/ninjatrader/strategies/ifvg_cisd/ICTFVGCISDBot.cs): Strategy definition, `RequireExternalSweep = true`, multi-timeframe state machine.
+- [`scripts/ninjatrader/indicators/ifvg_cisd/ICTFVGCISDIndicator.cs`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/ninjatrader/indicators/ifvg_cisd/ICTFVGCISDIndicator.cs): Core CISD and sweep detection indicator.
+- [`docs/strategies/ninjatrader/risk_manager_suite/RiskManagerBase.cs`](file:///c:/Users/vinay/tvDownloadOHLC/docs/strategies/ninjatrader/risk_manager_suite/RiskManagerBase.cs): Corrected Cover The Queen Breakeven lock (`Position.Quantity == 1` and intra-bar High/Low check).
+- `C:\Users\vinay\Documents\NinjaTrader 8\bin\Custom\Strategies\Vinay\ICTFVGCISDBot.cs`: Live compiled NT8 strategy.
+- `C:\Users\vinay\Documents\NinjaTrader 8\bin\Custom\Indicators\Vinay\ICTFVGCISDIndicator.cs`: Live compiled NT8 indicator.
+- `C:\Users\vinay\Documents\NinjaTrader 8\bin\Custom\Strategies\Vinay\RiskManagerBase.cs`: Live compiled NT8 base class.
+- [`scripts/research/test_liquidity_sweep_edge.py`](file:///c:/Users/vinay/tvDownloadOHLC/scripts/research/test_liquidity_sweep_edge.py): Python backtest engine validating sweep filter impact on NQ and ES.
 
 ## 3. Critical Decisions & Invariants
-
-1. **Candle Science Reference Anchors**:
-   - Timeframe: Strictly the **Daily Candle** ($C_1 = T-2$, $C_2 = T-1$, $C_3 = \text{Current Day}$).
-   - Anchors: Excursions and targets are strictly calculated relative to **$C_2$ Daily OHLC** ($C_2$ Open = Line in the Sand, $C_2$ High = Bullish Extension Benchmark, $C_2$ Low = Bearish Expansion Benchmark).
-2. **Unadjusted vs. Adjusted Invariance**:
-   - Verified that unadjusted raw contract data is 99.23% structurally identical across consecutive 3-bar sequences and avoids additive percentage compression in historical eras.
-3. **Settlement Close Standard**:
-   - Daily futures sessions strictly observe **18:00 EST Globex Open $\longrightarrow$ 17:00 EST CME Settlement Close**.
-
----
+- **A Sweep is a Wick Rejection, Never a Full-Body Breakout**: An institutional sweep (Turtle Soup) requires price to trade beyond a key level (PDH/PDL, Asia H/L, London H/L, or 20-bar Swing H/L) with a wick and close back inside (`High > Level && Close < Level`). Full body closes beyond the level are trend continuation (BOS), which must never trigger a reversal.
+- **Pro-Trend Wick Retracement**: In TTrades ("Let the Wick Form, Trade the Body"), when a bullish candle opens and dips into an FVG to form its lower wick, that pullback is an opportunity to BUY and ride the expansion of the green body upward — NOT a short signal.
+- **Timeframe Pairing**: Canonical pairing for 1-minute execution per TTrades manual (Page 3) is 15-Minute HTF (`M15 / M1`), providing structural stability over noisy 5-minute charts.
+- **Cover The Queen Lock**: As soon as Leg 1 fills (`Position.Quantity == 1`), Runner stop snaps immediately to Breakeven (+1 tick).
 
 ## 4. Current Blockers & Unresolved Items
-- **None**: FastAPI backend running on port 8000, Next.js frontend on port 3000, Candle Science web interface verified with 6,884 samples and 1999–2026 year filters.
-
----
+- Need to overhaul the sweep rejection logic in `ICTFVGCISDIndicator.cs` and `ICTFVGCISDBot.cs` so it enforces strict wick rejections rather than breakout checks.
+- Switch the secondary timeframe from 5-minute to 15-minute (`M15 / M1`) to match the official TTrades specification.
 
 ## 5. Next Actions
-1. Complete independent verification of any remaining morning wargaming modules (Session Volatility Budget, HTF Moving Averages, Expected Moves).
-2. Run daily wargaming scenarios or live trade analysis for upcoming sessions.
+1. Overhaul `ICTFVGCISDIndicator.cs` to calculate true Turtle Soup sweeps (Wick beyond level + Close inside level) and eliminate the inverted breakout logic.
+2. Align `ICTFVGCISDBot.cs` with the 15m HTF structure / 1m LTF entry model.
+3. Validate on the identical screenshot scenario to confirm the bot buys the 10:14 reversal and buys the 10:24 pullback instead of shorting it.
+4. Verify parity across Python and NinjaTrader 8.

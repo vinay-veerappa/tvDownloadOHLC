@@ -121,6 +121,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             EnableMidlineReclaims = true;
 
             AddSecondaryTimeframe = true;
+            SecondaryTimeframeMinutes = 15; // Official TTrades M15/M1 Pairing
             DebugMode = true;
         }
 
@@ -129,6 +130,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (UseMtfExecution)
             {
                 AddSecondaryTimeframe = true;
+                SecondaryTimeframeMinutes = 15;
             }
         }
 
