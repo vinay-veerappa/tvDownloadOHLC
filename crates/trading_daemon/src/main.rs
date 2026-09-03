@@ -3,6 +3,7 @@
 //! Port 8635 is the live contract port; shadow test port 8637 is used during
 //! verification (8636 is occupied by fj_widget_server.js).
 
+mod cdp;
 mod poller;
 mod server;
 mod state;
@@ -40,8 +41,9 @@ async fn main() {
     tokio::spawn(state::run_lockout_sweep(state.clone()));
     tokio::spawn(state::run_guard_config_reload(state.clone()));
 
-    // 200ms NT8 poller + CDP push
-    tokio::spawn(poller::run_poller(state.clone()));
+    // 200ms NT8 poller; CDP push handled by the persistent pusher task
+    let pusher = cdp::CdpPusher::spawn();
+    tokio::spawn(poller::run_poller(state.clone(), pusher));
 
     if let Err(e) = server::serve(port, state).await {
         eprintln!("[!] server error: {}", e);

@@ -1,4 +1,4 @@
-//! Shared state: the cached 200ms snapshot, lockout cache, guard config, and
+﻿//! Shared state: the cached 200ms snapshot, lockout cache, guard config, and
 //! background-task wiring (2.5s lockout sweep, 30s config reload).
 
 use serde_json::{json, Value};
@@ -7,6 +7,23 @@ use tokio::sync::RwLock;
 
 pub const NT8_PORT: u16 = 7890;
 pub const NT8_TOKEN: &str = "d0b837223cab4653";
+
+/// Process-wide shared HTTP client for contexts without SharedState access
+/// (panic-hook flatten, CDP pusher). reqwest Clients are cheap clones over an
+/// internal pool — one pool per call site is wasteful; this is process-wide.
+pub fn shared_http() -> reqwest::Client {
+    static CLIENT: once_cell::sync::OnceCell<reqwest::Client> = once_cell::sync::OnceCell::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .pool_max_idle_per_host(4)
+                .tcp_nodelay(true)
+                .build()
+                .expect("reqwest client")
+        })
+        .clone()
+}
 
 #[derive(Clone)]
 pub struct SharedState(Arc<Inner>);
@@ -17,6 +34,10 @@ struct Inner {
     lockouts: RwLock<std::collections::HashMap<String, LockoutEntry>>,
     guard_config: RwLock<Value>,
     guard_config_path: RwLock<String>,
+    /// Shared HTTP client: reqwest pools connections with keep-alive per host,
+    /// so every NT8 request reuses one TCP connection instead of a fresh
+    /// handshake per 200ms poll / lockout POST / proxy call.
+    http: reqwest::Client,
 }
 
 #[derive(Clone)]
@@ -37,7 +58,17 @@ impl SharedState {
                 "loaded": false, "error": null, "loadedAt": null
             })),
             guard_config_path: RwLock::new(default_guard_config_path()),
+            http: reqwest::Client::builder()
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .pool_max_idle_per_host(4)
+                .tcp_nodelay(true)
+                .build()
+                .expect("reqwest client"),
         }))
+    }
+
+    pub fn http(&self) -> &reqwest::Client {
+        &self.0.http
     }
 
     pub async fn set_payload(&self, v: Value) {
@@ -72,6 +103,7 @@ impl SharedState {
         self.0.guard_config.read().await.clone()
     }
 
+    #[allow(dead_code)]
     pub async fn set_guard_config_path(&self, p: String) {
         *self.0.guard_config_path.write().await = p;
     }
@@ -133,9 +165,9 @@ pub async fn run_guard_config_reload(state: SharedState) {
 }
 
 /// 2.5s interval sweep: evaluates account lockouts, POSTs to /api/lockout.
-/// Caps at 30 accounts, refreshes entries older than 10s — mirrors Node.
+/// Caps at 30 accounts, refreshes entries older than 10s â€” mirrors Node.
 pub async fn run_lockout_sweep(state: SharedState) {
-    let client = reqwest::Client::new();
+    let client = state.http().clone();
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(2500));
     loop {
         interval.tick().await;
@@ -203,7 +235,7 @@ pub async fn run_lockout_sweep(state: SharedState) {
 
 /// Fire the NT8 emergency flatten endpoint (panic hook from HUD / widget).
 pub async fn trigger_emergency_flatten(source: String) -> Value {
-    let client = reqwest::Client::new();
+    let client = shared_http();
     let body = json!({ "reason": format!("Operator Panic Flatten ({})", source) });
     let res = client
         .post(&format!("http://localhost:{}/api/emergency-flatten", NT8_PORT))

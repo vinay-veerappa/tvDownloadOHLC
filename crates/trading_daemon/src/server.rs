@@ -22,7 +22,6 @@ use hyper_util::rt::TokioIo;
 use hyper::{Request, Response, StatusCode};
 use serde_json::{json, Value};
 use std::convert::Infallible;
-use std::net::SocketAddr;
 
 
 
@@ -44,8 +43,8 @@ fn json_response(status: StatusCode, v: &Value) -> Response<BoxBody<Bytes, Infal
         .unwrap()
 }
 
-async fn proxy_to_nt8(endpoint_path: &str, body_json: &str) -> (u16, Value) {
-    let client = reqwest::Client::new();
+async fn proxy_to_nt8(state: &SharedState, endpoint_path: &str, body_json: &str) -> (u16, Value) {
+    let client = state.http().clone();
     let res = client
         .post(&format!("http://localhost:{}{}", NT8_PORT, endpoint_path))
         .header("Authorization", format!("Bearer {}", NT8_TOKEN))
@@ -148,14 +147,14 @@ async fn handle(
             let body = read_body(req).await;
             let body = inject_confirm_live(&body);
             println!("[ORDER ATM REQ] {}", body);
-            let (status, resp) = proxy_to_nt8("/api/order/atm", &body).await;
+            let (status, resp) = proxy_to_nt8(&state, "/api/order/atm", &body).await;
             println!("[ORDER ATM RESP] {} {}", status, resp);
             Ok(json_response(StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY), &resp))
         }
         (&hyper::Method::POST, "/api/position/close") => {
             let body = read_body(req).await;
             println!("[POSITION CLOSE REQ] {}", body);
-            let (status, resp) = proxy_to_nt8("/api/position/close", &body).await;
+            let (status, resp) = proxy_to_nt8(&state, "/api/position/close", &body).await;
             println!("[POSITION CLOSE RESP] {} {}", status, resp);
             Ok(json_response(StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY), &resp))
         }

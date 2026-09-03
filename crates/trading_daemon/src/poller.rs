@@ -1,4 +1,4 @@
-//! High-frequency poller: executes three concurrent requests to NT8 port 7890
+﻿//! High-frequency poller: executes three concurrent requests to NT8 port 7890
 //! every 200ms, matching pnl_widget_server.js exactly.
 //!
 //! 1. GET /api/account      (singular, per live contract)
@@ -84,7 +84,7 @@ pub fn compute_fleet_summary(accounts: &Value, positions: &Value, copier_snapsho
         if let Some(p) = pos {
             if let Some(up) = p.get("unrealizedPnL") {
                 if !up.is_null() {
-                    // JS: `Number(pos.unrealizedPnL) || uPnl` — 0/NaN keeps the account value.
+                    // JS: `Number(pos.unrealizedPnL) || uPnl` â€” 0/NaN keeps the account value.
                     let v = up.as_f64().unwrap_or(f64::NAN);
                     if v != 0.0 && !v.is_nan() {
                         u_pnl = v;
@@ -268,109 +268,8 @@ fn js_format_number(tok: &str) -> String {
     format!("{:e}", f)
 }
 
-async fn push_to_trading_view(client: &Client, payload: &Value) {
-    // Fetch CDP target list
-    let targets: Value = match client
-        .get(&format!("http://127.0.0.1:{}/json", TV_CDP_PORT))
-        .timeout(Duration::from_millis(2000))
-        .send()
-        .await
-    {
-        Ok(r) => match r.json().await {
-            Ok(v) => v,
-            Err(_) => return,
-        },
-        Err(_) => return,
-    };
-
-    let targets = targets.as_array().cloned().unwrap_or_default();
-    let chart = targets
-        .iter()
-        .find(|t| {
-            t.get("type").and_then(|v| v.as_str()) == Some("page")
-                && t.get("url")
-                    .and_then(|v| v.as_str())
-                    .map(|u| u.contains("tradingview.com/chart"))
-                    .unwrap_or(false)
-        })
-        .or_else(|| {
-            targets
-                .iter()
-                .find(|t| t.get("type").and_then(|v| v.as_str()) == Some("page"))
-        });
-
-    let ws_url = match chart.and_then(|c| c.get("webSocketDebuggerUrl").and_then(|v| v.as_str())) {
-        Some(u) => u.to_string(),
-        None => return,
-    };
-
-    // Connect, evaluate, drop. (Short-lived connection per push matches the
-    // Node behavior closely enough; Node keeps it alive but reconnects on any
-    // failure — connection churn on a 200ms cadence is acceptable and simpler.)
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::tungstenite::Message;
-
-    let ws = match tokio_tungstenite::connect_async(&ws_url).await {
-        Ok((ws, _)) => ws,
-        Err(_) => return,
-    };
-    let (mut tx, mut rx) = ws.split();
-
-    // Check panic flag & run the HUD update, mirroring the Node pushScript.
-    let payload_str =
-        js_normalize_json_str(&serde_json::to_string(payload).unwrap_or_else(|_| "{}".into()));
-    let push_script = format!(
-        r#"(function() {{
-          const panel = document.getElementById('ws-pnl-panel');
-          const isPanicRequested = panel && panel.getAttribute('data-panic-flatten');
-          if (isPanicRequested) {{
-            panel.removeAttribute('data-panic-flatten');
-          }}
-          if (window.__TV_HUDS__ && typeof window.__TV_HUDS__.update === 'function') {{
-            window.__TV_HUDS__.update('account_pnl', {payload});
-          }}
-          return {{ panicRequested: !!isPanicRequested }};
-        }})()"#,
-        payload = payload_str
-    );
-
-    let msg_id = 1;
-    let call = serde_json::json!({
-        "id": msg_id,
-        "method": "Runtime.evaluate",
-        "params": { "expression": push_script, "returnByValue": true }
-    });
-
-    let sent = tx.send(Message::Text(call.to_string())).await.is_ok();
-    if sent {
-        // Read one response with a short timeout, check panic flag.
-        let _ = tokio::time::timeout(Duration::from_millis(500), async {
-            while let Some(Ok(msg)) = rx.next().await {
-                if let Message::Text(txt) = msg {
-                    if let Ok(v) = serde_json::from_str::<Value>(&txt) {
-                        if v.get("id").and_then(|i| i.as_i64()) == Some(msg_id) {
-                            let panic = v
-                                .pointer("/result/value/panicRequested")
-                                .and_then(|p| p.as_bool())
-                                .unwrap_or(false);
-                            if panic {
-                                crate::state::trigger_emergency_flatten(
-                                    "TradingView In-Chart HUD".to_string(),
-                                )
-                                .await;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        })
-        .await;
-    }
-}
-
-pub async fn run_poller(state: SharedState) {
-    let client = Client::new();
+pub async fn run_poller(state: SharedState, pusher: crate::cdp::CdpPusher) {
+    let client = state.http().clone();
     let mut interval = tokio::time::interval(Duration::from_millis(POLL_INTERVAL_MS));
 
     loop {
@@ -392,14 +291,8 @@ pub async fn run_poller(state: SharedState) {
             let mut payload = compute_fleet_summary(&accounts, &positions, &copier);
             js_normalize_numbers(&mut payload);
 
-            // Push to TV in background so the 200ms cadence never blocks.
-            let payload_clone = payload.clone();
-            let state_for_push = state.clone();
-            tokio::spawn(async move {
-                let client = Client::new();
-                push_to_trading_view(&client, &payload_clone).await;
-                let _ = state_for_push;
-            });
+            // Hand off to the persistent CDP pusher (never blocks the poll).
+            pusher.push(payload.clone());
 
             state.set_payload(payload).await;
             state.set_nt8_connected(true).await;
