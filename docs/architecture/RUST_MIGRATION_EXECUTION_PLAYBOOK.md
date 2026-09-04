@@ -337,8 +337,26 @@ Still no `.github/workflows/`. 31 tests and 3 gates that run only when someone r
 ### 3. Sentinel live-fire — blocked, not forgotten
 Detection, trigger, cushion formula and the Tradovate REST path are built and gate-verified in simulation; the sentinel runs observe-only at ~5–11 MB. **Blocked on broker API credentials.** Until then it is *configured and evaluating*, not *enforcing* — it logs the flatten it would have made. Do not size positions as though a killswitch exists.
 
-### 4. `stream_chart.py` — the last real migration candidate
-**260 MB**, 1,424 LOC, the single largest process on the box and the live tick-ingest path. It is the only remaining component where a Rust port would buy something measurable. Everything else in Python (`strategy_engine/runner.py` 87 MB, `api.main` 49 MB) is small enough that the rewrite would not pay.
+### 4. `stream_chart.py` — reassessed: do NOT port it wholesale
+**260 MB, 1,423 LOC.** Earlier notes in this document called it "the futures data streamer" and "the last real migration candidate". Both undersell it, and the second is wrong.
+
+**What it actually is.** The *Spoke* in a hub-and-spoke design: `schwab_hub.py` (8080) owns the single Schwab streaming connection, and this process subscribes to it over WebSocket and turns the raw feed into the repo's canonical market data. It:
+* reads the watchlist from SQLite (`WatchlistGroup`/`WatchlistItem`, ~28 symbols — 6 futures, equities, and the vol complex);
+* bootstraps each symbol over REST, validates, dedupes, and **detects and bridges gaps**;
+* consumes `LEVELONE_FUTURES` quotes and `CHART_FUTURES`/`CHART_EQUITY` bars, aggregating 15s/30s sub-candles;
+* **writes `data/live/live_storage_{sym}.parquet`** — the live store CLAUDE.md names as canonical for all current analysis — plus `live_chart_*.json` at 1m/15s/30s, atomically;
+* maintains daily/weekly files with real futures **settlement semantics**: settlement override from quotes, trade-date and session-boundary rules, yfinance-or-Schwab HTF source, weekly built from daily, refreshed 17:00 ET Mon–Fri after the 16:15 settlement plus grace so the settled daily bar exists before the 17:10 EOD narrative chain;
+* **serves its own API on port 8001** — `GET /history`, `GET /quote`, `WS /stream` — and rebroadcasts quotes and candles to connected clients.
+
+So it is not a tick pump; it is the market-data plumbing the narratives, confluence engine and GEX level reads all sit on. `data/live/` is 155 files / 504 MB.
+
+**Where the 260 MB goes.** Not a leak — the in-memory candle list is explicitly bounded to 15,000 per symbol (`:444`, `:1218`). It is *representation overhead*: ~28 symbols × 15,000 candles held as Python dicts, plus the 15s/30s containers and pandas round-trips on every parquet write. A dict-per-candle costs a few hundred bytes where a packed struct costs ~48.
+
+**Why a Rust port is the wrong call anyway.** The memory would genuinely drop (packed candles would put this in the tens of MB), but that is the *only* win: the work is I/O-bound — websocket recv, REST calls, atomic file writes — which is where Rust buys least. Against that, the majority of the file is Schwab SDK auth, a yfinance fallback, pandas parquet round-trips, and the settlement/trade-date/session logic. That last part is exactly the kind of domain rule where a rewrite silently changes numbers that every downstream consumer trusts, and there is no Gate-2-style bit-exact oracle for a live feed.
+
+**Cheaper fix if the memory matters:** hold candles per symbol as a DataFrame or numpy arrays rather than lists of dicts. That captures most of the reclaim without touching the settlement semantics. Profile first — 260 MB on a 24-core box may simply not be worth spending anything on.
+
+Everything else in Python (`strategy_engine/runner.py` 87 MB, `api.main` 49 MB) is too small for a rewrite to pay.
 
 ### 5. Smaller open items
 * **Bearer token** — see open item 6 above (33 files, twice inside `trading_daemon`).
