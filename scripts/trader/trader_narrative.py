@@ -861,6 +861,24 @@ def _enforce_week_regime_consistency(summary: str, cheat_sheet: str) -> str:
     return text
 
 
+def _resolve_upcoming_trading_day(now_et) -> date:
+    """The trading day whose session is about to run (or is running) now.
+
+    Same resolution as build_overnight_context's default (briefing_core.py):
+    a run at/after 18:00 ET belongs to the NEXT calendar day's session;
+    weekend runs roll back to Friday.
+    """
+    target_date: date = now_et.date()
+    if now_et.hour >= 18:
+        target_date = target_date + timedelta(days=1)
+        while target_date.weekday() in (5, 6):
+            target_date += timedelta(days=1)
+    elif target_date.weekday() in (5, 6):
+        while target_date.weekday() in (5, 6):
+            target_date -= timedelta(days=1)
+    return target_date
+
+
 def run_narrative(
     mode: str,
     model: str,
@@ -910,17 +928,28 @@ def run_narrative(
             target_date = sim_dt.date()
         log.info("[SIM] Trading day resolved to %s (weekday=%s)", target_date, target_date.weekday())
     elif target_date is None:
-        # Use the latest RTH trading day, not the current calendar date.
-        # This handles running the narrative after midnight ET (e.g. the
-        # EOD narrative at 00:30 ET on July 18 should analyze July 17's
-        # session, not July 18's which hasn't started yet).
-        try:
-            from scripts.utils.fused_data_loader import load_fused_data
-            from scripts.trader.briefing_core import get_latest_rth_date
-            _df = load_fused_data(tickers[0] if tickers else "NQ1", timeframe="1m", require_historical=False)
-            target_date = get_latest_rth_date(_df)
-        except Exception:
-            target_date = datetime.now(ET).date()
+        if mode == "close":
+            # Use the latest RTH trading day, not the current calendar date.
+            # This handles running the narrative after midnight ET (e.g. the
+            # EOD narrative at 00:30 ET on July 18 should analyze July 17's
+            # session, not July 18's which hasn't started yet).
+            try:
+                from scripts.utils.fused_data_loader import load_fused_data
+                from scripts.trader.briefing_core import get_latest_rth_date
+                _df = load_fused_data(tickers[0] if tickers else "NQ1", timeframe="1m", require_historical=False)
+                target_date = get_latest_rth_date(_df)
+            except Exception:
+                target_date = datetime.now(ET).date()
+                while target_date.weekday() in (5, 6):
+                    target_date -= timedelta(days=1)
+        else:
+            # premarket/open/intraday analyze the session ABOUT TO RUN (or
+            # running) today — anchoring on the last completed RTH day
+            # mislabels the weekly timeline by one day (e.g. premarket at
+            # 05:46 ET Friday resolves to Thursday because Friday has no
+            # RTH bars yet). Mirror build_overnight_context's default
+            # resolution (briefing_core.py:3002-3011).
+            target_date = _resolve_upcoming_trading_day(datetime.now(ET))
 
     loader = get_dataloader(lookback_days=5)
 

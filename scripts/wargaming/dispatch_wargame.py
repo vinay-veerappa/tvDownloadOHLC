@@ -6,7 +6,7 @@ Dispatches formatted wargaming briefings to Discord webhooks and Email:
 3. Email Dispatch: Sends a responsive dark-themed HTML email to subscriber lists.
 
 Usage:
-    python scripts/wargaming/dispatch_wargame.py --ticker NQ1 --time 06:00 --discord
+    python scripts/wargaming/dispatch_wargame.py --ticker NQ1 --time 08:45 --discord
     python scripts/wargaming/dispatch_wargame.py --ticker ES1 --time 08:30 --discord --email
 """
 from __future__ import annotations
@@ -136,7 +136,7 @@ def dispatch_discord(data: Dict[str, Any], webhook_url: Optional[str] = None, at
     return True
 
 
-def dispatch_wargame(ticker: str = "NQ1", target_date: Optional[date] = None, cutoff_time: str = "06:00", to_discord: bool = True, to_email: bool = False):
+def dispatch_wargame(ticker: str = "NQ1", target_date: Optional[date] = None, cutoff_time: str = "08:45", to_discord: bool = True, to_email: bool = False):
     """Main dispatch orchestration."""
     if target_date is None:
         target_date = datetime.now(ET).date()
@@ -151,7 +151,7 @@ def main():
     parser = argparse.ArgumentParser(description="Dispatch Wargaming Briefings")
     parser.add_argument("--ticker", default="NQ1", help="Ticker symbol (default: NQ1)")
     parser.add_argument("--date", default=None, help="Target date YYYY-MM-DD")
-    parser.add_argument("--time", default="06:00", help="Cutoff time HH:MM")
+    parser.add_argument("--time", default="08:45", help="Cutoff time HH:MM or 'now' (default: 08:45)")
     parser.add_argument("--discord", action="store_true", help="Send to Discord webhook")
     parser.add_argument("--email", action="store_true", help="Send HTML email")
     args = parser.parse_args()

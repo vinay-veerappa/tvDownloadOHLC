@@ -67,21 +67,48 @@ def time_in_bucket(t_str: str, bucket: str) -> bool:
         return False
 
 
+DEFAULT_CUTOFF_TIME = "08:45"  # After NY1 (07:30-08:30) completes, before the 09:30 open
+
+
+def resolve_cutoff_time(cutoff_time_str: str, t_dt: date) -> str:
+    """Resolve the cutoff time string.
+
+    "now" resolves to the current ET clock (HH:MM) — the wargame then cuts
+    off at the live minute, so NY1 is formed/undetermined exactly as it is
+    in reality at run time. Any "HH:MM" value passes through validated.
+    """
+    if cutoff_time_str.strip().lower() == "now":
+        cutoff_time_str = datetime.now(ET).strftime("%H:%M")
+    try:
+        c_h, c_m = map(int, cutoff_time_str.split(":"))
+        if not (0 <= c_h <= 23 and 0 <= c_m <= 59):
+            raise ValueError
+    except ValueError:
+        raise ValueError(f"Invalid --time {cutoff_time_str!r}. Use HH:MM or 'now'") from None
+    return cutoff_time_str
+
+
 def generate_wargame_data(
     ticker: str = "NQ1",
     target_date: Optional[date] = None,
-    cutoff_time_str: str = "06:00",
+    cutoff_time_str: str = DEFAULT_CUTOFF_TIME,
     df_1m: Optional[pd.DataFrame] = None,
     account_equity: float = 50000.0,
     risk_pct: float = 1.0,
 ) -> Dict[str, Any]:
-    """Extract all quantitative wargaming parameters as of cutoff time."""
+    """Extract all quantitative wargaming parameters as of cutoff time.
+
+    cutoff_time_str: "HH:MM" ET data cutoff, or "now" for the live clock.
+    Default 08:45 — after the NY1 (07:30-08:30) initial range completes,
+    before the 09:30 open, so the scenario tree has a real NY1 read.
+    """
     if target_date is None:
         target_date = datetime.now(ET).date()
 
     t_dt = target_date
     prev_date = t_dt - timedelta(days=1)
-    
+
+    cutoff_time_str = resolve_cutoff_time(cutoff_time_str, t_dt)
     c_h, c_m = map(int, cutoff_time_str.split(":"))
     cutoff_dt = pd.Timestamp(datetime.combine(t_dt, time(c_h, c_m)), tz="America/New_York")
 
@@ -545,7 +572,9 @@ def main():
     parser = argparse.ArgumentParser(description="Mickey & Austin Wargaming Playbook Generator")
     parser.add_argument("--ticker", default="NQ1", help="Ticker symbol (default: NQ1)")
     parser.add_argument("--date", default=None, help="Target date YYYY-MM-DD (default: today)")
-    parser.add_argument("--time", default="06:00", help="Cutoff time HH:MM (default: 06:00)")
+    parser.add_argument("--time", default=DEFAULT_CUTOFF_TIME,
+                        help="Cutoff time HH:MM or 'now' (default: 08:45 — after NY1 "
+                             "07:30-08:30 completes, before the 09:30 open)")
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of Markdown")
     parser.add_argument("--html", action="store_true", help="Generate interactive Lightweight Charts HTML report")
     parser.add_argument("--no-db", action="store_true", help="Do not save to system_wargames.sqlite")
@@ -558,7 +587,7 @@ def main():
                              "--time as the cutoff and REFUSES to run when the two differ.")
     args = parser.parse_args()
 
-    if args.register and args.time != args.register_cutoff:
+    if args.register and resolve_cutoff_time(args.time, t_date := datetime.strptime(args.date, "%Y-%m-%d").date() if args.date else datetime.now(ET).date()) != args.register_cutoff:
         raise SystemExit(
             f"[WS-2.1] FAIL-CLOSED: --register requires --time to EQUAL the registration cutoff. "
             f"Generated with --time {args.time} but would register under --register-cutoff "

@@ -3565,7 +3565,14 @@ def _format_aln_block(ticker_label: str, aln_data: dict, spot: float) -> str:
         _target_label = "London High" if primary_target == "LONDON_HIGH" else "London Low"
         lines.append(f"Primary Target: {_target_label} ({primary_target_pct:.1f}% probability)")
     if ib_bias and ib_bias != "N/A":
-        lines.append(f"IB Bias: {ib_bias} ({float(ib_conviction)*100:.0f}% conviction)")
+        try:
+            _ib_conv = float(ib_conviction)
+        except (TypeError, ValueError):
+            _ib_conv = float("nan")
+        if not math.isnan(_ib_conv):
+            lines.append(f"IB Bias: {ib_bias} ({_ib_conv*100:.0f}% conviction)")
+        else:
+            lines.append(f"IB Bias: {ib_bias} (conviction unavailable — IB data incomplete)")
     lines.append(f"Bias: {bias} ({conviction})")
     if reasoning:
         lines.append(f"Reasoning: {reasoning}")

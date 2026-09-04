@@ -209,9 +209,13 @@ def calculate_ib_bias(sessions_df: pd.DataFrame) -> pd.DataFrame:
     ib_low = sessions_df['ib_low']
     ib_close = sessions_df['ib_close']
     ib_mid = sessions_df['ib_mid']
-    
-    bias = np.where(ib_close > ib_mid, "LONG", "SHORT")
-    bias_conf = np.where(ib_close > ib_mid, 0.823, 0.80)
+
+    # NaN guard: np.where(NaN > NaN) is False, which would fabricate a
+    # "SHORT (80%)" signal out of missing IB data (seen 2026-09-04 where
+    # ib_close/ib_mid were NaN yet the report read SHORT with 80% conviction).
+    valid = ib_close.notna() & ib_mid.notna()
+    bias = np.where(valid, np.where(ib_close > ib_mid, "LONG", "SHORT"), "N/A")
+    bias_conf = np.where(valid, np.where(ib_close > ib_mid, 0.823, 0.80), np.nan)
     
     return pd.DataFrame({
         'ib_bias': bias,

@@ -1065,7 +1065,7 @@ def generate_html_chart(wargame_data: Dict[str, Any], df_1m: Optional[pd.DataFra
     return html_template
 
 
-def render_and_save_chart(ticker: str = "NQ1", target_date: Optional[date] = None, cutoff_time: str = "06:00", upload_gdrive: bool = False) -> str:
+def render_and_save_chart(ticker: str = "NQ1", target_date: Optional[date] = None, cutoff_time: str = "08:45", upload_gdrive: bool = False) -> str:
     """Generate HTML chart report, save to disk, and optionally upload to Google Drive."""
     if target_date is None:
         target_date = datetime.now(ET).date()
@@ -1095,7 +1095,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate Interactive Lightweight Charts HTML Wargame Report")
     parser.add_argument("--ticker", default="NQ1", help="Ticker symbol (default: NQ1)")
     parser.add_argument("--date", default=None, help="Target date YYYY-MM-DD (default: today)")
-    parser.add_argument("--time", default="06:00", help="Cutoff time HH:MM (default: 06:00)")
+    parser.add_argument("--time", default="08:45", help="Cutoff time HH:MM or 'now' (default: 08:45)")
     parser.add_argument("--upload-gdrive", action="store_true", help="Upload HTML report to Google Drive DailyReports folder")
     args = parser.parse_args()
 
