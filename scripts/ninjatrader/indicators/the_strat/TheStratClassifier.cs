@@ -99,6 +99,14 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
         [Browsable(false)]
         [XmlIgnore]
         public Series<double> MagnitudeTargetSeries { get; private set; }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> MagnitudeTarget2Series { get; private set; }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> TriggerPriceSeries { get; private set; }
         #endregion
         #endregion
 
@@ -133,6 +141,8 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
                 Signal22Series = new Series<int>(this);
                 InsideBarStopSeries = new Series<double>(this);
                 MagnitudeTargetSeries = new Series<double>(this);
+                MagnitudeTarget2Series = new Series<double>(this);
+                TriggerPriceSeries = new Series<double>(this);
             }
         }
 
@@ -146,6 +156,8 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
                 Signal22Series[0] = 0;
                 InsideBarStopSeries[0] = double.NaN;
                 MagnitudeTargetSeries[0] = double.NaN;
+                MagnitudeTarget2Series[0] = double.NaN;
+                TriggerPriceSeries[0] = double.NaN;
                 return;
             }
 
@@ -154,39 +166,33 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
             double prevHigh = High[1];
             double prevLow = Low[1];
 
-            bool isHigher = currHigh > prevHigh;
-            bool isLower = currLow < prevLow;
-
-            int stratType = 0;
+            // 1. Classification — single source: Strategies.Vinay.StratCore
+            // (mirror of scripts/libs_py/the_strat/taxonomy.py).
+            int stratType = Strategies.Vinay.StratCore.ClassifyBar(currHigh, currLow, prevHigh, prevLow);
             string labelText = "";
             Brush labelBrush = Brushes.Gray;
             bool drawAbove = false;
 
-            // 1. Classification
-            if (!isHigher && !isLower)
+            if (stratType == Strategies.Vinay.StratCore.Inside)
             {
-                stratType = 1; // Inside
                 labelText = "1";
                 labelBrush = ColorInside;
                 drawAbove = true;
             }
-            else if (isHigher && !isLower)
+            else if (stratType == Strategies.Vinay.StratCore.TwoUp)
             {
-                stratType = 21; // 2U
                 labelText = "2";
                 labelBrush = ColorTwoUp;
                 drawAbove = false;
             }
-            else if (isLower && !isHigher)
+            else if (stratType == Strategies.Vinay.StratCore.TwoDown)
             {
-                stratType = 22; // 2D
                 labelText = "2";
                 labelBrush = ColorTwoDown;
                 drawAbove = true;
             }
-            else
+            else if (stratType == Strategies.Vinay.StratCore.Outside)
             {
-                stratType = 3; // 3 Outside
                 labelText = "3";
                 labelBrush = ColorOutside;
                 drawAbove = true;
@@ -194,25 +200,9 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
 
             StratTypeSeries[0] = stratType;
 
-            // 2. Wick calculation
-            double totalRange = currHigh - currLow;
-            int wickType = 0; // 1 = Hammer, -1 = Shooter, 0 = None
-
-            if (totalRange > TickSize)
-            {
-                double bodyTop = Math.Max(Open[0], Close[0]);
-                double bodyBottom = Math.Min(Open[0], Close[0]);
-                double upperWick = currHigh - bodyTop;
-                double lowerWick = bodyBottom - currLow;
-
-                double upperRatio = upperWick / totalRange;
-                double lowerRatio = lowerWick / totalRange;
-
-                if (lowerRatio >= WickThreshold && Close[0] >= (currLow + 0.5 * totalRange))
-                    wickType = 1; // Bullish Hammer
-                else if (upperRatio >= WickThreshold && Close[0] <= (currLow + 0.5 * totalRange))
-                    wickType = -1; // Bearish Shooter
-            }
+            // 2. Wick calculation — single source: StratCore.WickType.
+            int wickType = Strategies.Vinay.StratCore.WickType(
+                Open[0], Close[0], currHigh, currLow, WickThreshold, TickSize);
 
             ActionableWickSeries[0] = wickType;
 
@@ -239,11 +229,16 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
             int sig22 = 0;
             double stopDist = double.NaN;
             double target = double.NaN;
+            double target2 = double.NaN;
+            double trigger = double.NaN;
 
             if (CurrentBar >= 3)
             {
                 int type1 = StratTypeSeries[1];
                 int type2 = StratTypeSeries[2];
+                var cfg = Strategies.Vinay.StratConfig.Load();
+                double minTgt = cfg.MinTargetPoints;
+                double maxRisk = cfg.MaxRiskPoints;
 
                 // 2-1-2 Setup: Bar[1] is Inside (1)
                 if (type1 == 1)
@@ -252,7 +247,22 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
                     {
                         sig212 = 1;
                         stopDist = prevLow; // Stop below inside bar low
-                        target = High[2];   // Target prior swing high
+                        // Canonical measured-move target (mirror of targets.py):
+                        // entry +/- max(inside_range, 0.5*prior_leg, min_target).
+                        // Prior mag target (High[2]) sits ~1-2pts above entry vs
+                        // 5-15pts risk — untradable RR, see targets.py header.
+                        {
+                            double entry = prevHigh + TickSize;
+                            double leg = Math.Abs(Close[0] - Open[2]);
+                            var m = Strategies.Vinay.StratCore.MeasuredTargets(
+                                1, entry, prevLow - TickSize, prevHigh, prevLow,
+                                leg, minTgt, maxRisk, TickSize);
+                            target = m.Target1;
+                            target2 = m.Target2;
+                            trigger = entry;
+                            // min-RR gate (mirror of signals.py): untradable RR emits no signal.
+                            if (m.RrRatio < cfg.MinRrRatio) { sig212 = 0; sig22 = 0; target = double.NaN; target2 = double.NaN; trigger = double.NaN; stopDist = double.NaN; }
+                        }
                         if (ShowSetupArrows)
                         {
                             string tag = "Strat212_Buy_" + CurrentBar;
@@ -264,7 +274,18 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
                     {
                         sig212 = -1;
                         stopDist = prevHigh; // Stop above inside bar high
-                        target = Low[2];    // Target prior swing low
+                        {
+                            double entry = prevLow - TickSize;
+                            double leg = Math.Abs(Close[0] - Open[2]);
+                            var m = Strategies.Vinay.StratCore.MeasuredTargets(
+                                -1, entry, prevHigh + TickSize, prevHigh, prevLow,
+                                leg, minTgt, maxRisk, TickSize);
+                            target = m.Target1;
+                            target2 = m.Target2;
+                            trigger = entry;
+                            // min-RR gate (mirror of signals.py): untradable RR emits no signal.
+                            if (m.RrRatio < cfg.MinRrRatio) { sig212 = 0; sig22 = 0; target = double.NaN; target2 = double.NaN; trigger = double.NaN; stopDist = double.NaN; }
+                        }
                         if (ShowSetupArrows)
                         {
                             string tag = "Strat212_Sell_" + CurrentBar;
@@ -279,7 +300,18 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
                 {
                     sig22 = 1;
                     stopDist = prevLow;
-                    target = High[1];
+                    {
+                        double entry = prevHigh + TickSize;
+                        double leg = Math.Abs(Close[0] - Open[1]);
+                        var m = Strategies.Vinay.StratCore.MeasuredTargets(
+                            1, entry, prevLow - TickSize, prevHigh, prevLow,
+                            leg, minTgt, maxRisk, TickSize);
+                        target = m.Target1;
+                        target2 = m.Target2;
+                        trigger = entry;
+                        // min-RR gate (mirror of signals.py): untradable RR emits no signal.
+                        if (m.RrRatio < cfg.MinRrRatio) { sig212 = 0; sig22 = 0; target = double.NaN; target2 = double.NaN; trigger = double.NaN; stopDist = double.NaN; }
+                    }
                     if (ShowSetupArrows)
                     {
                         string tag = "Strat22_Buy_" + CurrentBar;
@@ -291,7 +323,18 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
                 {
                     sig22 = -1;
                     stopDist = prevHigh;
-                    target = Low[1];
+                    {
+                        double entry = prevLow - TickSize;
+                        double leg = Math.Abs(Close[0] - Open[1]);
+                        var m = Strategies.Vinay.StratCore.MeasuredTargets(
+                            -1, entry, prevHigh + TickSize, prevHigh, prevLow,
+                            leg, minTgt, maxRisk, TickSize);
+                        target = m.Target1;
+                        target2 = m.Target2;
+                        trigger = entry;
+                        // min-RR gate (mirror of signals.py): untradable RR emits no signal.
+                        if (m.RrRatio < cfg.MinRrRatio) { sig212 = 0; sig22 = 0; target = double.NaN; target2 = double.NaN; trigger = double.NaN; stopDist = double.NaN; }
+                    }
                     if (ShowSetupArrows)
                     {
                         string tag = "Strat22_Sell_" + CurrentBar;
@@ -305,6 +348,8 @@ namespace NinjaTrader.NinjaScript.Indicators.TheStrat
             Signal22Series[0] = sig22;
             InsideBarStopSeries[0] = stopDist;
             MagnitudeTargetSeries[0] = target;
+            MagnitudeTarget2Series[0] = target2;
+            TriggerPriceSeries[0] = trigger;
         }
     }
 }

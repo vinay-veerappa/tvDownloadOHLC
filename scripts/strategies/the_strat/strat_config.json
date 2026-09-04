@@ -1,0 +1,70 @@
+{
+  "$schema": "strat_config/v1",
+  "strategy_name": "The Strat",
+  "version": "1.0.0",
+  "comment": "CANONICAL Strat config — single source of truth for Python backtests AND NT8 bots. Edit here, sync/deploy everywhere. NT8 reads this via StratConfig.cs (Strategies/Vinay/strat_config.json). Python reads via scripts.libs_py.the_strat.config.load_strat_config().",
+
+  "instruments": {
+    "NQ": { "tick_size": 0.25, "point_value": 20.0, "commission": 2.05, "slippage_ticks": 1 },
+    "MNQ": { "tick_size": 0.25, "point_value": 2.0, "commission": 0.74, "slippage_ticks": 1 },
+    "ES": { "tick_size": 0.25, "point_value": 50.0, "commission": 2.05, "slippage_ticks": 1 },
+    "MES": { "tick_size": 0.25, "point_value": 5.0, "commission": 0.74, "slippage_ticks": 1 }
+  },
+
+  "timeframes": {
+    "signal_tf": "5min",
+    "ftfc_timeframes": ["5m", "15m", "1h", "D"],
+    "htf_trend_tf": "60min"
+  },
+
+  "setups": {
+    "allowed": [
+      "2-1-2_BULL_CONT",
+      "2-1-2_BEAR_CONT",
+      "2-1-2_BULL_REV",
+      "2-1-2_BEAR_REV",
+      "2-2_BULL_REV",
+      "2-2_BEAR_REV",
+      "3-1-2_BULL",
+      "3-1-2_BEAR"
+    ]
+  },
+
+  "ftfc": {
+    "use_filter": true,
+    "min_score": 2,
+    "require_alignment": true,
+    "comment": "LONG needs score >= +min_score, SHORT needs score <= -min_score. Score = bull_TFs - bear_TFs over ftfc_timeframes."
+  },
+
+  "session": {
+    "timezone": "America/New_York",
+    "earliest_entry": "09:30",
+    "latest_entry": "15:30",
+    "flatten_by": "15:55",
+    "killzones": [
+      { "name": "morning_drive", "start": "09:45", "end": "11:30" },
+      { "name": "power_hour", "start": "14:00", "end": "15:30" }
+    ],
+    "use_killzones": true,
+    "comment": "When use_killzones=true only entries inside a killzone are taken. flatten_by is a hard exit (ADR-020: no position past 16:00 ET)."
+  },
+
+  "risk": {
+    "min_target_points": 15.0,
+    "max_risk_points": 15.0,
+    "min_rr_ratio": 1.0,
+    "max_holding_bars": 20,
+    "wick_threshold": 0.6,
+    "atr_period": 14,
+    "atr_cap_mult": 1.5,
+    "comment": "Targets use measured-move engine (targets.py): entry +/- max(inside_range, prior_leg_frac, min_target_points). max_risk_points caps the structural stop; tighter structural stops are kept, wider ones are capped (and flagged)."
+  },
+
+  "execution": {
+    "confirm_next_bar": true,
+    "stop_first": true,
+    "max_trades_per_day": 2,
+    "comment": "confirm_next_bar=true means the trigger bar must close as the setup type AND the next bar must break the trigger level (no lookahead fills)."
+  }
+}
