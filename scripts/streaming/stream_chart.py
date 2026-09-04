@@ -1510,6 +1510,47 @@ async def main():
     historical_task = asyncio.create_task(_periodic_historical_updater())
     print("📅 [Historical] Background daily/weekly refresh task started (17:00 ET Mon-Fri).")
 
+    # 2.6 Daily gap sweep.
+    # Gap checking is otherwise EVENT-DRIVEN: startup, hub reconnect, and a >60s jump in
+    # chart_handler. A process that runs for days without reconnecting therefore never
+    # re-checks, so a hole that opened after startup is only found by luck. This sweeps
+    # every symbol on a fixed schedule instead.
+    #
+    # It runs at 18:10 ET - after the 17:00 daily/weekly refresh, and after the futures
+    # settlement window - so the day's bars have landed before we ask what is missing.
+    # The global bridge budget still applies, so a sweep that finds a large backlog
+    # drains it over several days rather than bursting at the Hub.
+    async def _daily_gap_sweep():
+        while True:
+            now_et = datetime.now(ET_TZ)
+            next_run = now_et.replace(hour=18, minute=10, second=0, microsecond=0)
+            if now_et >= next_run:
+                next_run += timedelta(days=1)
+            while next_run.weekday() >= 5:
+                next_run += timedelta(days=1)
+            wait_s = (next_run - now_et).total_seconds()
+            print(f"🩹 [GapSweep] Next sweep: {next_run.strftime('%a %Y-%m-%d %H:%M ET')} "
+                  f"(in {wait_s/3600:.1f}h)")
+            await asyncio.sleep(wait_s)
+            print(f"🩹 [GapSweep] Sweeping {len(symbols)} symbols @ "
+                  f"{datetime.now(ET_TZ).strftime('%H:%M ET')}...")
+            swept = 0
+            for sym in symbols:
+                if _bridge_budget_remaining() <= 0:
+                    print("🩹 [GapSweep] Bridge budget exhausted; remaining symbols "
+                          "deferred to the next sweep.")
+                    break
+                try:
+                    await check_and_bridge_gaps(sym)
+                    swept += 1
+                except Exception as e:
+                    # One bad symbol must not abort the sweep for the rest.
+                    print(f"   ⚠️ [GapSweep] {sym} failed: {e}")
+            print(f"🩹 [GapSweep] Done ({swept}/{len(symbols)} symbols checked).")
+
+    gap_sweep_task = asyncio.create_task(_daily_gap_sweep())
+    print("🩹 [GapSweep] Daily gap sweep task started (18:10 ET Mon-Fri).")
+
     # 3. Main Loop
     while True:
         try:

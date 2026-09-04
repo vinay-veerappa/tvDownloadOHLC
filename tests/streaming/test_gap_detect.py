@@ -273,6 +273,25 @@ def test_session_status_reports_an_unmonitored_symbol():
     assert detect_gaps(short, now_ms=int(short[-1]) + MIN) == []  # the ambiguous []
 
 
+def test_a_week_old_symbol_is_monitored():
+    """A symbol added last week must not sit unmonitored for another week.
+
+    Seven CBOE vol indices added 2026-08-26 were collecting cleanly at 389-400 bars/day
+    and were still being skipped at MIN_DAYS_FOR_MASK=10. The days a new symbol is
+    unmonitored are exactly the days its collection is least proven.
+    """
+    week = _series("2026-06-01", minutes=390, days=7)
+    st = session_status(week)
+    assert st["monitored"] is True, st["reason"]
+    assert st["session_minutes"] == 390
+
+
+def test_but_a_three_day_symbol_still_declines():
+    # NEGATIVE CONTROL: the minimum was lowered, not removed.
+    st = session_status(_series("2026-06-01", minutes=390, days=3))
+    assert st["monitored"] is False
+
+
 def test_session_status_describes_a_monitored_symbol(rth):
     st = session_status(rth)
     assert st["monitored"] is True

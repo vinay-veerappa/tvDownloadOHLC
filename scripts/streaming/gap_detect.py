@@ -12,10 +12,11 @@ excludes only WEEKEND gaps. Two consequences, both measured 2026-09-03:
 2. Weekend-only filtering is wrong for every symbol here. Nothing in this watchlist is
    a clean 09:30-16:00 instrument with data on every minute:
 
-       NQ    1,020 dense min/day   ET 00:00-16:59   (near-24h future)
-       SPY     553 dense min/day   ET 07:00-19:59   (extended hours)
-       NFLX    408 dense min/day   ET 07:00-16:06
-       VIX     390 dense min/day   ET 09:31-16:00   (659 min/day with NO bar, ever)
+       NQ    1,140 dense min/day   ET 00:00-19:59   (near-24h future)
+       SPY     699 dense min/day   ET 03:00-19:59   (extended hours)
+       NFLX    542 dense min/day   ET 04:00-19:59
+       VIX     776 dense min/day   ET 03:15-16:15   (global trading hours)
+       VXN     390 dense min/day   ET 09:31-16:00   (RTH only)
 
    A missing 1-minute bar at 03:00 for NFLX is not a data hole - no trade printed, and
    re-requesting it returns nothing. Treating those as gaps produced 18,327 "gaps"
@@ -75,7 +76,19 @@ DEFAULT_DENSE_FRAC = 0.80
 
 # Below this many weekdays of history the density estimate is noise, and the safe
 # response is to decline to judge rather than to guess a session.
-MIN_DAYS_FOR_MASK = 10
+#
+# 5, not 10. At 10 a newly-added symbol sits unmonitored for two working weeks -
+# measured 2026-09-03, seven CBOE vol indices (GVZ, OVX, RVX, VIX9D, VOLI, VXD, VXN)
+# added on 2026-08-26 were collecting cleanly at 389-400 bars/day and were still being
+# skipped. Waiting is not free: the days a new symbol is unmonitored are exactly the
+# days its collection is least proven.
+#
+# What makes a short history risky is not the day count but a PARTIAL day skewing the
+# estimate. The obvious guard - dropping low-bar-count days - was tried and REJECTED;
+# see build_session_mask for the measurements. The risk is accepted and made visible
+# through session_status() instead.
+MIN_DAYS_FOR_MASK = 5
+
 
 # A gap must be missing at least this many dense minutes to be worth an API call.
 # 1 would make every thin minute inside a dense window a "gap".
@@ -110,13 +123,31 @@ def build_session_mask(
     idx = idx[idx.weekday < 5]  # weekends are excluded from the estimate entirely
     if len(idx) == 0:
         return None
-    n_days = idx.normalize().nunique()
+    day = idx.normalize()
+    n_days = day.nunique()
     if n_days < min_days:
         return None
-    minute_of_day = idx.hour * 60 + idx.minute
-    per_minute_days = np.zeros(MINUTES_PER_DAY, dtype=float)
+
+    # ⚠️ REJECTED: dropping "partial" days (bars/day below a fraction of the median)
+    # before measuring density. It sounds right - a collector restart that loses a
+    # morning is evidence about the COLLECTOR, not the instrument - and it would protect
+    # a short history, where one bad day is 1/5 of the sample.
+    #
+    # Measured 2026-09-03, it does the opposite on any symbol whose activity varies:
+    # a quiet overnight day has genuinely fewer bars, so the filter discards LOW-VOLUME
+    # days rather than INCOMPLETE ones and inflates the coverage of the days that remain.
+    # SPY's session widened 682 -> 985 minutes, pulling thin overnight minutes in as
+    # "expected"; watchlist gaps went 153 -> 200 with MSFT at 52 and NFLX at 21, all
+    # false. The filter only behaves on fixed-session instruments, which is exactly the
+    # set that does not need it.
+    #
+    # Residual risk accepted and documented instead: on a short history, two partial
+    # days can push a real session minute below dense_frac and under-report the session.
+    # session_status() exposes the day count so that is visible rather than silent.
+
     # Count DISTINCT days per minute, not bars: a duplicated bar must not inflate density.
-    seen = pd.DataFrame({"m": minute_of_day, "d": idx.normalize()}).drop_duplicates()
+    seen = pd.DataFrame({"m": idx.hour * 60 + idx.minute, "d": day}).drop_duplicates()
+    per_minute_days = np.zeros(MINUTES_PER_DAY, dtype=float)
     counts = np.bincount(seen["m"].to_numpy(), minlength=MINUTES_PER_DAY)
     per_minute_days[: len(counts)] = counts
     return (per_minute_days / n_days) >= dense_frac
