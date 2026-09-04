@@ -376,6 +376,32 @@ The column is now computed for new rows only, and the existing one healed only w
 
 ⚠️ **Unresolved: resident memory is now ~700 MB against the 316–410 MB observed on the old process.** That is *not* attributable to this change — the pre-fix code created the same string column, and more of them. The likeliest explanation is that the old process had run 54 hours and Windows had trimmed its working set during idle periods, while a freshly restarted process holds its pages resident; but the two were never measured side by side, so this is unconfirmed. If memory turns out to matter, the fix is the dict-per-candle representation above, not anything in this change.
 
+#### ⚠️ P0: gap bridging is DEAD, and reviving it as-is would fire ~15,900 API calls
+Investigating whether the 15,000-candle in-memory window could shrink (its only real consumer is gap detection) turned up something worse.
+
+**`detect_gaps` has no `return` statement.** It has exactly one — the early `return []` for empty input. Every other path builds the `gaps` list and then falls off the end, returning `None`. So `check_and_bridge_gaps` does `gaps = detect_gaps(...)` → `None`, `if gaps:` → False, and **`bridge_gaps` has never been called**.
+
+`git log -S "return gaps"` pins it: commit `8df95e34` *"Refactor: Implement Schwab Unified Hub"* (**2026-03-22**) deleted the line and nothing restored it. Gap bridging has been dead for over five months.
+
+It is invisible because `detect_gaps` **prints** `🔍 Gap detected since last data point` before discarding its result — the logs show detection working while nothing is ever bridged. Dead safety machinery that announces itself.
+
+**Do NOT just add `return gaps`.** Measured across the live files, restoring it today would detect **18,327 gaps (15,923 inside the 45-day API window)**, each of which costs one Schwab `get_price_history` call *and* a full-parquet merge. That is ~16k sequential API calls — an account-level rate-limit risk — and roughly 45 minutes of solid I/O per pass.
+
+The reason the count is so high is a **second defect the dead return has been masking**: `detect_gaps` filters only *weekend* gaps, not *daily session* boundaries. Equities trade 6.5h RTH, so every overnight close reads as a ~17.5h gap. Hence NFLX 2,835, MSFT 2,281, AMZN 2,124, META 1,809, AAPL 1,543 — nearly all non-gaps. The futures counts are sane by comparison (NQ 13, ES 15, GC 13).
+
+**Redesign, which also answers the memory question.** Gap detection does not need the in-memory list at all — the parquet is the authoritative history, and `handle_history` already reads from it:
+
+| approach | cost |
+|---|---|
+| current: Python loop over 15,000 dicts, `datetime.fromtimestamp` per gap | in-memory window must be 15,000 |
+| parquet `time` column + `np.diff`, **full 598k-row history** | **6.3 ms** |
+
+So: read gaps from the `time` column, filter against the per-symbol session schedule (`get_symbol_schedule` already exists) instead of weekends-only, and the in-memory window can drop from 15,000 to ~500. That is **~150 MB reclaimed** — more than the dict→array change below would give — while touching ~3 functions instead of 16, and changing no external contract.
+
+It also makes the trigger genuinely one-time. Today `chart_handler:1224` calls `check_and_bridge_gaps` whenever a bar arrives >60 s after the last, which fires at **every session boundary for every symbol** — and each call scans 15,000 dicts *and* rewrites 15,000 rows to parquet.
+
+**Sequencing matters:** fix the session-boundary filter *before* restoring the return, or the first run stampedes the Schwab API.
+
 #### Lesson for the Rust question
 A Rust port would have made the same 598k-row strftime perhaps 10× faster while still doing O(entire history) work per appended bar — and would have carried the defect across, faster and harder to see. **The algorithm was the problem, not the language.**
 
