@@ -31,15 +31,24 @@ from scripts.trading_framework.strategies.registry import get_strategy
 from scripts.trading_framework.ml.walk_forward import sequential_evaluation_folds
 from scripts.trading_framework.reporting.risk_profiler import RiskProfiler
 from scripts.trading_framework.reporting.optimization_summary import OptimizationReporter
+from scripts.trading_framework.provenance.run_record import UNDECLARED, RunRecord
 
 class ResearchLifecycleRunner:
     """
     Standardized institutional lifecycle for strategy research.
     Implements Layers 5, 6, and 7 of the framework.
     """
-    def __init__(self, ticker="NQ1", strategy_key="box_reversion"):
+    def __init__(self, ticker="NQ1", strategy_key="box_reversion",
+                 price_adjustment=UNDECLARED):
         self.ticker = ticker
         self.strategy_key = strategy_key
+        # Back-adjusted continuous futures and per-contract unadjusted prices are
+        # different price series, and the NT8 side inherited MergeBackAdjusted
+        # from a machine-wide global for an unknown length of time. There is no
+        # honest default here, so the record stores "undeclared" until a caller
+        # says which basis its parquet is on.
+        self.price_adjustment = price_adjustment
+        self._eval_folds = None
         self.strategy = get_strategy(strategy_key, ticker)
             
         self.strategy_name = self.strategy.strategy_name
@@ -112,6 +121,7 @@ class ResearchLifecycleRunner:
             len(data), n_splits=3,
             exit_buffer=self.EXIT_BUFFER_BARS, embargo=self.EMBARGO_BARS,
         )
+        self._eval_folds = folds
         width = folds[0]['test_end'] - folds[0]['test_start']
         print(f"   Evaluation windows: {len(folds)} x {width} bars "
               f"(+{self.EXIT_BUFFER_BARS} exit buffer, {self.EMBARGO_BARS} embargo)")
@@ -182,7 +192,7 @@ class ResearchLifecycleRunner:
         study.optimize(objective, n_trials=trials, n_jobs=4)
         return study
 
-    async def _persist_to_hub(self, run_id, ticker, best_params, oos_metrics, run_dir):
+    async def _persist_to_hub(self, run_id, ticker, best_params, oos_metrics, run_dir, git_hash=None):
         """Syncs high-fidelity research results to the Hub Database."""
         # --- Prisma Environment Setup (ADR-017) ---
         if 'DATABASE_URL' not in os.environ:
@@ -232,6 +242,11 @@ class ResearchLifecycleRunner:
                 'configJson': json.dumps(best_params),
                 'grade': risk_metrics.get('Institutional Grade', 'C'),
                 'filePath': run_dir,
+                # `gitHash` has been in the ResearchRun schema since it was
+                # written and was never populated, so every stored run in the hub
+                # is unattributable to any code state. The full record lives in
+                # run_record.json beside the artifacts; this is the joinable key.
+                'gitHash': git_hash,
             }
 
             create_variants = [
@@ -284,72 +299,189 @@ class ResearchLifecycleRunner:
             return True, f"DATABASE_URL not set; defaulted to {os.environ['DATABASE_URL']}"
         return True, "ok"
 
-    def run_full_cycle(self, trials=10, persist_to_hub=True):
-        print(f"🚀 Initializing Institutional Lifecycle for {self.ticker} [{self.strategy_name}]...")
-        
-        # 1. Load Data (Layer 1/2)
-        loader = DataLoader(load_config())
-        df = loader.load_enriched(self.ticker)
-        
-        # 2. In-Sample / Out-of-Sample Split (Layer 5)
-        # IS: 2018-2023 | OOS: 2024-Present
-        df_is = df[df.index.year <= 2023]
-        df_oos = df[df.index.year >= 2024]
-        
-        # 3. Optimize (Layer 6)
-        print(f"🔬 Running In-Sample Optimization ({trials} trials)...")
-        study = self._optimize_params(df_is, trials=trials)
-        best_params = study.best_params
-        print(f"🏆 Best Params: {best_params}")
-        
-        # 4. Validate (OOS)
-        print(f"🔬 Running Out-of-Sample Validation...")
-        oos_signals = self.strategy.generate_signals(df_oos, best_params)
-        oos_metrics = self.backtester.run(oos_signals, df_oos, {'leverage': 1.0})
-        
-        # --- NEW: Calculate Raw Risk Metrics for HTML ---
-        risk_profiler = RiskProfiler(account_size=50000.0, risk_per_trade=500.0)
-        raw_risk_metrics = risk_profiler.calculate_metrics(oos_metrics['trade_returns_pct'], oos_metrics['max_drawdown_%'], formatted=False)
-        
-        # 5. Persist & Sync (Layer 7)
+    def run_full_cycle(self, trials=10, persist_to_hub=True,
+                       allow_unattributable=False):
+        """Run the lifecycle under a run record, and refuse to REPORT a result
+        that cannot be attributed.
+
+        Every stage is recorded, including one that fails, and the run appears in
+        `results/RESEARCH/_run_ledger.jsonl` from the moment it opens -- so a
+        crashed or abandoned arm leaves a trace rather than vanishing. An arm
+        that disappears from the ledger is how a search launders its own
+        multiple-testing problem.
+        """
         RESULTS_ROOT = os.path.join(PROJECT_ROOT, "results/RESEARCH")
-        TIMESTAMP = datetime.now().strftime('%Y%m%d_%H%M%S')
-        RUN_ID = f"RUN_{TIMESTAMP}_{self.ticker}_{self.strategy_key.upper()}"
+        RUN_ID = RunRecord.new_run_id(self.ticker, self.strategy_key)
         RUN_DIR = os.path.join(RESULTS_ROOT, self.strategy_name, self.ticker, RUN_ID)
         os.makedirs(RUN_DIR, exist_ok=True)
-        
-        if persist_to_hub:
-            can_persist, reason = self._can_persist_to_hub()
-            if not can_persist:
-                print(f"⚠️ Skipping hub persistence: {reason}.")
-                print("ℹ️ Set DATABASE_URL (and ensure Prisma client is generated) to enable persistence.")
-            else:
-                if reason != 'ok':
-                    print(f"ℹ️ {reason}")
-                try:
-                    asyncio.run(self._persist_to_hub(RUN_ID, self.ticker, best_params, oos_metrics, RUN_DIR))
-                except Exception as exc:
-                    print(f"⚠️ Hub persistence failed: {exc}")
-                    print("ℹ️ Continuing without persistence. Use --skip-persist to silence this path.")
-        else:
-            print("ℹ️ Skipping hub persistence (--skip-persist enabled).")
-        
-        # --- NEW: Generate Institutional Optimization Summary HTML ---
-        print("📊 Generating Institutional Research Summary...")
-        opt_reporter = OptimizationReporter(RUN_DIR)
-        trials_df = study.trials_dataframe() 
-        summary_path = opt_reporter.generate_report(
-            run_id=RUN_ID,
-            ticker=self.ticker,
-            strategy_name=self.strategy_name,
-            best_params=best_params,
-            risk_metrics=raw_risk_metrics,
-            trials_df=trials_df
-        )
 
-        print(f"📊 OOS Sharpe: {oos_metrics.get('sharpe_ratio', 0):.2f}")
-        print(f"✅ Lifecycle Test Complete. Artifacts in {RUN_DIR}")
-        print(f"📂 Summary Report: {summary_path}")
+        rec = RunRecord.open(RUN_ID, strategy_key=self.strategy_key, ticker=self.ticker)
+        rec.declare_strategy(name=self.strategy_name,
+                             cls_name=type(self.strategy).__name__,
+                             param_grid=self.strategy.get_param_grid())
+        rec.declare_engine(self.backtester)
+
+        print(f"\U0001f680 Initializing Institutional Lifecycle for {self.ticker} [{self.strategy_name}]...")
+        print(f"   run id: {RUN_ID}")
+
+        try:
+            # 1. Load Data (Layer 1/2)
+            with rec.stage("load_data") as st:
+                loader = DataLoader(load_config())
+                df = loader.load_enriched(self.ticker)
+                st.detail(rows=int(len(df)), columns=int(len(df.columns)))
+            rec.declare_data(df, ticker=self.ticker,
+                             loader="DataLoader.load_enriched",
+                             adjustment=self.price_adjustment)
+
+            # 2. In-Sample / Out-of-Sample Split (Layer 5)
+            with rec.stage("split") as st:
+                df_is = df[df.index.year <= 2023]
+                df_oos = df[df.index.year >= 2024]
+                # Boundaries are RECORDED rather than described in a comment: the
+                # comment here read "IS: 2018-2023" while the loader actually
+                # returns bars from 2016, and a stale comment is how an
+                # unreproducible split survives.
+                st.detail(
+                    rule="IS = year <= 2023, OOS = year >= 2024",
+                    is_rows=int(len(df_is)), oos_rows=int(len(df_oos)),
+                    is_first=str(df_is.index[0]) if len(df_is) else None,
+                    is_last=str(df_is.index[-1]) if len(df_is) else None,
+                    oos_first=str(df_oos.index[0]) if len(df_oos) else None,
+                    oos_last=str(df_oos.index[-1]) if len(df_oos) else None,
+                )
+                if df_is.empty:
+                    rec.refuse("in-sample window is EMPTY; nothing was optimised")
+                if df_oos.empty:
+                    rec.refuse("out-of-sample window is EMPTY; the reported metrics "
+                               "are not an out-of-sample result")
+
+            # 3. Optimize (Layer 6)
+            print(f"\U0001f52c Running In-Sample Optimization ({trials} trials)...")
+            with rec.stage("optimize") as st:
+                study = self._optimize_params(df_is, trials=trials)
+                best_params = study.best_params
+                states = {}
+                for t in study.trials:
+                    states[t.state.name] = states.get(t.state.name, 0) + 1
+                st.detail(requestedTrials=int(trials), bestValue=float(study.best_value),
+                          bestParams=best_params, trialStates=states,
+                          studyName=study.study_name)
+            rec.declare_folds(self._eval_folds)
+            rec.declare_strategy(params=best_params)
+            print(f"\U0001f3c6 Best Params: {best_params}")
+
+            # 4. Validate (OOS)
+            print("\U0001f52c Running Out-of-Sample Validation...")
+            with rec.stage("oos") as st:
+                oos_signals = self.strategy.generate_signals(df_oos, best_params)
+                # `ticker` was previously omitted here, so the engine silently fell
+                # back to its NQ1 point multiplier for every instrument.
+                # `strict_alignment` is deliberately FALSE: signals are generated
+                # on df_oos itself so they should align exactly, and if they ever
+                # do not we want the counted report recorded and the run marked
+                # unattributable, rather than an exception that discards it.
+                oos_metrics = self.backtester.run(oos_signals, df_oos, {
+                    'leverage': 1.0,
+                    'ticker': self.ticker,
+                    'strict_alignment': False,
+                })
+                st.detail(signals=int(0 if oos_signals is None else len(oos_signals)),
+                          trades=int(oos_metrics.get('num_trades', 0)))
+            rec.record_alignment("oos", oos_metrics.get('signal_alignment'))
+            rec.set_metrics(oos_metrics)
+
+            if int(oos_metrics.get('num_trades', 0)) == 0:
+                rec.refuse("out-of-sample produced ZERO trades; every reported "
+                           "metric is the null result, not a measurement")
+
+            # 5. Risk profile
+            with rec.stage("risk_profile"):
+                risk_profiler = RiskProfiler(account_size=50000.0, risk_per_trade=500.0)
+                raw_risk_metrics = risk_profiler.calculate_metrics(
+                    oos_metrics['trade_returns_pct'], oos_metrics['max_drawdown_%'],
+                    formatted=False)
+
+            # 6. THE GATE. Reporting is refused before it happens, not after.
+            check = rec.attribution()
+            if not check['attributable']:
+                print("\n\u274c This run is NOT attributable and will not be reported:")
+                for r in check['refusals']:
+                    print(f"     refusal: {r}")
+                for m in check['missingRequired']:
+                    print(f"     missing: {m}")
+                if not allow_unattributable:
+                    rec.finalize(RUN_DIR, status="refused")
+                    print(f"\n   Record written: {os.path.join(RUN_DIR, 'run_record.json')}")
+                    print("   Re-run with --allow-unattributable to produce a report anyway.")
+                    return None
+                # A bypass that is not itself recorded is a bypass nobody can
+                # audit, so the record carries the fact that it was overridden.
+                rec.warn("REPORTED DESPITE REFUSAL: --allow-unattributable was set, "
+                         "overriding {} refusal(s)".format(len(check['refusals'])))
+                print("   \u26a0\ufe0f  --allow-unattributable set; reporting anyway "
+                      "and recording the override.")
+
+            # 7. Persist & Sync (Layer 7)
+            if persist_to_hub:
+                can_persist, reason = self._can_persist_to_hub()
+                if not can_persist:
+                    print(f"\u26a0\ufe0f Skipping hub persistence: {reason}.")
+                    rec.warn(f"hub persistence skipped: {reason}")
+                else:
+                    if reason != 'ok':
+                        print(f"\u2139\ufe0f {reason}")
+                    with rec.stage("persist_hub") as st:
+                        try:
+                            asyncio.run(self._persist_to_hub(
+                                RUN_ID, self.ticker, best_params, oos_metrics, RUN_DIR,
+                                git_hash=rec.doc['code'].get('commit')))
+                            st.detail(persisted=True)
+                        except Exception as exc:
+                            st.detail(persisted=False, error=str(exc))
+                            st.status = "ok"  # non-fatal, but recorded as not persisted
+                            rec.warn(f"hub persistence failed: {exc}")
+                            print(f"\u26a0\ufe0f Hub persistence failed: {exc}")
+            else:
+                print("\u2139\ufe0f Skipping hub persistence (--skip-persist enabled).")
+                rec.warn("hub persistence skipped by caller (--skip-persist)")
+
+            # 8. Report
+            print("\U0001f4ca Generating Institutional Research Summary...")
+            with rec.stage("report") as st:
+                opt_reporter = OptimizationReporter(RUN_DIR)
+                trials_df = study.trials_dataframe()
+                summary_path = opt_reporter.generate_report(
+                    run_id=RUN_ID,
+                    ticker=self.ticker,
+                    strategy_name=self.strategy_name,
+                    best_params=best_params,
+                    risk_metrics=raw_risk_metrics,
+                    trials_df=trials_df,
+                )
+                st.detail(summary=str(summary_path))
+            rec.add_artifact("optimizationSummary", str(summary_path))
+
+        except BaseException as exc:
+            # The record is written on the way out, so a crashed run is still an
+            # entry in the ledger with the stage that killed it named.
+            rec.fail(exc, RUN_DIR)
+            print(f"\n\u274c Run FAILED and was recorded: {type(exc).__name__}: {exc}")
+            print(f"   Record: {os.path.join(RUN_DIR, 'run_record.json')}")
+            raise
+
+        record = rec.finalize(RUN_DIR)
+
+        print(f"\U0001f4ca OOS Sharpe: {oos_metrics.get('sharpe_ratio', 0):.2f}")
+        print(f"   attributable: {record['attributable']}  "
+              f"warnings: {len(record['warnings'])}  refusals: {len(record['refusals'])}")
+        for w in record['warnings']:
+            print(f"     warning: {w}")
+        print(f"\u2705 Lifecycle Test Complete. Artifacts in {RUN_DIR}")
+        print(f"\U0001f4c2 Summary Report: {summary_path}")
+        print(f"\U0001f9fe Run Record: {os.path.join(RUN_DIR, 'run_record.json')}")
+        return record
+
 
 if __name__ == "__main__":
     import argparse
@@ -370,7 +502,21 @@ if __name__ == "__main__":
     )
     parser.add_argument("--trials", type=int, default=10)
     parser.add_argument("--skip-persist", action="store_true")
+    parser.add_argument(
+        "--price-adjustment", default=UNDECLARED,
+        choices=[UNDECLARED, "unadjusted", "back_adjusted", "ratio_adjusted"],
+        help="Price basis of the loaded parquet. There is no honest default: "
+             "back-adjusted continuous futures and per-contract unadjusted "
+             "prices are different series, and a result cannot be compared to "
+             "an NT8 run without knowing which one it used.")
+    parser.add_argument(
+        "--allow-unattributable", action="store_true",
+        help="Produce a report even when the run record refuses. The override "
+             "is itself recorded in run_record.json, so a bypassed refusal "
+             "stays auditable.")
     args = parser.parse_args()
 
-    runner = ResearchLifecycleRunner(ticker=args.ticker, strategy_key=args.strategy)
-    runner.run_full_cycle(trials=args.trials, persist_to_hub=not args.skip_persist)
+    runner = ResearchLifecycleRunner(ticker=args.ticker, strategy_key=args.strategy,
+                                     price_adjustment=args.price_adjustment)
+    runner.run_full_cycle(trials=args.trials, persist_to_hub=not args.skip_persist,
+                          allow_unattributable=args.allow_unattributable)

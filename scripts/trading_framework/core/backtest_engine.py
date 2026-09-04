@@ -221,7 +221,20 @@ class VectorizedBacktester(BaseBacktester):
     def _run_standardized_matches(self, signals: pd.DataFrame, data: pd.DataFrame, risk_params: Dict[str, Any]) -> Dict[str, Any]:
         signals = self._normalize_standardized_signals(signals)
         if signals.empty:
-            return self._null_metrics(data)
+            # Still report an alignment block, so a consumer can distinguish
+            # "the strategy produced no signals" from "the engine is too old to
+            # tell you". Both used to arrive as an absent key.
+            return self._null_metrics(data, alignment={
+                'signals_in': 0,
+                'signals_kept': 0,
+                'dropped_past_frame_end': 0,
+                'dropped_before_frame_start': 0,
+                'dropped_snap_too_far': 0,
+                'snapped_within_tolerance': 0,
+                'note': 'no signals reached the engine (empty or non-canonical frame)',
+                'frame_start': str(data.index[0]) if len(data.index) else None,
+                'frame_end': str(data.index[-1]) if len(data.index) else None,
+            })
 
         # 1. Alignment and Pre-check -- see _align_signals_to_frame for why this
         #    is bounded in time rather than left to get_indexer's silent snap.
