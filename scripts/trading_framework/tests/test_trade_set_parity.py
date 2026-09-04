@@ -455,3 +455,114 @@ def test_a_back_adjustment_price_shift_is_caught_on_matched_pairs():
     # P&L is unaffected by a constant shift, so the sign check passes -- which is
     # why price agreement is reported separately and not folded into one score.
     assert s["matched_pnl_sign_ok"] == pytest.approx(1.0)
+
+
+# ==========================================================================
+# GEOMETRY, not absolute price
+#
+# A strategy decides DISTANCES: where the stop sits relative to entry, how far
+# the target is, how far price travelled before the exit. A constant price
+# offset -- which is exactly what a back-adjusted continuous series is against
+# an unadjusted one -- changes every absolute level and none of those distances.
+# Failing such a run would report a bookkeeping difference as a logic defect.
+# ==========================================================================
+def test_a_constant_offset_passes_and_is_reported_as_a_note():
+    """The whole trade set shifted by one roll adjustment. Same trades."""
+    real = normalise_trades(_real_nt8(), label="nt8", assume_tz=ET)
+    shifted = real.copy()
+    shifted["entry_price"] = shifted["entry_price"] - 292.0
+    shifted["exit_price"] = shifted["exit_price"] - 292.0
+
+    m = match_trade_sets(shifted, real, 900)
+    s = summary(m, compare_matched(m, price_tol=0.25))
+    v = verdict(s, min_recall=1.0, min_precision=1.0)
+
+    assert s["matched_geometry_ok"] == pytest.approx(1.0)
+    assert s["max_abs_points_delta"] == pytest.approx(0.0)
+    assert v["verdict"] == "PASS", v["reasons"]
+    assert s["constant_price_offset"] == pytest.approx(-292.0)
+    assert s["price_offset_spread"] == pytest.approx(0.0)
+    assert any("adjustment-basis difference" in n for n in v["notes"])
+    # the absolute-price diagnostic still records what happened
+    assert s["matched_entry_price_ok"] == pytest.approx(0.0)
+
+
+def test_a_real_geometry_divergence_still_fails():
+    """Control: the offset tolerance must not swallow an actual difference.
+
+    Same entries, but every exit 5 points further away -- the distance travelled
+    genuinely differs, which no adjustment basis can explain.
+    """
+    real = normalise_trades(_real_nt8(), label="nt8", assume_tz=ET)
+    moved = real.copy()
+    sgn = np.where(moved["direction"] == "long", 1.0, -1.0)
+    moved["exit_price"] = moved["exit_price"] + 5.0 * sgn
+
+    m = match_trade_sets(moved, real, 900)
+    s = summary(m, compare_matched(m, price_tol=0.25))
+    v = verdict(s, min_recall=1.0, min_precision=1.0)
+
+    assert s["recall"] == pytest.approx(1.0)
+    assert s["matched_geometry_ok"] == pytest.approx(0.0)
+    assert s["max_abs_points_delta"] == pytest.approx(5.0)
+    assert v["verdict"] == "FAIL"
+    assert any("agree on GEOMETRY" in r for r in v["reasons"])
+
+
+def test_offset_plus_divergence_is_not_excused_by_the_offset():
+    """A constant offset AND a real difference. The offset must not launder it."""
+    real = normalise_trades(_real_nt8(), label="nt8", assume_tz=ET)
+    both = real.copy()
+    both["entry_price"] = both["entry_price"] - 292.0
+    sgn = np.where(both["direction"] == "long", 1.0, -1.0)
+    both["exit_price"] = both["exit_price"] - 292.0 + 5.0 * sgn
+
+    m = match_trade_sets(both, real, 900)
+    s = summary(m, compare_matched(m, price_tol=0.25))
+    v = verdict(s, min_recall=1.0, min_precision=1.0)
+
+    assert s["matched_geometry_ok"] == pytest.approx(0.0)
+    assert v["verdict"] == "FAIL"
+
+
+def test_scattered_price_differences_are_not_called_a_constant_offset():
+    """Only a ZERO-spread difference is an adjustment basis. Noise is not."""
+    real = normalise_trades(_real_nt8(), label="nt8", assume_tz=ET)
+    noisy = real.copy()
+    rng = np.random.default_rng(1)
+    noisy["entry_price"] = noisy["entry_price"] + rng.normal(0, 3.0, len(noisy))
+
+    m = match_trade_sets(noisy, real, 900)
+    s = summary(m, compare_matched(m, price_tol=0.25))
+
+    assert s["constant_price_offset"] is None
+    assert s["price_offset_spread"] > 1.0
+
+
+def test_geometry_is_direction_aware():
+    """A short that made 10 points and a long that made 10 points both travelled
+    +10 in strategy terms. Signing by direction is what makes the comparison
+    mean the same thing on both sides."""
+    py = [("2026-01-05 09:31", "short", 100.0, 90.0, 500.0, "PT")]
+    nt8 = [("2026-01-05 09:31", "short", 100.0, 90.0, 500.0, "PT")]
+    r = _pair(py, nt8)
+    row = r["matched_detail"].iloc[0]
+    assert row["py_points"] == pytest.approx(10.0)
+    assert row["nt8_points"] == pytest.approx(10.0)
+    assert row["geometry_ok"]
+
+
+def test_report_puts_geometry_above_absolute_price():
+    """Ordering is load-bearing: absolute price is the number that misleads under
+    a constant offset, so it must not be read first."""
+    real = _real_nt8()
+    shifted = real.copy()
+    shifted["entryPrice"] = shifted["entryPrice"] - 292.0
+    shifted["exitPrice"] = shifted["exitPrice"] - 292.0
+    txt = format_report(run_parity(shifted, real, bar_seconds=900, min_recall=1.0,
+                                   min_precision=1.0, assume_tz_python=ET,
+                                   assume_tz_nt8=ET))
+    assert txt.index("GEOMETRY") < txt.index("ABSOLUTE PRICE")
+    assert "THIS is judged" in txt
+    assert "not behaviour" in txt
+    assert "VERDICT: PASS" in txt

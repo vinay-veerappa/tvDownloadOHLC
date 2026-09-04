@@ -254,6 +254,15 @@ def compare_matched(m: Dict[str, Any], *, price_tol: float = 0.25,
         d_entry = float(pr["entry_price"]) - float(nr["entry_price"])
         d_exit = float(pr["exit_price"]) - float(nr["exit_price"])
         d_pnl = float(pr["pnl"]) - float(nr["pnl"])
+
+        # GEOMETRY: signed distance travelled, which is what a strategy actually
+        # decides. Invariant to a constant price offset, so it is the comparison
+        # that survives a back-adjustment difference between the two sides while
+        # still catching a genuinely different exit.
+        sgn = 1.0 if str(pr["direction"]).lower() == "long" else -1.0
+        py_points = (float(pr["exit_price"]) - float(pr["entry_price"])) * sgn
+        nt8_points = (float(nr["exit_price"]) - float(nr["entry_price"])) * sgn
+        d_points = py_points - nt8_points
         rows.append({
             "entry_bar": pair["entry_bar"],
             "direction": pair["direction"],
@@ -262,6 +271,8 @@ def compare_matched(m: Dict[str, Any], *, price_tol: float = 0.25,
             "py_exit": pr["exit_price"], "nt8_exit": nr["exit_price"],
             "d_exit": d_exit,
             "py_pnl": pr["pnl"], "nt8_pnl": nr["pnl"], "d_pnl": d_pnl,
+            "py_points": py_points, "nt8_points": nt8_points, "d_points": d_points,
+            "geometry_ok": bool(abs(d_points) <= price_tol) if np.isfinite(d_points) else False,
             "py_reason": pr["exit_reason"], "nt8_reason": nr["exit_reason"],
             "entry_ok": bool(abs(d_entry) <= price_tol) if np.isfinite(d_entry) else False,
             "exit_ok": bool(abs(d_exit) <= price_tol) if np.isfinite(d_exit) else False,
@@ -300,7 +311,21 @@ def summary(m: Dict[str, Any], matched: pd.DataFrame) -> Dict[str, Any]:
         "jaccard": (n_matched / union) if union else None,
     }
     if not matched.empty:
+        # A CONSTANT offset across every trade is an adjustment-basis difference
+        # (back-adjusted vs unadjusted continuous futures); SCATTERED differences
+        # are a real fill divergence. Reporting one number for both would make a
+        # bookkeeping difference look like a logic defect, and the whole point of
+        # the geometry comparison is that the first kind does not matter.
+        de = matched["d_entry"].to_numpy(dtype=float)
+        finite = de[np.isfinite(de)]
+        offset_spread = float(finite.max() - finite.min()) if finite.size else 0.0
+        constant_offset = (float(np.median(finite))
+                           if finite.size and offset_spread <= 1e-6 else None)
         out.update({
+            "constant_price_offset": constant_offset,
+            "price_offset_spread": offset_spread,
+            "matched_geometry_ok": float(matched["geometry_ok"].mean()),
+            "max_abs_points_delta": float(matched["d_points"].abs().max()),
             "matched_entry_price_ok": float(matched["entry_ok"].mean()),
             "matched_exit_price_ok": float(matched["exit_ok"].mean()),
             "matched_pnl_ok": float(matched["pnl_ok"].mean()),
@@ -312,18 +337,38 @@ def summary(m: Dict[str, Any], matched: pd.DataFrame) -> Dict[str, Any]:
     else:
         out.update({"matched_entry_price_ok": None, "matched_exit_price_ok": None,
                     "matched_pnl_ok": None, "matched_pnl_sign_ok": None,
+                    "matched_geometry_ok": None, "max_abs_points_delta": None,
+                    "constant_price_offset": None, "price_offset_spread": None,
                     "max_abs_entry_delta": None, "max_abs_exit_delta": None,
                     "max_abs_pnl_delta": None})
     return out
 
 
 def verdict(s: Dict[str, Any], *, min_recall: float, min_precision: float,
-            min_matched_pnl_sign: float = 1.0) -> Dict[str, Any]:
+            min_matched_pnl_sign: float = 1.0,
+            min_matched_geometry: float = 1.0) -> Dict[str, Any]:
     """PASS/FAIL against thresholds the CALLER states. No default thresholds.
 
     `min_recall` and `min_precision` are required arguments on purpose. A default
     would become the standard by accident, and the acceptable trade-set gap is a
     judgement about what the screen is FOR -- not something this module knows.
+
+    THE VERDICT JUDGES GEOMETRY, NOT ABSOLUTE PRICE. A strategy decides distances:
+    where the stop sits relative to entry, how far the target is, how far price
+    travelled before the exit. A constant price offset -- which is exactly what a
+    back-adjusted continuous series is against an unadjusted one -- changes every
+    absolute level and NONE of those distances. Measured on this repo's own
+    corpus: shifting all 47 trades by 292 points (one of the observed monthly roll
+    offsets) leaves recall, precision and P&L sign at 1.0, because it is the same
+    trade set. Failing that run would report a bookkeeping difference as a logic
+    defect.
+
+    Absolute entry/exit price agreement is still COMPUTED and reported, because it
+    is the right diagnostic for the narrow cases where the adjustment basis does
+    change behaviour -- bps-denominated targets (a 10 bps target on NQ is ~0.3
+    points different at a 292-point offset, enough to change which bar it fills
+    on), indicators whose lookback spans a roll seam, and any strategy keyed to an
+    absolute level. It is not what decides PASS.
     """
     reasons = []
     if s["nt8_trades"] == 0 and s["python_trades"] == 0:
@@ -346,15 +391,36 @@ def verdict(s: Dict[str, Any], *, min_recall: float, min_precision: float,
             and s["matched_pnl_sign_ok"] < min_matched_pnl_sign):
         reasons.append("{:.1%} of matched trades agree on win/loss SIGN (< {:.1%})"
                        .format(s["matched_pnl_sign_ok"], min_matched_pnl_sign))
+    if (s.get("matched_geometry_ok") is not None
+            and s["matched_geometry_ok"] < min_matched_geometry):
+        reasons.append(
+            "{:.1%} of matched trades agree on GEOMETRY (points travelled, < {:.1%}); "
+            "worst {:.2f} points. This is a real divergence -- unlike an absolute "
+            "price offset, it does not come from the adjustment basis."
+            .format(s["matched_geometry_ok"], min_matched_geometry,
+                    s.get("max_abs_points_delta") or float("nan")))
+
+    notes = []
+    if s.get("constant_price_offset"):
+        notes.append(
+            "absolute prices differ by a CONSTANT {:.2f} points on every matched "
+            "trade, with zero spread. That is an adjustment-basis difference "
+            "(back-adjusted vs unadjusted continuous futures), not a behavioural "
+            "one, and it is deliberately not a failure. It DOES matter for "
+            "bps-denominated parameters and for indicators whose lookback spans a "
+            "roll seam.".format(s["constant_price_offset"]))
 
     return {"verdict": "FAIL" if reasons else "PASS", "reasons": reasons,
+            "notes": notes,
             "thresholds": {"min_recall": min_recall,
                            "min_precision": min_precision,
-                           "min_matched_pnl_sign": min_matched_pnl_sign}}
+                           "min_matched_pnl_sign": min_matched_pnl_sign,
+                           "min_matched_geometry": min_matched_geometry}}
 
 
 def run_parity(py_trades: pd.DataFrame, nt8_trades: pd.DataFrame, *,
                bar_seconds: int, min_recall: float, min_precision: float,
+               min_matched_geometry: float = 1.0,
                price_tol: float = 0.25, pnl_tol: float = 1.0,
                assume_tz_python: Optional[str] = None,
                assume_tz_nt8: Optional[str] = None) -> Dict[str, Any]:
@@ -364,7 +430,8 @@ def run_parity(py_trades: pd.DataFrame, nt8_trades: pd.DataFrame, *,
     m = match_trade_sets(p, n, bar_seconds)
     matched = compare_matched(m, price_tol=price_tol, pnl_tol=pnl_tol)
     s = summary(m, matched)
-    v = verdict(s, min_recall=min_recall, min_precision=min_precision)
+    v = verdict(s, min_recall=min_recall, min_precision=min_precision,
+                min_matched_geometry=min_matched_geometry)
     return {"summary": s, "verdict": v, "tolerances":
             {"price_tol": price_tol, "pnl_tol": pnl_tol},
             "matched_detail": matched, "match": m}
@@ -387,28 +454,37 @@ def format_report(result: Dict[str, Any], max_rows: int = 15) -> str:
         L.append(f"{k:<26} {'n/a' if val is None else format(val, '.4f')}")
     L.append("")
     L.append("-- agreement WITHIN matched pairs (meaningless without recall above) --")
-    for k in ("matched_entry_price_ok", "matched_exit_price_ok",
-              "matched_pnl_ok", "matched_pnl_sign_ok"):
-        val = s[k]
+    L.append("   GEOMETRY -- what the strategy decides; offset-invariant. THIS is judged.")
+    for k in ("matched_geometry_ok", "max_abs_points_delta", "matched_pnl_sign_ok"):
+        val = s.get(k)
         L.append(f"{k:<26} {'n/a' if val is None else format(val, '.4f')}")
-    for k in ("max_abs_entry_delta", "max_abs_exit_delta", "max_abs_pnl_delta"):
-        val = s[k]
+    L.append("   ABSOLUTE PRICE -- diagnostic only; a constant offset here is the")
+    L.append("   adjustment basis, not behaviour.")
+    for k in ("constant_price_offset", "price_offset_spread",
+              "matched_entry_price_ok", "matched_exit_price_ok", "matched_pnl_ok",
+              "max_abs_entry_delta", "max_abs_exit_delta", "max_abs_pnl_delta"):
+        val = s.get(k)
         L.append(f"{k:<26} {'n/a' if val is None else format(val, '.4f')}")
     L.append("")
     L.append(f"VERDICT: {v['verdict']}")
     for r in v["reasons"]:
         L.append(f"  - {r}")
+    for n in v.get("notes", []):
+        L.append(f"  note: {n}")
 
     md = result["matched_detail"]
     if not md.empty:
-        bad = md[~(md["entry_ok"] & md["exit_ok"] & md["sign_ok"])]
+        # Keyed off GEOMETRY and exit reason, not absolute price: under a constant
+        # offset every row fails the price test and this table would list all of
+        # them while saying nothing.
+        bad = md[~(md["geometry_ok"] & md["sign_ok"])]
         if not bad.empty:
             L.append("")
             L.append(f"-- worst matched disagreements ({len(bad)} of {len(md)}) --")
-            cols = ["entry_bar", "direction", "d_entry", "d_exit", "d_pnl",
-                    "py_reason", "nt8_reason"]
+            cols = ["entry_bar", "direction", "py_points", "nt8_points", "d_points",
+                    "d_pnl", "py_reason", "nt8_reason"]
             L.append(bad.reindex(columns=cols)
-                        .sort_values("d_pnl", key=lambda c: c.abs(), ascending=False)
+                        .sort_values("d_points", key=lambda c: c.abs(), ascending=False)
                         .head(max_rows).to_string(index=False))
     return "\n".join(L)
 
