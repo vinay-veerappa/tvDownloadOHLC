@@ -23,7 +23,7 @@ const NAN: f64 = f64::NAN;
     commission_per_contract_rt=1.40, slippage_ticks=0.0,
     queen_bps=10.0, runner_bps=30.0, order_timeout_bars=6,
     earliest_entry_hhmm=945, latest_entry_hhmm=1530, flatten_hhmm=1555,
-    filter_lunch=true,
+    filter_lunch=true, adverse_ambiguity=true,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn simulate_bars_v1(
@@ -53,6 +53,10 @@ fn simulate_bars_v1(
     latest_entry_hhmm: i32,
     flatten_hhmm: i32,
     filter_lunch: bool,
+    // See `_resolve_ambiguity_policy` in scripts/execution/nt8_parity_engine.py for why
+    // this defaults to the adverse branch. Both engines must agree per policy or
+    // crates/gate2_parity.py fails - that gate is the only thing proving them equal.
+    adverse_ambiguity: bool,
 ) -> PyResult<PyObject> {
     let times = times_epoch_ms.as_slice()?;
     let opens = opens.as_slice()?;
@@ -133,7 +137,25 @@ fn simulate_bars_v1(
             let mut q_pts = 0.0;
             let mut r_pts = 0.0;
 
-            if pos_dir == 1 {
+            // Adverse ambiguity: settle the stop BEFORE the queen fill can lock it to
+            // breakeven. Body is identical to the favourable stop branch below - only
+            // the evaluation ORDER differs, and that order is the whole ambiguity.
+            if adverse_ambiguity
+                && ((pos_dir == 1 && l0 <= active_sl) || (pos_dir == -1 && h0 >= active_sl))
+            {
+                if pos_dir == 1 {
+                    q_pts = if queen_filled { active_tp1 - pos_entry_price } else { active_sl - pos_entry_price };
+                    r_pts = active_sl - pos_entry_price;
+                } else {
+                    q_pts = if queen_filled { pos_entry_price - active_tp1 } else { pos_entry_price - active_sl };
+                    r_pts = pos_entry_price - active_sl;
+                }
+                pnl_pts = (q_pts + r_pts) / 2.0;
+                reason = "Stop Loss".to_string();
+                closed = true;
+            }
+
+            if pos_dir == 1 && !closed {
                 if !queen_filled && h0 >= active_tp1 {
                     queen_filled = true;
                     active_sl = pos_entry_price;
@@ -158,7 +180,7 @@ fn simulate_bars_v1(
                     r_hit = true;
                     closed = true;
                 }
-            } else if pos_dir == -1 {
+            } else if pos_dir == -1 && !closed {
                 if !queen_filled && l0 <= active_tp1 {
                     queen_filled = true;
                     active_sl = pos_entry_price;

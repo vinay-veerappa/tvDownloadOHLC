@@ -81,6 +81,45 @@ def _require_rust_core() -> None:
     raise ImportError(_RUST_MISSING_MSG.format(err=RUST_CORE_IMPORT_ERROR))
 
 
+AMBIGUITY_ADVERSE = "adverse"
+AMBIGUITY_FAVOURABLE = "favourable"
+_AMBIGUITY_POLICIES = (AMBIGUITY_ADVERSE, AMBIGUITY_FAVOURABLE)
+
+
+def _resolve_ambiguity_policy(policy: str) -> bool:
+    """Map the policy name to `adverse_ambiguity`, rejecting anything unrecognised.
+
+    A 1-minute OHLC bar records four prices, not a path. When the stop and a target
+    both fall inside [low, high], the bar does not say which arrived first, and the
+    engine must ASSUME one. That assumption is not neutral:
+
+      - `favourable` books the target, then the breakeven lock, then the stop. This
+        is what the engine did unconditionally before this parameter existed, and it
+        is why Python has read richer than NT8. Its error scales with
+        (stop distance + target distance) / bar range, so it inflates tight-target
+        strategies far more than wide-target ones - which REORDERS a candidate
+        ranking rather than merely shifting it, and it suppresses the drawdown tail
+        that prop-firm feasibility is entirely a measurement of.
+      - `adverse` books the stop first. Wrong in the other direction, but wrong
+        toward under-promising, which is the only safe direction for a screen whose
+        survivors get promoted to a live bot.
+
+    Hence adverse is the default. `favourable` remains selectable so an existing
+    result can be reproduced exactly, and so the two bounds can be reported as an
+    interval - if a strategy is only profitable at the favourable bound, it is not
+    profitable.
+
+    Rejecting an unknown name matters more than it looks: a silent fallback here
+    would make the policy a suggestion, and a typo would quietly restore the very
+    default this parameter exists to retire.
+    """
+    if policy not in _AMBIGUITY_POLICIES:
+        raise ValueError(
+            f"ambiguity_policy must be one of {_AMBIGUITY_POLICIES}, got {policy!r}"
+        )
+    return policy == AMBIGUITY_ADVERSE
+
+
 def _index_to_wallclock_ms(idx: pd.DatetimeIndex) -> np.ndarray:
     if idx.tz is not None:
         idx = idx.tz_localize(None)
@@ -162,11 +201,17 @@ class NT8ParityEngine:
         flatten_hhmm: int = 1555,
         filter_lunch: bool = True,
         use_rust: bool = True,
+        ambiguity_policy: str = AMBIGUITY_ADVERSE,
     ) -> pd.DataFrame:
         """
         Simulate trade execution matching NinjaTrader 8 tick-for-tick.
         Dispatches to high-speed PyO3 Rust extension (nt8_parity_core) by default.
+
+        `ambiguity_policy` resolves the one thing a 1-minute OHLC bar cannot tell you:
+        when the stop and a target both lie inside [low, high], which arrived first.
+        See `_resolve_ambiguity_policy` for why the default is adverse.
         """
+        adverse = _resolve_ambiguity_policy(ambiguity_policy)
         if use_rust:
             _require_rust_core()
         if use_rust and HAS_RUST_CORE:
@@ -178,6 +223,7 @@ class NT8ParityEngine:
                 latest_entry_hhmm=latest_entry_hhmm,
                 flatten_hhmm=flatten_hhmm,
                 filter_lunch=filter_lunch,
+                adverse_ambiguity=adverse,
             )
         return self._simulate_py(
             df, signals, limit_prices, stop_losses,
@@ -187,6 +233,7 @@ class NT8ParityEngine:
             latest_entry_hhmm=latest_entry_hhmm,
             flatten_hhmm=flatten_hhmm,
             filter_lunch=filter_lunch,
+            adverse_ambiguity=adverse,
         )
 
     def _simulate_rust(
@@ -202,6 +249,7 @@ class NT8ParityEngine:
         latest_entry_hhmm: int = 1530,
         flatten_hhmm: int = 1555,
         filter_lunch: bool = True,
+        adverse_ambiguity: bool = True,
     ) -> pd.DataFrame:
         times_ms = _index_to_wallclock_ms(df.index)
         opens = df["open"].to_numpy(dtype=np.float64)
@@ -231,6 +279,7 @@ class NT8ParityEngine:
             latest_entry_hhmm=latest_entry_hhmm,
             flatten_hhmm=flatten_hhmm,
             filter_lunch=filter_lunch,
+            adverse_ambiguity=adverse_ambiguity,
         )
 
         n_trades = len(res["entry_time_ms"])
@@ -286,6 +335,7 @@ class NT8ParityEngine:
         latest_entry_hhmm: int = 1530,
         flatten_hhmm: int = 1555,
         filter_lunch: bool = True,
+        adverse_ambiguity: bool = True,
     ) -> pd.DataFrame:
         """
         Simulate trade execution matching NinjaTrader 8 tick-for-tick (Python engine).
@@ -346,7 +396,28 @@ class NT8ParityEngine:
                 reason = ""
                 r_hit = False
 
-                if pos_dir == 1:
+                # Adverse ambiguity: settle the stop BEFORE the queen fill can lock it
+                # to breakeven. The body is identical to the favourable stop branch
+                # below - the only difference is WHEN it is evaluated, which is the
+                # whole of the ambiguity. Once this has established that the pre-lock
+                # stop was not touched, the favourable block below is adverse-correct
+                # for the rest of the bar: the breakeven stop it may set is tested
+                # before the runner target.
+                if adverse_ambiguity and (
+                    (pos_dir == 1 and l0 <= active_sl)
+                    or (pos_dir == -1 and h0 >= active_sl)
+                ):
+                    if pos_dir == 1:
+                        q_pts = (active_tp1 - pos_entry_price) if queen_filled else (active_sl - pos_entry_price)
+                        r_pts = (active_sl - pos_entry_price)
+                    else:
+                        q_pts = (pos_entry_price - active_tp1) if queen_filled else (pos_entry_price - active_sl)
+                        r_pts = (pos_entry_price - active_sl)
+                    pnl_pts = (q_pts + r_pts) / 2.0
+                    reason = "Stop Loss"
+                    closed = True
+
+                if pos_dir == 1 and not closed:
                     # Check Queen Target (+10 bps) fill first
                     if not queen_filled and h0 >= active_tp1:
                         queen_filled = True
@@ -377,7 +448,7 @@ class NT8ParityEngine:
                         r_hit = True
                         closed = True
 
-                elif pos_dir == -1:
+                elif pos_dir == -1 and not closed:
                     if not queen_filled and l0 <= active_tp1:
                         queen_filled = True
                         active_sl = pos_entry_price
@@ -495,12 +566,31 @@ class NT8ParityEngine:
         filter_lunch: bool = True,
         allow_reentry: bool = True,
         use_rust: bool = True,
+        ambiguity_policy: str = AMBIGUITY_ADVERSE,
     ) -> pd.DataFrame:
         """
         Multi-Timeframe Simulation: 5m Structure/CISD + 1m FVG Precision Entry.
         Includes bar-by-bar MFE/MAE excursion tracking and Confirmed Re-entry Protocol.
         Dispatches to high-speed PyO3 Rust extension (nt8_parity_core) by default.
+
+        NOTE: this path has NOT been migrated to the ambiguity policy yet - it carries
+        its own copy of the intrabar ordering (`_simulate_mtf_py`, and `simulate_bars_v2`
+        on the Rust side), both still favourable-only. It therefore REFUSES an adverse
+        request rather than serving a favourable result under an adverse label. That
+        refusal is deliberate: a silent favourable default here is precisely the quiet
+        failure the policy exists to remove, and it would be invisible because the
+        caller asked for adverse and got a number back.
         """
+        _resolve_ambiguity_policy(ambiguity_policy)
+        if ambiguity_policy != AMBIGUITY_FAVOURABLE:
+            raise NotImplementedError(
+                "simulate_mtf() has not been migrated to the intrabar ambiguity policy; "
+                f"it can only serve {AMBIGUITY_FAVOURABLE!r}, which is optimistic and "
+                "must not be used for prop-firm feasibility or for ranking candidates. "
+                "Pass ambiguity_policy='favourable' to acknowledge the bias explicitly, "
+                "or use simulate() which honours both policies. See "
+                "docs/architecture/STRATEGY_EVALUATION_PIPELINE_PLAN.md phase 0.2."
+            )
         if use_rust:
             _require_rust_core()
         if use_rust and HAS_RUST_CORE:

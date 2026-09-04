@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "Frozen NT8 Strategy Analyzer configuration. See",
+    "docs/architecture/STRATEGY_EVALUATION_PIPELINE_PLAN.md phase 0.1.",
+    "",
+    "WHY THIS FILE EXISTS. The bridge configured five things on a REUSED, never-closed SA",
+    "window and inherited everything else from whatever a human last clicked, echoing none",
+    "of it back. Two identical backtest calls on different days could therefore return",
+    "materially different numbers, and no stored result could name the configuration that",
+    "produced it. Measured 2026-09-04, the inherited defaults were Slippage=0,",
+    "IncludeCommission=False, OrderFillResolution=Standard, IsTickReplay=False - i.e. NT8",
+    "was optimistic on execution COST while the Python engine was optimistic on intrabar",
+    "SEQUENCE. Two optimisms in different dimensions.",
+    "",
+    "`strategyTemplate` fields are APPLIED and read back; a field that does not take refuses",
+    "the run. `requireGlobals` fields are ASSERTED ONLY - they live in NT8 Settings ->",
+    "Market data and are GLOBAL to the machine, so a backtest must never write them. A",
+    "mismatch refuses and names what to change.",
+    "",
+    "Editing this file changes the meaning of every result produced after it. The hash is",
+    "computed from the canonical form (see nt8_profile.py) and stored WITH each result, so",
+    "old results stay attributable to the profile they actually ran under."
+  ],
+
+  "profileVersion": 1,
+
+  "strategyTemplate": {
+    "OrderFillResolution": "High",
+    "OrderFillResolutionType": "Tick",
+    "OrderFillResolutionValue": 1,
+    "Slippage": 0,
+    "IncludeCommission": true,
+    "IsFillLimitOnTouch": false,
+    "Calculate": "OnBarClose",
+    "StopTargetHandling": "PerEntryExecution",
+    "BarsRequiredToTrade": 20,
+    "IsExitOnSessionCloseStrategy": true,
+    "ExitOnSessionCloseSeconds": 30
+  },
+
+  "requireGlobals": {
+    "GlobalMergePolicy": "MergeNonBackAdjusted",
+    "IsTickReplayEnabled": "False"
+  },
+
+  "_fieldNotes": {
+    "OrderFillResolution": "High subdivides the bar instead of assuming a path through OHLC. This is the NT8-side answer to the same intrabar-sequence problem the Python engine's ambiguity_policy addresses: Standard makes NT8 assume a path, High makes it observe one.",
+    "OrderFillResolutionType": "Tick, DELIBERATELY finer than the primary series. High resolution whose sub-period equals the primary series subdivides a 1-minute bar into one 1-minute bar and resolves nothing - NT8 does not report that as an error, so the bridge refuses it. ValidOrderFillResolutions is the authority for what is legal here (measured on a 1-minute series: Minute, Second, Tick); note it holds BarsPeriodType values and constrains THIS field, not OrderFillResolution. Tick requires tick data for the contract, so this profile is for verification runs (funnel stages 3-4), not for screening hundreds of candidates.",
+    "Slippage": "0 is DELIBERATE and is not a claim that slippage is zero. NT8 applies it symmetrically per side, which is not how slippage behaves; execution cost is measured at Sim101 forward-run (funnel stage 6), not modelled here. Setting it non-zero here would double-count against that.",
+    "IncludeCommission": "true, because a commission-free backtest is not comparable to any account statement. Requires BacktestCommissionTemplate to be set in NT8 or it contributes nothing.",
+    "IsFillLimitOnTouch": "false is the CONSERVATIVE setting: a limit needs trade-through, not a touch. A Last print at the limit price does not mean the order filled - queue position decides. Must stay consistent with the Python engine's limit fill rule.",
+    "Calculate": "OnBarClose matches the Python engine, which evaluates on closed bars. OnEachTick would make the two incomparable at the signal layer.",
+    "GlobalMergePolicy": "MergeNonBackAdjusted is the whole point: SA takes NO MergePolicy argument and inherits this global, so MergeBackAdjusted silently rescales every price. As found on this box it was MergeBackAdjusted, which is the monthly price offset in the parity standard traced to its source. Change it in Settings -> Market data.",
+    "IsTickReplayEnabled": "False for now. Phase 3.4 needs it True, and StrategyTemplate.IsTickReplay cannot work while this global is off - an ordering dependency. Flip the global first, then flip this."
+  }
+}

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Run every Rust check in one command: build, unit tests, and all three gates.
+    Run every Rust check in one command: build, unit tests, and all four gates.
 
 .DESCRIPTION
     This repo has no CI (no .github/workflows, no tools/ci_local.py), so the gates are
@@ -78,6 +78,10 @@ Step "gate 2 - engine zero-divergence" {
 
 Step "gate 3 - killswitch simulation" {
     & (Join-Path $ScriptDir "target\release\gate3_killswitch.exe")
+}
+
+Step "gate 4 - intrabar ambiguity policy" {
+    & (Join-Path $RepoRoot ".venv\Scripts\python.exe") (Join-Path $ScriptDir "gate4_ambiguity.py")
 }
 
 Write-Host ""

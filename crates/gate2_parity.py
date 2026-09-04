@@ -120,7 +120,16 @@ def main():
     sig_times_5m, sig_dirs_5m = synth_signals_5m(df_5m)
     times_1m_ms = df.index.values.astype("datetime64[ms]").astype(np.int64)
 
-    py_df2 = engine.simulate_mtf(df_5m, df, pd.Series(sig_dirs_5m, index=df_5m.index))
+    # 'favourable' is passed EXPLICITLY because the MTF path has not been migrated to
+    # the intrabar ambiguity policy and refuses an adverse request. This gate's job is
+    # to prove Rust == Python, not to assert a policy - but the label has to be honest,
+    # so the optimistic assumption is named at the call site rather than inherited. When
+    # simulate_mtf() is migrated, run this section under BOTH policies (see
+    # crates/gate4_ambiguity.py for the shape).
+    py_df2 = engine.simulate_mtf(
+        df_5m, df, pd.Series(sig_dirs_5m, index=df_5m.index),
+        ambiguity_policy="favourable",
+    )
 
     rust2 = nt8_parity_core.simulate_bars_v2(
         times_1m_ms,
