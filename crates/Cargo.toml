@@ -1,4 +1,4 @@
-﻿[workspace]
+[workspace]
 resolver = "2"
 members = [
     "trading_daemon",
@@ -7,4 +7,5 @@ members = [
     "pnl_widget_native",
     "pnl_widget_gdi",
     "fj_daemon",
+    "fj_widget",
 ]
