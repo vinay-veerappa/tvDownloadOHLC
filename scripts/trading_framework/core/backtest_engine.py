@@ -118,7 +118,8 @@ class VectorizedBacktester(BaseBacktester):
             return 60.0
         return float(np.median(diffs))
 
-    def _align_signals_to_frame(self, signals: pd.DataFrame, data: pd.DataFrame,
+    @classmethod
+    def _align_signals_to_frame(cls, signals: pd.DataFrame, data: pd.DataFrame,
                                 risk_params: Dict[str, Any]):
         """Map signal_time -> bar index, bounding the forward snap in TIME.
 
@@ -126,7 +127,7 @@ class VectorizedBacktester(BaseBacktester):
         is carried into the metrics dict, so a run record can store it and a gate
         can assert on it.
         """
-        bar_seconds = self._frame_bar_seconds(data)
+        bar_seconds = cls._frame_bar_seconds(data)
         max_snap = float(risk_params.get('max_snap_seconds', bar_seconds))
         strict = bool(risk_params.get('strict_alignment', False))
         n_in = int(len(signals))

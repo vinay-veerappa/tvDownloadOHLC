@@ -559,3 +559,63 @@ def test_attribution_sees_stages_before_finalize_rebuilds_them(tmp_path):
     with rec.stage("s"):
         pass
     assert "stages" not in rec.attribution()["missingRequired"]
+
+
+def test_run_ids_are_unique_within_the_same_second():
+    """Regression: `new_run_id` used second resolution only.
+
+    Two runs started inside the same second received the SAME id, wrote to the
+    same directory and overwrote each other's record -- the exact failure the
+    run-id'd output path exists to prevent, one granularity down. A tight loop
+    is the realistic case (a sweep issuing runs back to back), so 200 ids in
+    immediate succession must all differ.
+    """
+    ids = [RunRecord.new_run_id("NQ1", "mean_reversion") for _ in range(200)]
+    assert len(set(ids)) == 200, "collision among {} ids".format(len(ids))
+
+
+def test_run_id_stays_sortable_and_readable():
+    """The random suffix must not cost lexicographic ordering by time."""
+    import time as _time
+
+    a = RunRecord.new_run_id("NQ1", "s")
+    _time.sleep(0.01)
+    b = RunRecord.new_run_id("NQ1", "s")
+    assert a < b
+    assert a.startswith("RUN_") and "NQ1" in a and "S" in a
+
+
+# --------------------------------------------------------------------------
+# trade_count -- the alias problem that made a gate fire on the wrong runs
+# --------------------------------------------------------------------------
+def test_trade_count_reads_either_engines_key():
+    """VectorizedBacktester says `num_trades`; NT8ParityBacktester says
+    `total_trades`. A caller must not have to know which engine ran."""
+    from scripts.trading_framework.provenance.run_record import trade_count
+
+    assert trade_count({"num_trades": 12}) == 12
+    assert trade_count({"total_trades": 38}) == 38
+    assert trade_count({"trades": 5}) == 5
+
+
+def test_trade_count_raises_rather_than_returning_zero():
+    """Regression, and the whole point of the helper.
+
+    A zero-trade gate written as `metrics.get('num_trades', 0)` read 0 from an
+    NT8ParityBacktester result and refused a run that had actually taken 38
+    trades at a 71% win rate. Absent and zero are different facts.
+    """
+    from scripts.trading_framework.provenance.run_record import trade_count
+
+    with pytest.raises(KeyError, match="no trade-count key"):
+        trade_count({"sharpe_ratio": 8.8, "profit_factor": 21.9})
+    with pytest.raises(KeyError):
+        trade_count({})
+
+
+def test_trade_count_still_reports_a_genuine_zero():
+    """Control: the fix must not make a real zero unreachable."""
+    from scripts.trading_framework.provenance.run_record import trade_count
+
+    assert trade_count({"num_trades": 0}) == 0
+    assert trade_count({"total_trades": 0}) == 0

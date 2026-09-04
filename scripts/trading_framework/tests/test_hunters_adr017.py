@@ -46,7 +46,29 @@ def test_vwap_reclaim_missing_volume_returns_empty_schema():
     out = strategy.hunt(df)
 
     assert out.empty
-    assert list(out.columns) == REQUIRED_COLS
+    # CONTAINMENT, not equality. This asserted `list(out.columns) ==
+    # REQUIRED_COLS` and had been red since two hunters started returning
+    # `model_name` and `risk_pts` on the empty path. Exact equality punishes a
+    # hunter for adding a useful field, while what actually matters is what the
+    # engine consumes: `VectorizedBacktester._standard_signal_columns` selects
+    # the canonical five and ignores the rest, so extra columns are harmless and
+    # a MISSING canonical column is the real failure.
+    assert set(REQUIRED_COLS).issubset(out.columns), (
+        "empty schema is missing canonical columns: "
+        f"{sorted(set(REQUIRED_COLS) - set(out.columns))}")
+
+
+def test_every_hunter_agrees_on_the_canonical_empty_schema():
+    """The three hunters returned 7, 7 and 5 columns on their empty paths.
+
+    Extra fields are fine; disagreeing about the canonical five would not be, so
+    that is what is pinned. Written as one test over all three because a
+    per-hunter assertion is what let them drift apart.
+    """
+    df = _build_1m_ohlc("2026-01-15 09:30:00", with_volume=True)
+    for cls in (VWAPReclaimStrategy, FailedAuctionStrategy, SixAMReversalStrategy):
+        out = cls(ticker="NQ1").hunt(df)
+        assert set(REQUIRED_COLS).issubset(out.columns), cls.__name__
 
 
 def test_failed_auction_single_day_no_prior_levels_safe_empty():

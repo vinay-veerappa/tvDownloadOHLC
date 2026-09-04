@@ -28,10 +28,20 @@ from scripts.libs_py.data.loader import DataLoader
 from scripts.trading_framework.config.config_loader import load_config
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.strategies.registry import get_strategy
-from scripts.trading_framework.ml.walk_forward import sequential_evaluation_folds
+from scripts.trading_framework.research.objective import (
+    EMBARGO_BARS,
+    EXIT_BUFFER_BARS,
+    assert_grid_is_live,
+    build_folds,
+    make_cv_objective,
+)
 from scripts.trading_framework.reporting.risk_profiler import RiskProfiler
 from scripts.trading_framework.reporting.optimization_summary import OptimizationReporter
-from scripts.trading_framework.provenance.run_record import UNDECLARED, RunRecord
+from scripts.trading_framework.provenance.run_record import (
+    UNDECLARED,
+    RunRecord,
+    trade_count,
+)
 
 class ResearchLifecycleRunner:
     """
@@ -49,139 +59,38 @@ class ResearchLifecycleRunner:
         # says which basis its parquet is on.
         self.price_adjustment = price_adjustment
         self._eval_folds = None
+        self._grid_probe = None
         self.strategy = get_strategy(strategy_key, ticker)
             
         self.strategy_name = self.strategy.strategy_name
         self.backtester = VectorizedBacktester()
 
-    @staticmethod
-    def _suggest_from_grid(trial, key, spec):
-        # Supports ADR-017 tuple specs like ('int', 10, 50) and list/categorical specs.
-        if isinstance(spec, tuple) and len(spec) >= 2 and isinstance(spec[0], str):
-            kind = spec[0]
-            if kind == 'int':
-                if len(spec) < 3:
-                    raise ValueError(f"int spec for '{key}' must be ('int', low, high)")
-                return trial.suggest_int(key, int(spec[1]), int(spec[2]))
-            if kind == 'float':
-                if len(spec) < 3:
-                    raise ValueError(f"float spec for '{key}' must be ('float', low, high)")
-                return trial.suggest_float(key, float(spec[1]), float(spec[2]))
-            if kind == 'categorical':
-                choices = spec[1]
-                if not isinstance(choices, (list, tuple)):
-                    raise ValueError(f"categorical spec for '{key}' must provide list/tuple choices")
-                return trial.suggest_categorical(key, list(choices))
-
-        if isinstance(spec, (list, tuple)) and len(spec) > 0:
-            if all(isinstance(x, bool) for x in spec):
-                return trial.suggest_categorical(key, list(spec))
-            if all(isinstance(x, int) and not isinstance(x, bool) for x in spec):
-                return trial.suggest_int(key, min(spec), max(spec))
-            if all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in spec):
-                return trial.suggest_float(key, float(min(spec)), float(max(spec)))
-            return trial.suggest_categorical(key, list(spec))
-
-        raise ValueError(f"Unsupported param grid spec for '{key}': {spec}")
-
-    # Bars a trade is allowed to search forward for its exit. Must match
-    # VectorizedBacktester's MAX_SEARCH, or the buffer reserved per fold does
-    # not cover the search the engine actually performs.
-    EXIT_BUFFER_BARS = 1440
-    # Bars skipped between consecutive evaluation windows.
-    EMBARGO_BARS = 1440
-
     def _optimize_params(self, data, trials=10):
-        """Standardized Layer 6 Optuna optimization.
+        """Optuna optimization over the strategy's own grid on fixed windows.
 
-        HISTORY. This objective used to call `generate_signals(fold_train)` and
-        then `backtester.run(signals, fold_test)`. Those are two DIFFERENT
-        frames. `Index.get_indexer(..., method='bfill')` snaps an out-of-range
-        timestamp to the next available bar with no distance limit and returns
-        -1 only when no later bar exists at all, so every train-fold signal
-        mapped to index 0 of the test frame and passed the engine's `!= -1`
-        validity check. The objective was therefore "score N signals as if all
-        of them entered on the first bar of the test window", which Optuna
-        maximised for as many trials as it was given. The PurgedKFold wrapper
-        could not detect this: the signals had never been indexed to the test
-        fold at all, so there was nothing for a purge to do.
-
-        The construction now keeps the three boundaries separate -- see
-        `sequential_evaluation_folds` -- and passes `strict_alignment=True`, so
-        if signals and frame ever diverge again the run RAISES instead of
-        returning a plausible number.
-
-        Caveat worth carrying: `VectorizedBacktester` builds Sharpe from a
-        per-BAR series that is zero except at exit bars, so the value scales
-        with frame length. Fold Sharpes are comparable to EACH OTHER because the
-        windows are equal-length; they are NOT comparable to the OOS Sharpe,
-        which is measured over a much longer frame.
+        The framing rules and the grid precheck live in
+        `scripts/trading_framework/research/objective.py`, not here. They used to
+        be duplicated between this runner and `run_backtest.run_optimization`,
+        and both copies carried the same wrong-frame defect -- so fixing one left
+        the other. There is one copy now.
         """
-        folds = sequential_evaluation_folds(
-            len(data), n_splits=3,
-            exit_buffer=self.EXIT_BUFFER_BARS, embargo=self.EMBARGO_BARS,
-        )
+        grid = self.strategy.get_param_grid()
+
+        # Refuse BEFORE spending the trial budget. A search whose parameters
+        # cannot move the output is not a weak search, it is a random draw
+        # wearing the costume of one.
+        self._grid_probe = assert_grid_is_live(self.strategy, data, grid)
+        print(f"   Grid precheck: {self._grid_probe['reason']}")
+
+        folds = build_folds(len(data), n_splits=3)
         self._eval_folds = folds
         width = folds[0]['test_end'] - folds[0]['test_start']
         print(f"   Evaluation windows: {len(folds)} x {width} bars "
-              f"(+{self.EXIT_BUFFER_BARS} exit buffer, {self.EMBARGO_BARS} embargo)")
+              f"(+{EXIT_BUFFER_BARS} exit buffer, {EMBARGO_BARS} embargo)")
 
-        def objective(trial):
-            # Dynamic grid from strategy architecture (ADR-017)
-            grid = self.strategy.get_param_grid()
-            params = {}
-            for k, v in grid.items():
-                params[k] = self._suggest_from_grid(trial, k, v)
+        objective = make_cv_objective(
+            self.strategy, data, self.backtester, self.ticker, grid, folds)
 
-            fold_sharpes = []
-            for f in folds:
-                # The generator sees history up to the END of the window and no
-                # further, so a signal inside the window cannot be informed by a
-                # bar after it.
-                gen_df = data.iloc[: f['gen_end']]
-                signals = self.strategy.generate_signals(gen_df, params)
-                if signals is None or len(signals) == 0:
-                    fold_sharpes.append(-1.0)
-                    continue
-
-                # Only signals raised INSIDE this window are this window's
-                # evidence. Everything earlier belongs to a previous fold and is
-                # exactly what used to be collapsed onto bar 0.
-                w_start = data.index[f['test_start']]
-                w_end = data.index[f['test_end'] - 1]
-                st = pd.to_datetime(signals['signal_time'])
-                signals = signals[(st >= w_start) & (st <= w_end)]
-                if signals.empty:
-                    fold_sharpes.append(-1.0)
-                    continue
-
-                # Scored on a frame that BEGINS at the window (so every
-                # signal_time is an exact index member) and runs past its end
-                # (so a late trade can still resolve).
-                score_df = data.iloc[f['score_start']: f['score_end']]
-                metrics = self.backtester.run(signals, score_df, {
-                    'leverage': 1.0,
-                    'ticker': self.ticker,
-                    'strict_alignment': True,
-                })
-
-                # A fold that produced NO trades must not outscore a fold that
-                # lost money. `_null_metrics` returns sharpe 0.0, which is
-                # better than any real loss, so scoring it as-is rewards
-                # parameter sets that stop trading. Measured 2026-09-04 on
-                # mean_reversion: an empty fold scored 0.0000 and outranked a
-                # trading fold at -0.0222 in the same objective.
-                if int(metrics.get('num_trades', 0)) == 0:
-                    fold_sharpes.append(-1.0)
-                    continue
-
-                fold_sharpes.append(metrics.get('sharpe_ratio', -1.0))
-
-                trial.report(fold_sharpes[-1], f['fold'])
-                if trial.should_prune():
-                    raise optuna.exceptions.TrialPruned()
-
-            return float(np.mean(fold_sharpes)) if fold_sharpes else -1.0
 
         study = optuna.create_study(
             study_name=f"{self.strategy_name}_{self.ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
@@ -368,6 +277,7 @@ class ResearchLifecycleRunner:
                           bestParams=best_params, trialStates=states,
                           studyName=study.study_name)
             rec.declare_folds(self._eval_folds)
+            rec._doc['gridProbe'] = self._grid_probe
             rec.declare_strategy(params=best_params)
             print(f"\U0001f3c6 Best Params: {best_params}")
 
@@ -391,7 +301,7 @@ class ResearchLifecycleRunner:
             rec.record_alignment("oos", oos_metrics.get('signal_alignment'))
             rec.set_metrics(oos_metrics)
 
-            if int(oos_metrics.get('num_trades', 0)) == 0:
+            if trade_count(oos_metrics) == 0:
                 rec.refuse("out-of-sample produced ZERO trades; every reported "
                            "metric is the null result, not a measurement")
 

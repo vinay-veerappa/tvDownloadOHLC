@@ -352,8 +352,22 @@ class RunRecord:
 
     @staticmethod
     def new_run_id(ticker: str, strategy_key: str) -> str:
-        return "RUN_{}_{}_{}".format(
-            datetime.now().strftime("%Y%m%d_%H%M%S"), ticker, strategy_key.upper())
+        """Unique per run, not per second.
+
+        This was `%Y%m%d_%H%M%S` only, so two runs started inside the same second
+        -- a sweep loop, or two shells -- received the SAME id, wrote to the same
+        directory and overwrote each other's record. That is the exact failure
+        the run-id'd output path was introduced to prevent, one granularity down.
+        Caught by an acceptance test that launched two runs back to back.
+
+        Milliseconds alone are not enough either: a tight loop can issue two ids
+        inside one millisecond, so a random suffix carries the guarantee and the
+        timestamp is there to keep directory listings sortable and readable.
+        """
+        now = datetime.now()
+        return "RUN_{}_{:03d}_{}_{}_{}".format(
+            now.strftime("%Y%m%d_%H%M%S"), now.microsecond // 1000,
+            ticker, strategy_key.upper(), os.urandom(2).hex())
 
     # -- declarations ---------------------------------------------------
     def declare_strategy(self, *, name: Optional[str] = None,
@@ -621,6 +635,34 @@ class RunRecord:
     @property
     def doc(self) -> Dict[str, Any]:
         return dict(self._doc)
+
+
+# The two engines disagree on what to call the trade count: VectorizedBacktester
+# returns `num_trades`, NT8ParityBacktester returns `total_trades`. A caller
+# asking "how many trades" therefore has to know which engine ran.
+#
+# This bit immediately. A zero-trade gate written as `metrics.get('num_trades',
+# 0)` read 0 from an NT8ParityBacktester result and refused a run that had
+# actually taken 38 trades at a 71% win rate. The default was the bug: absent
+# and zero are different facts, and a gate that cannot tell them apart is a gate
+# that fires on the wrong runs.
+TRADE_COUNT_KEYS = ("num_trades", "total_trades", "trades")
+
+
+def trade_count(metrics: Dict[str, Any]) -> int:
+    """The trade count under whichever name the engine used.
+
+    Raises when no known key is present, rather than returning 0. A caller that
+    genuinely cannot find the count must not silently conclude there were none.
+    """
+    for k in TRADE_COUNT_KEYS:
+        if k in (metrics or {}):
+            return int(metrics[k])
+    raise KeyError(
+        "no trade-count key in metrics; looked for {}. Present keys: {}. "
+        "Returning 0 here would make an unmeasurable run indistinguishable "
+        "from a run that took no trades.".format(
+            list(TRADE_COUNT_KEYS), sorted((metrics or {}).keys())[:20]))
 
 
 def load_run_record(path: str) -> Dict[str, Any]:
