@@ -4,68 +4,75 @@
 
 The **Modular HUD Architecture** provides a unified system for live Heads-Up Display (HUD) overlays. It supports **two concurrent delivery modes**:
 
-1. **In-Chart TradingView HUD**: Injected directly into TradingView Desktop via Chrome DevTools Protocol (CDP port 9222) with zero DOM interference or React conflicts.
-2. **Independent Floating Desktop Widget**: A standalone, frameless, Always-on-Top desktop window (via Edge/Chrome App Mode on port 8635) that stays visible across all monitors, applications (NinjaTrader, TradingView, Discord, Bookmap), and restarts.
+1. **In-Chart TradingView HUD**: Injected directly into TradingView Desktop via Chrome DevTools Protocol (CDP port 9222) with zero DOM interference or React conflicts. Real-time telemetry is pushed by `trading_daemon.exe`.
+2. **Independent Floating Desktop Widgets (Pure Native Rust)**: Standalone, Always-on-Top native desktop applications that stay visible across all monitors and applications without requiring external browser processes:
+   - **Fleet P&L Widget (`pnl_widget_gdi.exe`)**: Pure Win32 GDI desktop app (~18MB RAM) with full 3-tab layout (P&L | Copier | Risk), order entry, ATM strategies, full-digit formatting, and dynamic Net Liq tracking.
+   - **FinancialJuice Widget (`fj_widget.exe`)**: Native Tao window with embedded Microsoft WebView2 (~24MB RAM) featuring audio squawk autoplay, dark-themed calendar proxying on port 8636, and live SignalR headlines.
 
 ---
 
 ## Directory Structure & Files
 
 ```
+crates/
+├── trading_daemon/                     # Rust backend daemon (port 8635, CDP pump, lockout sweep)
+├── pnl_widget_gdi/                     # Pure native Win32 GDI Fleet P&L desktop widget
+├── fj_widget/                          # Pure native Rust FinancialJuice widget (Tao + WebView2)
+├── nt8_parity_core/                    # PyO3 parity execution engine (378x speedup)
+└── broker_sentinel/                    # Independent broker killswitch
+
+launch/widgets/
+├── start_pnl_widget.bat                # 1-Click launcher for pnl_widget_gdi.exe (starts daemon if needed)
+├── stop_pnl_widget.bat                 # Clean shutdown for P&L widget & daemon
+├── start_fj_widget.bat                 # 1-Click launcher for fj_widget.exe (decoupled WMI launch)
+└── stop_fj_widget.bat                  # Clean shutdown for FinancialJuice widget
+
 scripts/tradingview/
-├── huds/                               # Modular HUD Plugins
+├── huds/                               # Modular HUD Plugins (for in-chart TV injection)
 │   ├── account_pnl.js                  # Fleet P&L & Copy-Trading Sync Monitor (v2.0)
 │   ├── financialjuice.js               # FinancialJuice Live Squawk, News, Calendar & Flow
 │   ├── nt8_positions.js                # NT8 Live Positions & P&L Card
 │   └── template_hud.js                 # Boilerplate template for new HUDs
-├── start_pnl_streamer.ps1              # High-frequency (250ms) P&L & Copier Streamer controller
-├── launch_pnl_widget.ps1               # 1-Click Floating Desktop Widget Launcher (Edge App Mode)
-├── pnl_widget_server.js                # Standalone HTTP/WebSocket server (port 8635)
-├── tv_pnl_streamer.js                  # CDP real-time data pump engine
 ├── tv_hud_manager.ps1                  # Unified PowerShell CLI Manager
 ├── tv_hud_manager.py                   # Python CLI & Importable Module
-├── tv_hud_manager.js                   # Node.js CDP Engine & Core Bridge
-└── inject_financialjuice_hud.ps1       # 1-Click FinancialJuice Shortcut Script
+└── inject_financialjuice_hud.ps1       # 1-Click FinancialJuice In-Chart Shortcut Script
 ```
 
 ---
 
 ## Quick Start Commands
 
-### 1. In-Chart TradingView HUD Mode (`tv_hud_manager.ps1` & `start_pnl_streamer.ps1`)
+### 1. Independent Floating Desktop Widgets (Recommended)
 
-#### Start Real-Time P&L & Copier Streamer into TradingView (250ms refresh):
+#### Launch Fleet P&L Native GDI Widget (Always-on-Top / Multi-Monitor):
 ```powershell
-# Starts high-speed background streamer and injects account_pnl HUD into TradingView
-.\scripts\tradingview\start_pnl_streamer.ps1 -Background
-
-# Or run in foreground console to view live tick telemetry:
-.\scripts\tradingview\start_pnl_streamer.ps1
+.\launch\widgets\start_pnl_widget.bat
 ```
 
-#### Stop background streamer:
+#### Launch FinancialJuice Squawk & News Native Widget:
 ```powershell
-.\scripts\tradingview\start_pnl_streamer.ps1 -Stop
+.\launch\widgets\start_fj_widget.bat
 ```
 
-#### Inject FinancialJuice News & Voice Squawk:
+#### Stop Desktop Widgets:
 ```powershell
-.\scripts\tradingview\inject_financialjuice_hud.ps1
+.\launch\widgets\stop_pnl_widget.bat
+.\launch\widgets\stop_fj_widget.bat
 ```
 
 ---
 
-### 2. Independent Floating Desktop Widget Mode (`launch_pnl_widget.ps1`)
+### 2. In-Chart TradingView HUD Mode (CDP Injection)
 
-#### Launch Standalone Floating Desktop Window (Always-on-Top / Multi-Monitor):
+#### Push Live Fleet P&L into TradingView Desktop (Port 9222):
+Handled automatically by the background `trading_daemon.exe` on port 8635. To supervise/start:
 ```powershell
-# Launches native frameless window (independent of TradingView):
-.\scripts\tradingview\launch_pnl_widget.ps1
+.\launch\start_trading_daemon.bat
 ```
 
-#### Stop standalone widget server:
+#### Inject FinancialJuice In-Chart HUD into TradingView:
 ```powershell
-.\scripts\tradingview\launch_pnl_widget.ps1 -Stop
+.\scripts\tradingview\inject_financialjuice_hud.ps1
 ```
 
 ---

@@ -1,4 +1,4 @@
-﻿# Master Architecture: Rust Migration Plan (Empirical & Pragmatic Revision)
+# Master Architecture: Rust Migration Plan (Empirical & Pragmatic Revision)
 
 **Document ID:** ARCH-2026-RUST-02  
 **Status:** Revised & Verified against Live System Telemetry  
@@ -12,13 +12,14 @@ A review of the live process table and code telemetry revealed critical facts th
 
 | Component | Claimed / Assumed | Measured Reality on Live System | Action Taken |
 | :--- | :--- | :--- | :--- |
-| **Node.js Daemons** | 150–300MB per server | **214 MB total** (`pnl_widget_server`: 84MB, `fj_widget_server`: 80MB). A duplicate `pnl_widget_server` was killed (-80MB). | Consolidated into single Rust daemon. |
-| **Pipeline Latency** | "45–120ms, 3 hops via `ninjatrader_hub.py`" | **`ninjatrader_hub.py` is not running.** `pnl_widget_server.js` polls NT8 port 7890 directly (1 hop). | Plan corrected to reflect 1-hop topology. |
+| **Node.js Daemons** | 150–300MB per server | **214 MB total** (`pnl_widget_server`: 84MB, `fj_widget_server`: 80MB). A duplicate `pnl_widget_server` was killed (-80MB). | **100% REPLACED.** Backend consolidated into `trading_daemon.exe` (port 8635) and `fj_widget.exe` (port 8636 in-process). |
+| **Browser UI Instances** | Chrome/Edge App Mode (~300MB each) | Edge App Mode instances consumed 300–400MB RAM each and required external browser processes. | **100% REPLACED.** Replaced by `pnl_widget_gdi.exe` (~18MB Win32 GDI) and `fj_widget.exe` (~24MB embedded WebView2). |
+| **Pipeline Latency** | "45–120ms, 3 hops via `ninjatrader_hub.py`" | **`ninjatrader_hub.py` is not running.** `trading_daemon.exe` polls NT8 port 7890 directly (1 hop, ~200ms tick cadence). | Direct 1-hop topology live in production. |
 | **Options JSON Parsing** | 1,200ms–1,500ms | **67.3 ms** on an 8.4MB SPX chain (18,565 contracts). | Low priority; deferred. |
 | **GEX Calculation** | 800ms $\rightarrow$ 4ms | `gex_calculator.py` is **already NumPy-vectorized** (50 bisection iters over 18k arrays). | Low priority; no rewrite of vectorized math. |
 | **Trade Copier** | Proposed Rust loopback | Copier is **in-process C# inside NT8**. An external Rust copier adds 2 loopback hops and runs *after* SSE emits. | **DROPPED (Anti-pattern).** Keep C# in-process. |
 | **MCP Wrappers** | Proposed Rust rewrite | `tradingview-mcp` is 11,565 LOC (97 tools) saving ~75MB. `nt-mcp` is co-located with C# to prevent contract drift. | **DROPPED.** Do not touch MCP servers. |
-| **Parity Engine Loops** | Omitted in original plan | `nt8_parity_engine.py` has **two un-accelerated Python `for` loops** (`:138`, `:350`) over 130MB parquets. | **PROMOTED to Track 2 (50x–200x PyO3 win).** |
+| **Parity Engine Loops** | Omitted in original plan | `nt8_parity_engine.py` has **two un-accelerated Python `for` loops** (`:138`, `:350`) over 130MB parquets. | **COMPLETE.** Accelerated via `nt8_parity_core.pyd` (378x speedup). |
 
 ---
 
@@ -63,6 +64,16 @@ graph TD
     * Background 2.5s lockout sweep (`POST /api/lockout` to port 7890).
     * Background 30s config reload.
   * Pushes real-time HUD updates directly to TradingView CDP (port `9222`).
+
+#### Track 1.B: Native Win32 GDI Fleet P&L Widget (`pnl_widget_gdi.exe`)
+* **Consolidates & Replaces:** Edge App Mode browser process (~300MB) with an ultra-lightweight native Win32 GDI binary (~18MB).
+* **Architecture:** Double-buffered GDI rendering, native Windows combo controls, live Net Liq tracking, full-digit currency formatting, 3-tab layout (P&L | Copier | Risk), and 24-hour rollover retention.
+* **Launcher:** `launch/widgets/start_pnl_widget.bat`.
+
+#### Track 1.C: Native FinancialJuice Widget (`fj_widget.exe`)
+* **Consolidates & Replaces:** `fj_widget_server.js` (80MB) + Edge App Mode (~300MB) with a standalone native Rust binary (~24MB).
+* **Architecture:** Combines `tao` (native Windows windowing) and `wry` (embedded Microsoft WebView2 runtime). Embeds the HTTP reverse proxy on port 8636 in-process, injects dark-mode CSS into the Economic Calendar, enables audio autoplay for live squawk, and bridges native window controls (drag, minimize, close, pin).
+* **Launcher:** `launch/widgets/start_fj_widget.bat` (decoupled WMI creation).
 
 ---
 

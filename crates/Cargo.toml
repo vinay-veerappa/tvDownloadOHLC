@@ -9,3 +9,8 @@ members = [
     "fj_daemon",
     "fj_widget",
 ]
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true

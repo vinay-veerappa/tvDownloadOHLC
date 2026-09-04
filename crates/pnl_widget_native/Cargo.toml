@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "pnl_widget_native"
 version = "0.1.0"
 edition = "2021"
@@ -13,8 +13,3 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
-
-[profile.release]
-opt-level = "z"
-lto = true
-strip = true
