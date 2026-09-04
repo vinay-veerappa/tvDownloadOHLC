@@ -10,6 +10,9 @@ Hub is down this test will fail fast instead of prompting for a token.
 """
 import json
 import os
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 import requests
 
 from scripts.streaming.options.config import HUB_URL
@@ -51,13 +54,30 @@ def test_schwab_hub_rest():
     assert es_active in quotes, f"Missing quote for {es_active}: {quotes}"
     assert nq_active in quotes, f"Missing quote for {nq_active}: {quotes}"
 
-    # 3. Pull a small option chain for a cash-settled ticker (production path)
+    # 3. Pull a small option chain for a cash-settled ticker (production path).
+    #
+    # The window is RELATIVE. It was hardcoded to 2026-07-11..2026-07-18, which meant
+    # that from 2026-07-11 onwards Schwab rejected the range with
+    #   400 "Check Param Values" / "Invalid Paramter/Value"
+    # and this test failed every single day. Worse, it failed looking like a Schwab API
+    # fault rather than a stale fixture, so it was permanent red that would mask a real
+    # regression. A date literal in a test is a time bomb with a known fuse.
+    #
+    # ⚠️ The date must be the MARKET's date, not the machine's. Schwab evaluates
+    # expirations in US/Eastern, so on a box west of ET the local date lags after
+    # ~21:00 local and `date.today()` is a day Schwab already considers expired:
+    #     fromDate=2026-09-03 (local today, 01:53 ET on the 4th) -> 400 Check Param Values
+    #     fromDate=2026-09-04 (ET today)                         -> 200, 13 expiries
+    # That is what made this look like a stale fixture rather than a timezone bug.
+    #
+    # 14 days guarantees at least two SPY weekly expirations regardless of holidays.
+    today = datetime.now(ZoneInfo("America/New_York")).date()
     chain = _hub_request(
         "get_option_chain",
         {
             "symbol": "SPY",
-            "fromDate": "2026-07-11",
-            "toDate": "2026-07-18",
+            "fromDate": today.isoformat(),
+            "toDate": (today + timedelta(days=14)).isoformat(),
             "strikeCount": 3,
         },
     )
