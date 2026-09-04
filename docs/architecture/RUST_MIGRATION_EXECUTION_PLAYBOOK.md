@@ -422,6 +422,13 @@ All four steps executed (`e9e7de51`, `6e44eefd`, `003047b6`, `e74f1c17`).
 
 **`stream_chart.py` now: CPU 16.3% → 2%, RAM ~700 MB → 540 MB.**
 
+#### Coverage completed 2026-09-03 (`675d4192`)
+* **All 27 watchlist symbols are now monitored** (was 20). GVZ, OVX, RVX, VIX9D, VOLI, VXD and VXN were added 2026-08-26 and collect cleanly at 389–400 bars/day, but `MIN_DAYS_FOR_MASK=10` left them unwatched for two working weeks — and the days a new symbol is unmonitored are exactly the days its collection is least proven. Lowered to **5**; their derived sessions match their established peers (09:31–16:00 vs VVIX 09:31–16:15).
+* ⚠️ **Rejected on the way: dropping "partial" days before measuring density.** It reads as obviously right — a restart that loses a morning is evidence about the *collector*, not the instrument — and it would protect a short history. Measured, it does the opposite on any symbol whose activity varies: a quiet overnight day genuinely has fewer bars, so the filter discards **low-volume** days rather than **incomplete** ones and inflates the coverage of what remains. SPY's session widened 682 → 985 minutes and watchlist gaps went 153 → 200 (MSFT 52, NFLX 21), all false. The residual risk is documented in `build_session_mask` and surfaced via `session_status()` instead.
+* **Daily gap sweep at 18:10 ET Mon–Fri.** Gap checking was event-driven only (startup, hub reconnect, a >60 s jump in `chart_handler`), so a process running for days without reconnecting never re-checked and a hole opening after startup was found only by luck. The sweep runs after the 17:00 refresh and the settlement window, obeys the global bridge budget so a backlog drains over days rather than bursting, and one failing symbol cannot abort it.
+
+**State after this pass:** 27/27 monitored, 0 skipped, **+72,660 bars recovered**, backlog down to **87** gaps, zero Hub failures, sweep scheduled.
+
 #### Lesson for the Rust question
 A Rust port would have made the same 598k-row strftime perhaps 10× faster while still doing O(entire history) work per appended bar — and would have carried the defect across, faster and harder to see. **The algorithm was the problem, not the language.**
 
