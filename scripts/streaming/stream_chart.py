@@ -15,6 +15,9 @@ import time
 import sqlite3
 import pandas as pd
 from pandas.api.types import is_string_dtype
+import pyarrow.parquet as pq
+
+from scripts.streaming import gap_detect
 from datetime import datetime, timezone, timedelta, time as dt_time
 from zoneinfo import ZoneInfo
 import httpx
@@ -68,6 +71,47 @@ def resolve_futures_htf_source():
 # Configuration
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "web", "prisma", "dev.db")
+
+# How many 1m candles to hold per symbol in RAM. Was 15,000 (~10.9 days) purely so the
+# old gap scan had something to iterate; detection now reads the parquet, and nothing
+# else needs that depth - `handle_history` serves from parquet and the WebSocket sends
+# the last 100. Measured: 15,000 costs ~157 MB of dicts across the watchlist, 1,500
+# costs ~18 MB. Left at 1,500 (~25h, a full session plus margin) rather than the ~500
+# that would suffice, because the cost of the extra 12 MB is nothing and the cost of
+# being wrong about what needs depth is a subtle data bug.
+CANDLE_WINDOW = 1500
+CANDLE_WINDOW_SOFT_MAX = int(CANDLE_WINDOW * 1.33)  # prune only when this is exceeded
+
+# Bridging was dead for five months, so the first live passes face a backlog: 153 real
+# gaps across the watchlist at the time of writing. Each gap is one Schwab call plus a
+# parquet merge, so they are worked newest-first, a few per pass, rather than in one
+# burst that would hammer the API and stall the event loop.
+MAX_GAPS_PER_PASS = 5
+
+# Session masks are derived from the full stored history (~1.5 s for all symbols) and
+# change only as the collection profile changes, so they are cached per symbol and
+# invalidated whenever that symbol's history is rewritten by a bridge.
+_SESSION_MASKS = {}
+
+
+def _get_session_mask(symbol, times_ms):
+    mask = _SESSION_MASKS.get(symbol)
+    if mask is None:
+        mask = gap_detect.build_session_mask(times_ms)
+        if mask is not None:
+            _SESSION_MASKS[symbol] = mask
+    return mask
+
+
+def _iso_timestamp_series(time_ms):
+    """Render epoch-ms -> the UTC ISO strings downstream readers expect.
+
+    One definition, because the format string previously appeared at two call sites and
+    a drift between them would write a column that parses differently depending on which
+    branch produced the row.
+    """
+    return pd.to_datetime(time_ms, unit='ms', utc=True).dt.strftime(TIMESTAMP_FMT)
+
 
 
 import sys
@@ -265,61 +309,12 @@ def validate_bootstrap_data(symbol, bootstrap_candles):
         print(f"⚠️ [{symbol}] Bootstrap validation failed: {e}")
         return bootstrap_candles
 
-def detect_gaps(candles, symbol, threshold_minutes=1):
-    """
-    Detect gaps in 1-minute data larger than threshold.
-    Returns list of (gap_start_ms, gap_end_ms) tuples.
-    Excludes expected weekend gaps (Friday close -> Sunday open).
-    Now also checks for gap between last candle and current time.
-    """
-    if not candles:
-        return []
-        
-    gaps = []
-    threshold_ms = threshold_minutes * 60 * 1000  # 1 minute = 60,000 ms
-    now_ms = int(time.time() * 1000)
-    
-    # 1. Check for gaps between existing candles
-    if len(candles) >= 2:
-        for i in range(1, len(candles)):
-            prev_time = candles[i-1]['time']
-            curr_time = candles[i]['time']
-            diff = curr_time - prev_time
-            
-            # Skip expected gaps (normal is 1 min = 60,000 ms)
-            if diff > threshold_ms:
-                # Use UTC for weekday checks
-                prev_dt = datetime.fromtimestamp(prev_time / 1000, tz=timezone.utc)
-                curr_dt = datetime.fromtimestamp(curr_time / 1000, tz=timezone.utc)
-                
-                # Skip weekend gaps (Friday close -> Sunday open)
-                if prev_dt.weekday() == 4 and curr_dt.weekday() in [6, 0]:
-                    continue
-                # Skip Saturday -> Sunday/Monday
-                if prev_dt.weekday() in [5, 6] and curr_dt.weekday() in [6, 0]:
-                    continue
-                    
-                gaps.append((prev_time, curr_time))
-    
-    # 2. Check for gap between last candle and NOW
-    last_time = candles[-1]['time']
-    diff_to_now = now_ms - last_time
-    
-    if diff_to_now > threshold_ms:
-        # Use UTC for weekday checks
-        last_dt = datetime.fromtimestamp(last_time / 1000, tz=timezone.utc)
-        now_dt = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
-        
-        # Weekend check for current gap
-        is_weekend = False
-        if last_dt.weekday() == 4 and now_dt.weekday() in [5, 6]:
-             is_weekend = True
-        elif last_dt.weekday() in [5, 6]:
-             is_weekend = True
-             
-        if not is_weekend:
-            print(f"🔍 [{symbol}] Gap detected since last data point (UTC): {last_dt} -> {now_dt}")
-            gaps.append((last_time, now_ms))
+# NOTE: the old in-memory `detect_gaps` was REMOVED on 2026-09-03.
+# It had no `return` statement (8df95e34, 2026-03-22, deleted `return gaps`), so it
+# always returned None and gap bridging was silently dead for five months while the
+# function still PRINTED "Gap detected". Its replacement is
+# `scripts.streaming.gap_detect.detect_gaps`, which reads the parquet and filters by a
+# session derived from each symbol's own history.
 
 def get_schwab_api_symbol(symbol: str) -> str:
     """Prepend '$' for cash indices for Schwab REST API requests."""
@@ -403,7 +398,7 @@ def init_chart_data(symbol):
                 if 'timestamp' in df.columns:
                     df = df.drop(columns=['timestamp'])
                 # Only keep last 15,000 candles in memory to save RAM
-                df = df.tail(15000)
+                df = df.tail(CANDLE_WINDOW)
                 data["candles"] = deduplicate_candles(df.to_dict(orient="records"))
                 data["last_update"] = get_now_iso()
                 print(f"✅ [{symbol}] Restored {len(data['candles'])} bars (1m) to memory.")
@@ -429,24 +424,69 @@ def init_chart_data(symbol):
     }
 
 async def check_and_bridge_gaps(symbol):
+    """Detect real holes in the stored history and refill them from the API.
+
+    Reads the parquet `time` column rather than the in-memory candle list. The parquet is
+    the authoritative history, so detection no longer constrains how many candles must be
+    held in RAM (see CANDLE_WINDOW), and a vectorised scan of the full history costs less
+    than the old Python loop over a 15,000-dict window.
+
+    ⚠️ Bridging was DEAD from 2026-03-22 (8df95e34 deleted `return gaps`) until
+    2026-09-03. It is deliberately capped: see MAX_GAPS_PER_PASS.
+    """
     if symbol not in charts:
         return
     cdata = charts[symbol]["data"]
     files = charts[symbol]["files"]
-    gaps = detect_gaps(cdata["candles"], symbol)
-    if gaps:
-        print(f"🔧 [{symbol}] Attempting to bridge {len(gaps)} gaps...")
-        bridged = await bridge_gaps(symbol, gaps)
-        if bridged:
-            print(f"✅ [{symbol}] Bridged {len(bridged)} missing bars.")
-            cdata["candles"] = deduplicate_candles(bridged + cdata["candles"])
-            
-            if len(cdata["candles"]) > 20000:
-                cdata["candles"] = cdata["candles"][-15000:]
-            cdata["last_update"] = get_now_iso()
-            
-            # Commit bootstrap/bridged data to live storage parquet
-            save_candles_to_parquet(symbol, cdata["candles"], files["parquet"])
+    parquet_path = files["parquet"]
+    if not os.path.exists(parquet_path):
+        return
+
+    try:
+        times_ms = pq.read_table(parquet_path, columns=["time"])["time"].to_numpy()
+    except Exception as e:
+        print(f"⚠️ [{symbol}] Gap scan could not read parquet: {e}")
+        return
+
+    mask = _get_session_mask(symbol, times_ms)
+    status = gap_detect.session_status(times_ms)
+    if not status["monitored"]:
+        # An empty gap list from an unmonitorable symbol means "cannot tell", not
+        # "clean". Say so, or a symbol with too little history looks healthy forever.
+        print(f"ℹ️ [{symbol}] Gap scan skipped: {status['reason']}")
+        return
+
+    found = gap_detect.detect_gaps(times_ms, mask=mask)
+    if not found:
+        return
+
+    # Newest first: a hole from an hour ago matters more than one from five weeks ago,
+    # and the cap below means the oldest may not be reached this pass.
+    found.sort(key=lambda g: g[0], reverse=True)
+    if len(found) > MAX_GAPS_PER_PASS:
+        print(f"🔧 [{symbol}] {len(found)} gaps found; bridging the {MAX_GAPS_PER_PASS} "
+              f"most recent this pass (the rest on a later pass)")
+        found = found[:MAX_GAPS_PER_PASS]
+
+    total_missing = sum(g[2] for g in found)
+    print(f"🔧 [{symbol}] Bridging {len(found)} gap(s), {total_missing} missing bars...")
+
+    bridged = await bridge_gaps(symbol, [(g[0], g[1]) for g in found])
+    if bridged:
+        print(f"✅ [{symbol}] Bridged {len(bridged)} missing bars.")
+        # Write the BRIDGED bars to parquet directly. Merging them into the in-memory
+        # window and saving that would write a window-sized slice and, with a small
+        # CANDLE_WINDOW, silently drop bars that are older than the window.
+        save_candles_to_parquet(symbol, bridged, parquet_path)
+        _SESSION_MASKS.pop(symbol, None)  # history changed; re-derive the session
+
+        # Keep the live window consistent with what was just written, without letting it
+        # grow past the cap.
+        merged = deduplicate_candles(bridged + cdata["candles"])
+        cdata["candles"] = merged[-CANDLE_WINDOW:]
+        cdata["last_update"] = get_now_iso()
+    else:
+        print(f"⚠️ [{symbol}] Bridge returned no bars (API had nothing for those ranges).")
 
 # HUB_URL and HUB_WS imported at top
 
@@ -1072,17 +1112,6 @@ async def level_one_handler(msg):
 TIMESTAMP_COL = 'timestamp'
 TIMESTAMP_FMT = '%Y-%m-%d %H:%M:%S+00:00'
 
-
-def _iso_timestamp_series(time_ms):
-    """Render epoch-ms -> the UTC ISO strings downstream readers expect.
-
-    One definition, because the format string previously appeared at two call sites and
-    a drift between them would write a column that parses differently depending on which
-    branch produced the row.
-    """
-    return pd.to_datetime(time_ms, unit='ms', utc=True).dt.strftime(TIMESTAMP_FMT)
-
-
 def _atomic_to_parquet(df, path, **kwargs):
     """Write DataFrame to parquet atomically: temp file → os.replace().
     Prevents corruption if process is killed mid-write."""
@@ -1251,8 +1280,8 @@ async def chart_handler(msg):
                 }
                 cdata["candles"].append(new_candle)
                 # Soft prune if too large
-                if len(cdata["candles"]) > 20000:
-                    cdata["candles"] = cdata["candles"][-15000:]
+                if len(cdata["candles"]) > CANDLE_WINDOW_SOFT_MAX:
+                    cdata["candles"] = cdata["candles"][-CANDLE_WINDOW:]
             
             cdata["last_update"] = get_now_iso()
             # Note: We don't overwrite live_price here, it's handled by level_one_handler.
