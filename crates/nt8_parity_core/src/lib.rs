@@ -1,4 +1,4 @@
-﻿//! PyO3 core: replaces the two un-accelerated Python `for` loops in
+//! PyO3 core: replaces the two un-accelerated Python `for` loops in
 //! scripts/execution/nt8_parity_engine.py (line 138 = simulate, line 350 =
 //! simulate_mtf) with tick-exact Rust ports.
 //!
@@ -9,7 +9,7 @@
 //! - Intra-bar fill sequence: Queen fill -> BE lock -> stop/target resolution
 //! - Re-entry protocol (v2), MFE/MAE tracking
 
-use numpy::{PyArray1, PyReadonlyArray1};
+use numpy::PyReadonlyArray1;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -275,8 +275,6 @@ fn simulate_bars_v1(
     }
 
     let dict = pyo3::types::PyDict::new(_py);
-    let _ = out_reason;
-    let _ = out_flags;
     dict.set_item("entry_time_ms", out.iter().map(|r| r[0] as i64).collect::<Vec<_>>())?;
     dict.set_item("exit_time_ms", out.iter().map(|r| r[1] as i64).collect::<Vec<_>>())?;
     dict.set_item("dir", out.iter().map(|r| r[2] as i64).collect::<Vec<_>>())?;
@@ -285,6 +283,9 @@ fn simulate_bars_v1(
     dict.set_item("leg1_points", out.iter().map(|r| r[5]).collect::<Vec<_>>())?;
     dict.set_item("leg2_points", out.iter().map(|r| r[6]).collect::<Vec<_>>())?;
     dict.set_item("total_points", out.iter().map(|r| r[7]).collect::<Vec<_>>())?;
+    dict.set_item("exit_reason", out_reason)?;
+    dict.set_item("queen_hit", out_flags.iter().map(|f| f[0]).collect::<Vec<_>>())?;
+    dict.set_item("runner_hit", out_flags.iter().map(|f| f[1]).collect::<Vec<_>>())?;
     Ok(dict.into())
 }
 
@@ -371,6 +372,7 @@ fn simulate_bars_v2(
     }
 
     let mut trades: Vec<TradeRow> = Vec::new();
+    let mut trade_reasons: Vec<String> = Vec::new();
     let mut in_pos = false;
     let mut pos_dir: i32 = 0;
     let mut pos_entry_price: f64 = 0.0;
@@ -508,6 +510,7 @@ fn simulate_bars_v2(
                     mfe_pts: cur_mfe_pts, mae_pts: cur_mae_pts,
                     queen: queen_filled, runner: r_hit, reentry: is_cur_reentry,
                 });
+                trade_reasons.push(reason.clone());
 
                 daily_pnl += net_usd;
                 if net_usd < 0.0 {
@@ -609,6 +612,7 @@ fn simulate_bars_v2(
     dict.set_item("queen_hit", trades.iter().map(|r| r.queen).collect::<Vec<_>>())?;
     dict.set_item("runner_hit", trades.iter().map(|r| r.runner).collect::<Vec<_>>())?;
     dict.set_item("is_reentry", trades.iter().map(|r| r.reentry).collect::<Vec<_>>())?;
+    dict.set_item("exit_reason", trade_reasons)?;
     Ok(dict.into())
 }
 

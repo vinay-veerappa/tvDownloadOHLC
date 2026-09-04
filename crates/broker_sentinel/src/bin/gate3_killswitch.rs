@@ -11,7 +11,7 @@
 //! Also validates the real-Tradovate path is present (dry-run: no creds ->
 //! clean refusal, which is the honest behavior without demo credentials).
 
-use broker_sentinel::{Sentinel, SentinelConfig};
+use broker_sentinel::Sentinel;
 use std::time::{Duration, Instant};
 
 async fn serve_mock_nt8(shutdown: tokio::sync::watch::Receiver<bool>) {

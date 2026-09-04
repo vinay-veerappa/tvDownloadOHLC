@@ -31,6 +31,25 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+try:
+    import nt8_parity_core
+    HAS_RUST_CORE = True
+except ImportError:
+    HAS_RUST_CORE = False
+
+
+def _index_to_wallclock_ms(idx: pd.DatetimeIndex) -> np.ndarray:
+    if idx.tz is not None:
+        idx = idx.tz_localize(None)
+    return idx.values.astype("datetime64[ms]").astype(np.int64)
+
+
+def _restore_datetime_series(ms_arr, target_tz) -> pd.DatetimeIndex:
+    dt = pd.to_datetime(ms_arr, unit="ms")
+    if target_tz is not None:
+        dt = dt.tz_localize(target_tz)
+    return dt
+
 
 @dataclass
 class NT8Trade:
@@ -99,9 +118,132 @@ class NT8ParityEngine:
         latest_entry_hhmm: int = 1530,
         flatten_hhmm: int = 1555,
         filter_lunch: bool = True,
+        use_rust: bool = True,
     ) -> pd.DataFrame:
         """
         Simulate trade execution matching NinjaTrader 8 tick-for-tick.
+        Dispatches to high-speed PyO3 Rust extension (nt8_parity_core) by default.
+        """
+        if use_rust and HAS_RUST_CORE:
+            return self._simulate_rust(
+                df, signals, limit_prices, stop_losses,
+                queen_bps=queen_bps, runner_bps=runner_bps,
+                order_timeout_bars=order_timeout_bars,
+                earliest_entry_hhmm=earliest_entry_hhmm,
+                latest_entry_hhmm=latest_entry_hhmm,
+                flatten_hhmm=flatten_hhmm,
+                filter_lunch=filter_lunch,
+            )
+        return self._simulate_py(
+            df, signals, limit_prices, stop_losses,
+            queen_bps=queen_bps, runner_bps=runner_bps,
+            order_timeout_bars=order_timeout_bars,
+            earliest_entry_hhmm=earliest_entry_hhmm,
+            latest_entry_hhmm=latest_entry_hhmm,
+            flatten_hhmm=flatten_hhmm,
+            filter_lunch=filter_lunch,
+        )
+
+    def _simulate_rust(
+        self,
+        df: pd.DataFrame,
+        signals: pd.Series,
+        limit_prices: pd.Series,
+        stop_losses: pd.Series,
+        queen_bps: float = 10.0,
+        runner_bps: float = 30.0,
+        order_timeout_bars: int = 6,
+        earliest_entry_hhmm: int = 945,
+        latest_entry_hhmm: int = 1530,
+        flatten_hhmm: int = 1555,
+        filter_lunch: bool = True,
+    ) -> pd.DataFrame:
+        times_ms = _index_to_wallclock_ms(df.index)
+        opens = df["open"].to_numpy(dtype=np.float64)
+        highs = df["high"].to_numpy(dtype=np.float64)
+        lows = df["low"].to_numpy(dtype=np.float64)
+        closes = df["close"].to_numpy(dtype=np.float64)
+        sig_arr = signals.to_numpy(dtype=np.int32)
+        lmt_arr = limit_prices.to_numpy(dtype=np.float64)
+        sl_arr = stop_losses.to_numpy(dtype=np.float64)
+
+        res = nt8_parity_core.simulate_bars_v1(
+            times_ms, opens, highs, lows, closes, sig_arr, lmt_arr, sl_arr,
+            point_value=self.point_value,
+            tick_size=self.tick_size,
+            max_trades_per_day=self.max_trades_per_day,
+            max_consecutive_losers=self.max_consecutive_losers,
+            pause_minutes=self.pause_minutes,
+            hard_stop_losers=self.hard_stop_losers,
+            daily_max_loss=self.daily_max_loss,
+            contracts=self.contracts,
+            commission_per_contract_rt=self.commission_per_contract_rt,
+            slippage_ticks=self.slippage_ticks,
+            queen_bps=queen_bps,
+            runner_bps=runner_bps,
+            order_timeout_bars=order_timeout_bars,
+            earliest_entry_hhmm=earliest_entry_hhmm,
+            latest_entry_hhmm=latest_entry_hhmm,
+            flatten_hhmm=flatten_hhmm,
+            filter_lunch=filter_lunch,
+        )
+
+        n_trades = len(res["entry_time_ms"])
+        if n_trades == 0:
+            return pd.DataFrame(columns=[
+                "entry_time", "exit_time", "direction", "entry_price", "exit_price",
+                "leg1_points", "leg2_points", "total_points", "total_pnl_usd",
+                "exit_reason", "queen_hit", "runner_hit", "mfe_points", "mae_points",
+                "mfe_bps", "mae_bps", "is_reentry"
+            ])
+
+        entry_times = _restore_datetime_series(res["entry_time_ms"], df.index.tz)
+        exit_times = _restore_datetime_series(res["exit_time_ms"], df.index.tz)
+
+        total_pts = np.asarray(res["total_points"], dtype=np.float64)
+        gross_usd = total_pts * self.point_value * self.contracts
+        comm_usd = self.commission_per_contract_rt * self.contracts
+        slip_usd = (self.slippage_ticks * self.tick_size * self.point_value) * self.contracts
+        net_usd = gross_usd - comm_usd - slip_usd
+
+        dirs = ["Long" if d == 1 else "Short" for d in res["dir"]]
+
+        return pd.DataFrame({
+            "entry_time": entry_times,
+            "exit_time": exit_times,
+            "direction": dirs,
+            "entry_price": np.asarray(res["entry_price"], dtype=np.float64),
+            "exit_price": np.asarray(res["exit_price"], dtype=np.float64),
+            "leg1_points": np.asarray(res["leg1_points"], dtype=np.float64),
+            "leg2_points": np.asarray(res["leg2_points"], dtype=np.float64),
+            "total_points": total_pts,
+            "total_pnl_usd": net_usd,
+            "exit_reason": res["exit_reason"],
+            "queen_hit": np.asarray(res["queen_hit"], dtype=bool),
+            "runner_hit": np.asarray(res["runner_hit"], dtype=bool),
+            "mfe_points": np.zeros(n_trades, dtype=np.float64),
+            "mae_points": np.zeros(n_trades, dtype=np.float64),
+            "mfe_bps": np.zeros(n_trades, dtype=np.float64),
+            "mae_bps": np.zeros(n_trades, dtype=np.float64),
+            "is_reentry": np.zeros(n_trades, dtype=bool),
+        })
+
+    def _simulate_py(
+        self,
+        df: pd.DataFrame,
+        signals: pd.Series,             # +1 for Buy, -1 for Sell, 0 for None
+        limit_prices: pd.Series,         # Limit price for entry
+        stop_losses: pd.Series,          # Stop loss price
+        queen_bps: float = 10.0,
+        runner_bps: float = 30.0,
+        order_timeout_bars: int = 6,
+        earliest_entry_hhmm: int = 945,
+        latest_entry_hhmm: int = 1530,
+        flatten_hhmm: int = 1555,
+        filter_lunch: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Simulate trade execution matching NinjaTrader 8 tick-for-tick (Python engine).
         """
         times = df.index
         opens = df["open"].to_numpy(dtype=np.float64)
@@ -307,9 +449,146 @@ class NT8ParityEngine:
         flatten_hhmm: int = 1555,
         filter_lunch: bool = True,
         allow_reentry: bool = True,
+        use_rust: bool = True,
     ) -> pd.DataFrame:
         """
         Multi-Timeframe Simulation: 5m Structure/CISD + 1m FVG Precision Entry.
+        Includes bar-by-bar MFE/MAE excursion tracking and Confirmed Re-entry Protocol.
+        Dispatches to high-speed PyO3 Rust extension (nt8_parity_core) by default.
+        """
+        if use_rust and HAS_RUST_CORE:
+            return self._simulate_mtf_rust(
+                df_5m, df_1m, signals_5m,
+                queen_bps=queen_bps, runner_bps=runner_bps,
+                stop_loss_bps=stop_loss_bps,
+                earliest_entry_hhmm=earliest_entry_hhmm,
+                latest_entry_hhmm=latest_entry_hhmm,
+                flatten_hhmm=flatten_hhmm,
+                filter_lunch=filter_lunch,
+                allow_reentry=allow_reentry,
+            )
+        return self._simulate_mtf_py(
+            df_5m, df_1m, signals_5m,
+            queen_bps=queen_bps, runner_bps=runner_bps,
+            stop_loss_bps=stop_loss_bps,
+            earliest_entry_hhmm=earliest_entry_hhmm,
+            latest_entry_hhmm=latest_entry_hhmm,
+            flatten_hhmm=flatten_hhmm,
+            filter_lunch=filter_lunch,
+            allow_reentry=allow_reentry,
+        )
+
+    def _simulate_mtf_rust(
+        self,
+        df_5m: pd.DataFrame,
+        df_1m: pd.DataFrame,
+        signals_5m: pd.Series,
+        queen_bps: float = 10.0,
+        runner_bps: float = 30.0,
+        stop_loss_bps: float = 5.0,
+        earliest_entry_hhmm: int = 945,
+        latest_entry_hhmm: int = 1530,
+        flatten_hhmm: int = 1555,
+        filter_lunch: bool = True,
+        allow_reentry: bool = True,
+    ) -> pd.DataFrame:
+        times_1m_ms = _index_to_wallclock_ms(df_1m.index)
+        opens_1m = df_1m["open"].to_numpy(dtype=np.float64)
+        highs_1m = df_1m["high"].to_numpy(dtype=np.float64)
+        lows_1m = df_1m["low"].to_numpy(dtype=np.float64)
+        closes_1m = df_1m["close"].to_numpy(dtype=np.float64)
+
+        sig_times_5m = _index_to_wallclock_ms(signals_5m.index)
+        sig_dirs_5m = signals_5m.to_numpy(dtype=np.int32)
+
+        res = nt8_parity_core.simulate_bars_v2(
+            times_1m_ms, opens_1m, highs_1m, lows_1m, closes_1m,
+            sig_times_5m, sig_dirs_5m,
+            point_value=self.point_value,
+            tick_size=self.tick_size,
+            max_trades_per_day=self.max_trades_per_day,
+            max_consecutive_losers=self.max_consecutive_losers,
+            pause_minutes=self.pause_minutes,
+            hard_stop_losers=self.hard_stop_losers,
+            daily_max_loss=self.daily_max_loss,
+            contracts=self.contracts,
+            commission_per_contract_rt=self.commission_per_contract_rt,
+            slippage_ticks=self.slippage_ticks,
+            queen_bps=queen_bps,
+            runner_bps=runner_bps,
+            stop_loss_bps=stop_loss_bps,
+            earliest_entry_hhmm=earliest_entry_hhmm,
+            latest_entry_hhmm=latest_entry_hhmm,
+            flatten_hhmm=flatten_hhmm,
+            filter_lunch=filter_lunch,
+            allow_reentry=allow_reentry,
+        )
+
+        n_trades = len(res["entry_time_ms"])
+        if n_trades == 0:
+            return pd.DataFrame(columns=[
+                "entry_time", "exit_time", "direction", "entry_price", "exit_price",
+                "leg1_points", "leg2_points", "total_points", "total_pnl_usd",
+                "exit_reason", "queen_hit", "runner_hit", "mfe_points", "mae_points",
+                "mfe_bps", "mae_bps", "is_reentry"
+            ])
+
+        entry_times = _restore_datetime_series(res["entry_time_ms"], df_1m.index.tz)
+        exit_times = _restore_datetime_series(res["exit_time_ms"], df_1m.index.tz)
+
+        entry_px = np.asarray(res["entry_price"], dtype=np.float64)
+        exit_px = np.asarray(res["exit_price"], dtype=np.float64)
+        leg1 = np.asarray(res["leg1_points"], dtype=np.float64)
+        leg2 = np.asarray(res["leg2_points"], dtype=np.float64)
+        total_pts = np.asarray(res["total_points"], dtype=np.float64)
+        mfe_pts = np.asarray(res["mfe_points"], dtype=np.float64)
+        mae_pts = np.asarray(res["mae_points"], dtype=np.float64)
+
+        gross_usd = total_pts * self.point_value * self.contracts
+        comm_usd = self.commission_per_contract_rt * self.contracts
+        slip_usd = (self.slippage_ticks * self.tick_size * self.point_value) * self.contracts
+        net_usd = gross_usd - comm_usd - slip_usd
+
+        dirs = ["Long" if d == 1 else "Short" for d in res["dir"]]
+        mfe_bps = np.where(entry_px > 0, (mfe_pts / entry_px) * 10000.0, 0.0)
+        mae_bps = np.where(entry_px > 0, (mae_pts / entry_px) * 10000.0, 0.0)
+
+        return pd.DataFrame({
+            "entry_time": entry_times,
+            "exit_time": exit_times,
+            "direction": dirs,
+            "entry_price": entry_px,
+            "exit_price": exit_px,
+            "leg1_points": leg1,
+            "leg2_points": leg2,
+            "total_points": total_pts,
+            "total_pnl_usd": net_usd,
+            "exit_reason": res["exit_reason"],
+            "queen_hit": np.asarray(res["queen_hit"], dtype=bool),
+            "runner_hit": np.asarray(res["runner_hit"], dtype=bool),
+            "mfe_points": mfe_pts,
+            "mae_points": mae_pts,
+            "mfe_bps": mfe_bps,
+            "mae_bps": mae_bps,
+            "is_reentry": np.asarray(res["is_reentry"], dtype=bool),
+        })
+
+    def _simulate_mtf_py(
+        self,
+        df_5m: pd.DataFrame,
+        df_1m: pd.DataFrame,
+        signals_5m: pd.Series,
+        queen_bps: float = 10.0,
+        runner_bps: float = 30.0,
+        stop_loss_bps: float = 5.0,
+        earliest_entry_hhmm: int = 945,
+        latest_entry_hhmm: int = 1530,
+        flatten_hhmm: int = 1555,
+        filter_lunch: bool = True,
+        allow_reentry: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Multi-Timeframe Simulation: 5m Structure/CISD + 1m FVG Precision Entry (Python engine).
         Includes bar-by-bar MFE/MAE excursion tracking and Confirmed Re-entry Protocol.
         """
         times_1m = df_1m.index
