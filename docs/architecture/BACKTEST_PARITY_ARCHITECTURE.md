@@ -135,10 +135,47 @@ assumption is not the source of large NT8 divergence** — it is a correctness a
 fix, and cause 1 (uncontrolled NT8 config) plus cause 7 (signal drift) remain the likely
 dominant causes of magnitude.
 
-Caveat: the fixture is a synthetic deterministic signal, not a real strategy. The effect is
-geometry-dependent by construction, so it must be re-measured per strategy family — tight
-scalps with both legs a few points apart, and wide-range bars, are where it bites. **Do not
-generalise either the small number here or the earlier large-magnitude claim.**
+**Swept across geometry 2026-09-04, and the hypothesis is now FALSIFIED, not just reduced.**
+The single measurement above invited "re-measure per strategy family", so
+`measure_ambiguity_impact.py --sweep` mapped it: 6 stop distances (0.75 → 25 pts) × 3 target
+sizes (5 → 20 bps ≈ 10 → 40 pts on NQ), 18 geometries, same year of NQ 1m. `flips` counts
+trades whose outcome the *assumption* decided rather than the data:
+
+| | queen 5bps | queen 10bps | queen 20bps |
+|---|---|---|---|
+| **stop 0.75 pts** | 3 flips (0.39%), PF +0.028 | 0 (0.00%) | 0 (0.00%) |
+| **stop 1.50 pts** | 1 (0.13%) | 1 (0.13%), PF +0.009 | 0 (0.00%) |
+| **stop 3.00 pts** | 1 (0.13%) | 0 (0.00%) | 0 (0.00%) |
+| **stop 6.00 pts** | 2 (0.26%) | 1 (0.13%) | 1 (0.13%) |
+| **stop 12.0 pts** | 3 (0.39%) | 1 (0.13%) | 2 (0.26%) |
+| **stop 25.0 pts** | 1 (0.13%) | 0 (0.00%) | 3 (0.41%), PF +0.013 |
+
+**Worst case anywhere in the grid: 0.41% of trades and a PF gap of +0.028.** Over two orders
+of magnitude of stop distance, the intrabar assumption never decides more than 1 trade in
+240.
+
+Mechanically this is obvious in hindsight: a flip needs the stop **and** a target inside
+**one** bar *while the position is open*. 1-minute NQ bars are mostly 2–15 points, and the
+position is usually resolved before a bar wide enough to contain both arrives. When a flip
+does happen it is large — gate 4 measures a 2R swing on one constructed bar — but
+`0.4% × 2R ≈ 0.008R`, which is the PF gap observed.
+
+**Conclusion, replacing §1.1's claim: the intrabar assumption is NOT a material source of
+NT8↔Python divergence at 1-minute resolution, for any geometry tested.** Adverse remains the
+correct default on grounds of correctness and the drawdown tail (it is still the only honest
+setting for prop feasibility, where the left tail *is* the measurement), but the earlier claim
+that it "reorders the candidate ranking" and explains "invariably large" divergence is
+withdrawn. It cannot reorder anything at 0.4%.
+
+**This redirects the value of tick data.** Tick resolution was justified above as the fix for
+sequence ambiguity; that justification is now gone. What remains genuinely tick-dependent is
+**fill realism** — the limit-order fill-through rule (§5.3), which a `Last` print cannot
+settle — and matching NT8's own `High` fill resolution. Phase 3.4 should be re-scoped
+accordingly, and demoted below causes 1, 2, 5 and 7.
+
+Residual caveat, stated narrowly: the fixture uses limit entries on a fixed cadence with
+synthetic signals. A market-entry strategy could differ in principle, but an effect that
+stays under 0.41% across 18 geometries is unlikely to become dominant.
 
 ### 2.4 The two sides are on different price scales by construction
 
@@ -219,7 +256,7 @@ no parity requirement at all. That capability is currently unreachable.
 | 1 | Uncontrolled NT8 SA configuration (§2.1) | Ground truth is a moving target | Yes — bounded |
 | 2 | Workflow not enforced (§2.7) | Results not comparable; safety modules dead | Yes — highest leverage |
 | 3 | Metric can't see trade-set divergence (§2.2) | Success declared on the wrong measure | Yes — cheap |
-| 4 | Intrabar sequence unknown at 1m (§2.3) | Screen reorders candidates; prop tail truncated | Partly cheap, fully with tick |
+| ~~4~~ | ~~Intrabar sequence unknown at 1m~~ (§2.3) | **MEASURED AND DEMOTED 2026-09-04: ≤0.41% of trades across 18 geometries, PF gap ≤0.028. Not a material cause.** Fixed anyway (adverse default) for the drawdown tail | done |
 | 5 | Selection bias at hundreds of arms (§1) | Best-of-N is a winner by luck | Machinery exists, unenforced |
 | 6 | Price-scale mismatch (§2.4) | Level logic sees different geometry | Yes — unadjusted per contract |
 | 7 | Rules implemented twice (§2.5) | Drift permanent and per-strategy | Structurally, or by testing |
