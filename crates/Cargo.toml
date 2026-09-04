@@ -12,3 +12,12 @@ members = [
 opt-level = "z"
 lto = true
 strip = true
+
+# opt-level = "z" above is chosen for the WIDGET BINARIES (trading_daemon,
+# pnl_widget_gdi, fj_widget), where the whole point is a small resident footprint and
+# the work is I/O-bound anyway. It is the wrong setting for the one crate here that is
+# a pure compute kernel: "z" optimises for size, which suppresses the loop unrolling
+# and autovectorisation the bar loops actually want. Gate 2's 378x was measured DESPITE
+# this, not because of it.
+[profile.release.package.nt8_parity_core]
+opt-level = 3

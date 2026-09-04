@@ -311,3 +311,7 @@ pub async fn run_poller(state: SharedState, pusher: crate::cdp::CdpPusher) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "poller_tests.rs"]
+mod poller_tests;

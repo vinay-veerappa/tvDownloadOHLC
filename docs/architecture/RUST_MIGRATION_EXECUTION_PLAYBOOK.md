@@ -138,7 +138,7 @@ An independent watchdog whose ONLY job is to detect port `7890` unresponsive dur
 ### Track 1 — COMPLETE & LIVE (Gate 1 PASSED, cutover executed)
 **Implemented** (`crates/trading_daemon`): `poller.rs` (200ms, three concurrent NT8 GETs — `/api/account` singular, `/api/positions`, `/api/copier/snapshot` — plus fleet-summary math mirroring `computeFleetSummary` and CDP `Runtime.evaluate` push with panic-hook), `server.rs` (full route surface per Step 1.2), `state.rs` (2.5s lockout sweep capped at 30 accounts / 10s staleness, 30s guard-config reload, emergency-flatten trigger). Widget HTML is embedded from `assets/widget.html` (captured byte-verbatim from the live Node server before cutover).
 
-**Gate 1** ran on shadow port 8637 via `crates/gate1_parity.ps1` — passed 3×. Parity work went beyond the gate script; four semantic diffs had to be eliminated to reach **byte-identical** JSON (worth knowing for any future Node→Rust port):
+**Gate 1** ran on shadow port 8637 via `crates/gate1_parity.ps1` — passed 3×. (⚠️ That script has since been **retired**: post-cutover it compared 8635 to itself. Use `crates/gate1_contract.ps1`; see the post-review fixes at the end of this document.) Parity work went beyond the gate script; four semantic diffs had to be eliminated to reach **byte-identical** JSON (worth knowing for any future Node→Rust port):
 1. **JS falsy fallback**: Node's `Number(acc.netLiquidation || acc.cashValue)` falls back on a *present-but-0* NetLiq (the $100k Backtest account). Rust `unwrap_or` only handles absent fields — must mirror truthiness explicitly.
 2. **Key order**: serde_json sorts keys; Node preserves upstream order → `preserve_order` feature required.
 3. **Number formatting**: JS prints integral f64s as `0`, not `0.0`, and V8's grisu shortest-repr drops the final digit ryu keeps (`49453.150000000052` → `49453.15000000005`). Fixed with `arbitrary_precision` pass-through + a post-serialization JS-number normalizer (`js_normalize_json_str` in `poller.rs`).
@@ -218,13 +218,95 @@ cd crates; cargo build --release
 .venv\Scripts\python.exe -m maturin develop --release -m crates\nt8_parity_core\Cargo.toml
 
 # Gates
-powershell -ExecutionPolicy Bypass -File crates\gate1_parity.ps1   # shadow parity (daemon on 8637 vs live 8635)
+powershell -ExecutionPolicy Bypass -File crates\gate1_contract.ps1                 # live contract check
+powershell -ExecutionPolicy Bypass -File crates\gate1_contract.ps1 -ShadowPort 8637 # real A/B vs a candidate
+# gate1_parity.ps1 is RETIRED and exits 2 - it compared 8635 to itself. See below.
 .venv\Scripts\python.exe crates\gate2_parity.py                    # engine zero-divergence
 crates\target\release\gate3_killswitch.exe                         # sentinel simulation
 ```
 
 ### Open items & Remaining Activities
 1. **`fj_widget_server.js` & `pnl_widget_server.js` Elimination**: ✅ **COMPLETE**. Both Node servers and Edge App Mode launchers are replaced by native Rust binaries (`pnl_widget_gdi.exe` and `fj_widget.exe`), fully realizing the ~450MB+ memory reclaim goal.
-2. **Sentinel Live-Fire**: Blocked on external broker API credentials (Tradovate/Rithmic). Observability and simulation gates are fully operational.
-3. **`stream_chart.py` (Futures Data Streamer)**: Remains in Python (1,424 LOC). Currently streams Schwab/yfinance candles to SQLite `dev.db`. Candidates for future Rust migration if Python CPU or latency becomes a bottleneck.
-4. **Scheduled Task**: `TradingDaemon` registered; if the repo moves, re-run `launch/register_trading_daemon_task.ps1`.
+2. **Sentinel Live-Fire**: Blocked on external broker API credentials (Tradovate/Rithmic). The sentinel is now **actually running** observe-only (see post-review fixes below); before that it had no launcher and no task, so "runs observe/dry-run only" described a process that was not running at all.
+3. **`stream_chart.py` (Futures Data Streamer)**: Remains in Python (1,424 LOC, **268 MB measured** — now the single largest process on the box). Currently streams Schwab/yfinance candles to SQLite `dev.db`. Candidate for future Rust migration if Python CPU or latency becomes a bottleneck.
+4. **Scheduled Tasks**: `TradingDaemon` and `BrokerSentinel` registered; if the repo moves, re-run `launch/register_trading_daemon_task.ps1` and `launch/register_broker_sentinel_task.ps1`.
+5. **⚠️ ZERO TESTS.** 3,940 LOC across five crates, `#[test]` count **0**, and this repo has no CI at all (no `.github/workflows/`, no `tools/ci_local.py`). The three gates are one-shot scripts run by hand. The sibling repos hold 3170/0 with 46 mutation batteries over the same trading path. **This is the largest remaining gap** and none of the fixes below close it.
+6. **Bearer token** `d0b837223cab4653` is hardcoded in 32 tracked files, now including three Rust sources — and declared **twice inside `trading_daemon`** (`poller.rs:17` and `state.rs:9`, while `server.rs` imports from `poller`). Rotating it means finding both copies in one crate.
+7. **`load_config()` in `broker_sentinel/src/lib.rs` fails silently.** A malformed `sentinel.json` falls through to `SentinelConfig::default()` with no warning — the operator's tuned limits vanish and the config file still reads as if it applied.
+
+---
+
+## Post-review fixes (2026-09-03, after the playbook review)
+
+Four defects found by reviewing the shipped state against the plan. All four are fixed and verified; each verification includes a negative control, because a gate that has never been observed failing has not been shown to work.
+
+**1. Gate 1 could no longer fail.** `gate1_parity.ps1` fetched 8635 as `$node` and 8637 as `$rust`. After cutover 8635 *is* the Rust daemon, so it compared the daemon to itself and passed unconditionally; `pnl_widget_server.js` is archived, so the Node side cannot be restored.
+* `crates/gate1_contract.ps1` replaces it, with two modes: a **contract check** against `crates/golden/api_data_contract.json` (route surface, required keys, numeric types, account-count floor, copier-block presence, and a **payload-freshness check** — the one that catches a daemon that is UP but serving a frozen cache), and a **parity mode** (`-ShadowPort N`) that **refuses to run when both ports resolve to the same pid**.
+* `gate1_parity.ps1` is kept but exits **2** with a pointer, because the playbook and shell history still invoke it by name and a missing file would read as an environment problem.
+* Verified: passes live (109 accounts, 2 copier rows, 91 ms freshness); and fails on all three negative controls — same-pid comparison, dead port, and injected contract violations.
+
+**2. The compute kernel was built for size.** The workspace `[profile.release]` sets `opt-level = "z"` — correct for the three I/O-bound widget binaries, wrong for `nt8_parity_core`, which it silently inherited. Added a per-package override to `opt-level = 3`.
+* Measured on the Gate 2 dataset (353,152 bars, best of 7): **`"z"` = 11.29 ms → `3` = 7.44 ms**, a further **1.52×**. Gate 2 re-run after the change: still **bit-exact** on both v1 (774 trades) and v2 (560 trades).
+
+**3. The PyO3 fallback was silent.** `nt8_parity_engine.py` had a bare `except ImportError: HAS_RUST_CORE = False` with `use_rust=True` as the default, so a missing build silently switched engines. That is not only ~378× slower — per the timezone caveat above the two paths can produce **different trades** on a differently-stored source.
+* Now warns loudly at import and **fails closed** via `_require_rust_core()` at both dispatch sites, with `NT8_PARITY_ALLOW_PY_FALLBACK=1` (or `use_rust=False`) as the deliberate opt-out.
+* Verified with a `find_spec` blocker: module present → passes; module blocked → warns at import **and** raises; opt-out set → permits the Python path.
+
+**4. The sentinel was not running, and "stop" did not stop.** Track 3 had no launcher and no scheduled task. Added `launch/start_broker_sentinel.bat`, `launch/stop_broker_sentinel.bat`, and `launch/register_broker_sentinel_task.ps1` (logon trigger + 15-min re-arm, task read back to assert the repeating trigger persisted). Sentinel now runs at **~10 MB**, observe-only.
+* ⚠️ **Killing the child does not stop a supervised component.** The launcher is a restart loop, so `Stop-Process` on the exe let the supervising `cmd.exe` bring it back 10 s later under a **new pid** while the stop script reported success. Both stop scripts now kill the **supervisor first, then the child**, and re-read after the restart window to report the *outcome* rather than the fact that the kill line was reached. The same defect was present in `stop_trading_daemon.bat` and is fixed there too (the widget launchers are one-shot and unaffected).
+* ⚠️ **An unqualified `-CommandLine` wildcard on a kill path matches too much.** `stop_trading_daemon.bat`'s legacy-Node clause matched the stop script's **own powershell child** during testing. Now scoped to `$_.Name -eq 'node.exe'`.
+* ⚠️ **The child holds the log file open**, so the supervisor's "already running, exiting quietly" line hit a sharing violation and recorded nothing — precisely when a duplicate launch is what you are diagnosing. Supervisor lines now go to `logs/broker_sentinel.launcher.log`.
+* Verified: duplicate launch and task re-trigger both leave exactly **1** process and log cleanly; stop leaves **0** processes and **0** supervisors and stays down; task re-enable restores it. Both bats are pure ASCII with no BOM (the recorded launch-defect rule). The real `stop_trading_daemon.bat` was then executed against the live daemon and behaved correctly (supervisor + both children stopped, stayed stopped).
+
+**5. `timeout` in a restart loop is a crash-loop hazard.** Both supervisors used `timeout /t 10 /nobreak >nul` for their backoff. `timeout` reads the console input handle and aborts instantly with *"Input redirection is not supported"* whenever stdin is redirected — which is how a launcher gets invoked from a script, an agent, or CI. An instantly-returning backoff turns the restart loop into a **tight loop hammering NT8**, which is the 2026-09-03 incident class. Both now use `ping 127.0.0.1 -n 11 >nul`, the idiom already used in `start_fj_widget.bat`.
+* Verified by killing the child only: supervisor restarted it after **10.3 s**, correct pid change, loop intact.
+* ⚠️ Editing a running `.bat` is itself unsafe — cmd re-reads the file as it executes. Both supervisors were stopped and restarted to load the patched text.
+
+**6. Gate 3's timing claim was a hardcoded `true`.** `gate3_killswitch.rs` printed `detect_ms + 3000` and asserted a literal `true` against a *"< 3000ms requirement"* that the inflated number did not satisfy anyway. The only real assertion was `assert!(fired, ...)` — that the killswitch fired **at all**, within the 6 s the poll loop happens to run. For a killswitch the latency *is* the property, so it is now a **two-sided** bound: too slow misses the move, too eager flattens a live position on a transient blip.
+* Now asserts `2000ms <= detect_ms <= 6000ms` against a 3000ms dead threshold, printing the real measured figure. Measured: **4,548 ms**.
+* Verified with a negative control (ceiling temporarily set to 100 ms): panics with *"killswitch took 4547ms to fire, over the 100ms budget"*, exit 101. Bound restored and re-verified.
+
+### Post-restart verification (all gates re-run on freshly built binaries)
+| Component | pid state | RAM |
+|---|---|---|
+| `trading_daemon` (8635) | 1 instance | 18.9 MB |
+| `fj_widget` (8636) | 1 instance | 24.6 MB |
+| `pnl_widget_gdi` | 1 instance | 14.8 MB |
+| `broker_sentinel` | 1 instance | 9.9 MB |
+| **total** | | **68.2 MB** |
+
+`cargo build --release` clean across all five crates. Gate 1 PASSED (contract, 109 accounts, 2 copier rows). Gate 2 PASSED (bit-exact, 774 + 560 trades). Gate 3 PASSED (4,548 ms, real bound). Both scheduled tasks Running; daemon health `nt8Connected: true`.
+
+---
+
+## Test scaffolding (2026-09-03) — first tests in the workspace
+
+**`fj_widget` duplicate-instance guard.** Root cause was in `proxy.rs`: a bind failure did `return Ok(())`, reporting **success** for a proxy that never started — so a second instance came up, silently lost 8636, and opened a window served by the *first* instance's proxy, orphaned at ~21 MB. Fixed in two places: the bind error now propagates, and `main` binds the port itself before anything visible happens, so **the bind *is* the check** (probe-then-bind is a race whose loser is that same orphan). Verified: second instance prints a clear message and exits **2**, leaving exactly 1 process holding 8636.
+
+**Cushion formula de-duplicated.** It was written out at two call sites (`tick()` and `track_net_liq_tick()`). Two copies of a safety formula drift the moment one is edited, and the survivor still looks right in isolation. Both now call `compute_cushion()` / `ratchet_peak()`.
+
+**31 unit tests, 0 failures** (`cargo test`, was 0):
+* `broker_sentinel` — **10 tests** over the cushion formula and peak ratchet: the hand-computed Gate 3 case, direction (losing money must *reduce* cushion — the original playbook formula did the opposite), breach at `<= 0`, ratchet seeds/rises/never-falls, the 50k jump guard including its exclusive boundary, and `arm_live_flatten` defaulting false.
+* `trading_daemon` — **21 tests** over `js_normalize_json_str` and `compute_fleet_summary`, reproducing all four cutover semantic diffs: JS falsy fallback on a present-but-0 `netLiquidation`, integral floats printing `0` not `0.0`, `-0` → `0`, the V8 shortest-repr case (`49453.150000000052` → `49453.15000000005`), string literals and escaped quotes left untouched by the number scanner, plus the `activeContracts` string shape, copier pass-through, and non-panicking degradation on malformed input.
+
+**Mutation battery — 7 mutants, 7 killed.** A test that has never been observed failing has not been shown to work, so each key assertion was checked against a deliberate defect:
+
+| # | Mutant | Result |
+|---|---|---|
+| M1 | JS falsy fallback reverted to a plain `unwrap_or` | KILLED |
+| M2 | integral floats printed via `{:?}` (`0.0` not `0`) | KILLED |
+| M3 | number scanner no longer skips string literals | KILLED |
+| M4 | cushion sign flipped to the original `Peak − Limit − Current` | KILLED |
+| M5 | peak jump guard `<` → `<=` (boundary) | KILLED |
+| M6 | ratchet allowed the peak to fall | KILLED |
+| M7 | `arm_live_flatten` defaulted true | KILLED |
+
+Both source files were restored to their exact original SHA-256 after the battery (`9f6ea20b…` / `03d9baa3…`) — a battery that does not reach its restore line leaves a live mutant.
+
+**`crates/run_all_gates.ps1`** is the single entry point: release build, `cargo test`, then Gates 1–3, with a PASS/FAIL summary and non-zero exit on any failure. ⚠️ It sets `PYO3_PYTHON` for you — a bare `cargo test` at the workspace root **fails to build `pyo3-ffi`** without it, because system Python is 3.14 and PyO3 0.21 refuses anything above 3.12. ⚠️ Use `-SkipBuild` while the daemon and widgets are live; Windows will not let `cargo build --release` replace a running binary.
+
+### Still open after this pass
+* **No CI.** 31 tests and 3 gates that only run when someone remembers. `run_all_gates.ps1` is the entry point a CI job would call.
+* **`nt8_parity_core` has no unit tests** — it is covered only by Gate 2's end-to-end bit-exact replay, on one instrument and one year of synthetic signals.
+* **`pnl_widget_gdi` (1,266 LOC) has no tests**, and `trading_daemon`'s `server.rs` / `state.rs` / `cdp.rs` are untested — only `poller.rs` is covered.
+* Bearer token in 32 files, twice inside `trading_daemon`; `load_config()` silent fallback (open items 6 and 7 above).

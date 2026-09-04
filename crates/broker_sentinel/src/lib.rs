@@ -101,6 +101,28 @@ fn now_ms() -> u128 {
         .unwrap_or(0)
 }
 
+/// Cushion = Current Net Liq - (Peak Net Liq - Trailing Limit). Breach when <= 0.
+///
+/// ONE function because the expression was written out at two call sites (the watchdog
+/// tick and the net-liq tracker). Two copies of a safety formula drift the moment one is
+/// edited, and the survivor still looks right in isolation.
+pub fn compute_cushion(cur_net_liq: f64, peak_net_liq: f64, trailing_limit: f64) -> f64 {
+    cur_net_liq - (peak_net_liq - trailing_limit)
+}
+
+/// Peak ratchet. Rises only, and refuses jumps >= 50k, which are a full-account-replace
+/// artifact rather than real equity: a bogus peak permanently deflates every later
+/// cushion, so this fails toward the smaller peak.
+pub fn ratchet_peak(peak_net_liq: f64, total: f64) -> f64 {
+    if peak_net_liq == 0.0 {
+        total
+    } else if total > peak_net_liq && total - peak_net_liq < 50_000.0 {
+        total
+    } else {
+        peak_net_liq
+    }
+}
+
 fn log_event(s: &Sentinel, line: String) {
     println!("[sentinel] {}", line);
     let mut lg = s.event_log.lock().unwrap();
@@ -263,7 +285,8 @@ impl Sentinel {
                 st.last_positions = positions;
                 // Cushion = Current Net Liq - (Peak Net Liq - Trailing Limit)
                 if st.peak_net_liq > 0.0 {
-                    st.cushion = st.cur_net_liq - (st.peak_net_liq - self.config.trailing_limit);
+                    st.cushion = compute_cushion(
+                        st.cur_net_liq, st.peak_net_liq, self.config.trailing_limit);
                 }
             }
             Err(_) => {
@@ -327,13 +350,10 @@ impl Sentinel {
             let mut st = self.state.lock().unwrap();
             st.cur_net_liq = total;
             // Peak ratchet (guard against full-account-replace spikes > 50k jump)
-            if st.peak_net_liq == 0.0 {
-                st.peak_net_liq = total;
-            } else if total > st.peak_net_liq && total - st.peak_net_liq < 50_000.0 {
-                st.peak_net_liq = total;
-            }
+            st.peak_net_liq = ratchet_peak(st.peak_net_liq, total);
             if st.peak_net_liq > 0.0 {
-                st.cushion = st.cur_net_liq - (st.peak_net_liq - self.config.trailing_limit);
+                st.cushion = compute_cushion(
+                    st.cur_net_liq, st.peak_net_liq, self.config.trailing_limit);
             }
         }
     }
@@ -427,4 +447,82 @@ fn load_config() -> SentinelConfig {
         }
     }
     SentinelConfig::default()
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- cushion formula -------------------------------------------------------------
+    // The playbook's worked example, kept as the anchor case: the original playbook
+    // shipped `Peak - Limit - Current`, which grows MORE positive as you lose money and
+    // would therefore never breach. These tests pin the corrected direction.
+
+    #[test]
+    fn cushion_matches_the_hand_computed_gate3_case() {
+        assert_eq!(compute_cushion(104_000.0, 105_000.0, 3_000.0), 2_000.0);
+    }
+
+    #[test]
+    fn cushion_shrinks_as_equity_falls() {
+        let a = compute_cushion(104_000.0, 105_000.0, 3_000.0);
+        let b = compute_cushion(103_000.0, 105_000.0, 3_000.0);
+        assert!(b < a, "losing money must REDUCE cushion (a={a}, b={b})");
+    }
+
+    #[test]
+    fn cushion_breaches_at_or_below_zero() {
+        // Floor is peak - limit = 102_000. At exactly the floor, cushion is 0 => breach.
+        assert_eq!(compute_cushion(102_000.0, 105_000.0, 3_000.0), 0.0);
+        assert!(compute_cushion(101_999.0, 105_000.0, 3_000.0) < 0.0);
+    }
+
+    #[test]
+    fn a_larger_trailing_limit_gives_more_room() {
+        let tight = compute_cushion(104_000.0, 105_000.0, 1_000.0);
+        let loose = compute_cushion(104_000.0, 105_000.0, 5_000.0);
+        assert!(loose > tight);
+    }
+
+    // ---- peak ratchet ----------------------------------------------------------------
+
+    #[test]
+    fn peak_seeds_from_zero() {
+        assert_eq!(ratchet_peak(0.0, 104_000.0), 104_000.0);
+    }
+
+    #[test]
+    fn peak_rises_on_a_new_high() {
+        assert_eq!(ratchet_peak(104_000.0, 104_500.0), 104_500.0);
+    }
+
+    #[test]
+    fn peak_never_falls() {
+        // The whole point of a ratchet: a drawdown must not quietly reset the high-water
+        // mark, or the trailing limit follows you down and never breaches.
+        assert_eq!(ratchet_peak(105_000.0, 90_000.0), 105_000.0);
+    }
+
+    #[test]
+    fn peak_refuses_a_jump_of_50k_or_more() {
+        // Account-list replacement looks like a sudden +50k. Accepting it would inflate
+        // the peak permanently and deflate every later cushion.
+        assert_eq!(ratchet_peak(100_000.0, 150_000.0), 100_000.0);
+        assert_eq!(ratchet_peak(100_000.0, 149_999.0), 149_999.0); // just under: accepted
+    }
+
+    #[test]
+    fn peak_jump_guard_boundary_is_exclusive() {
+        // `total - peak < 50_000` - exactly 50k is REJECTED. Pinned because a mutant
+        // flipping `<` to `<=` is otherwise invisible.
+        assert_eq!(ratchet_peak(100_000.0, 150_000.0), 100_000.0);
+    }
+
+    // ---- config ----------------------------------------------------------------------
+
+    #[test]
+    fn live_flatten_is_disarmed_by_default() {
+        // A default that silently arms a real broker flatten is the one default that
+        // must never regress.
+        assert!(!SentinelConfig::default().arm_live_flatten);
+    }
 }

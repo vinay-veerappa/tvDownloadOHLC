@@ -77,13 +77,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "--autoplay-policy=no-user-gesture-required",
     );
 
+    // DUPLICATE-INSTANCE GUARD. Bind the port HERE, before anything visible happens.
+    // fj_widget previously had no guard at all (unlike trading_daemon's health probe and
+    // broker_sentinel's process check): launching it twice started a second process that
+    // silently failed to bind 8636 and opened a window served by the FIRST instance,
+    // sitting there orphaned at ~21MB. Observed during the 2026-09-03 restart.
+    //
+    // The bind IS the check. Probing "is 8636 free?" and then binding is a race whose
+    // loser is exactly that orphan.
+    let bind_addr = format!("127.0.0.1:{}", port);
+    let std_listener = match std::net::TcpListener::bind(&bind_addr) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!(
+                "[fj_widget] port {} is already bound ({}).\n\
+                 Another fj_widget is almost certainly running. Exiting rather than opening\n\
+                 a window that would be served by the other instance's proxy.",
+                port, e
+            );
+            std::process::exit(2);
+        }
+    };
+    std_listener.set_nonblocking(true)?;
+
     // If running in daemon-only mode, run the Tokio runtime on the main thread
     if daemon_only {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
         rt.block_on(async move {
-            let _ = proxy::start_proxy_server(port).await;
+            let listener = tokio::net::TcpListener::from_std(std_listener)
+                .expect("failed to adopt the pre-bound listener");
+            if let Err(e) = proxy::serve_on(listener, port).await {
+                eprintln!("[fj_widget] proxy stopped: {}", e);
+            }
         });
         return Ok(());
     }
@@ -96,7 +123,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .build()
             .expect("failed to start tokio runtime for proxy");
         rt.block_on(async move {
-            let _ = proxy::start_proxy_server(server_port).await;
+            let listener = tokio::net::TcpListener::from_std(std_listener)
+                .expect("failed to adopt the pre-bound listener");
+            if let Err(e) = proxy::serve_on(listener, server_port).await {
+                eprintln!("[fj_widget] proxy stopped: {}", e);
+            }
         });
     });
 

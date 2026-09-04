@@ -24,6 +24,8 @@ and NinjaTrader 8 (RiskManagerBase.cs):
 
 from __future__ import annotations
 
+import os
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, time
 from typing import Dict, List, Optional, Tuple
@@ -34,8 +36,49 @@ import pandas as pd
 try:
     import nt8_parity_core
     HAS_RUST_CORE = True
-except ImportError:
+    RUST_CORE_IMPORT_ERROR: Optional[str] = None
+except ImportError as _exc:  # pragma: no cover - depends on build state
     HAS_RUST_CORE = False
+    RUST_CORE_IMPORT_ERROR = str(_exc)
+
+# Opt-out for a deliberate pure-Python run (fresh clone, bisecting a divergence).
+ALLOW_PY_FALLBACK = os.environ.get("NT8_PARITY_ALLOW_PY_FALLBACK", "") == "1"
+
+_RUST_MISSING_MSG = (
+    "nt8_parity_core (PyO3) is not importable, so simulate() would silently fall back "
+    "to the pure-Python bar loop.\n"
+    "  import error: {err}\n"
+    "  This is NOT just ~378x slower. The two paths derive `hhmm` differently (Rust "
+    "reads UTC from epoch-ms, Python reads the parquet index), so on a source whose "
+    "timestamps are stored differently they can produce DIFFERENT TRADES. Gate 2 pins "
+    "them equal only for the build that is actually loaded.\n"
+    "  Build it:  $env:PYO3_PYTHON=\"<repo>\\.venv\\Scripts\\python.exe\"; "
+    ".venv\\Scripts\\python.exe -m maturin develop --release -m crates\\nt8_parity_core\\Cargo.toml\n"
+    "  Re-run `maturin develop` after ANY edit to crates/nt8_parity_core/src/lib.rs.\n"
+    "  To run the Python path on purpose: pass use_rust=False, or set "
+    "NT8_PARITY_ALLOW_PY_FALLBACK=1."
+)
+
+if not HAS_RUST_CORE:
+    # Loud at import time. A missing accelerator that only shows up as "the backtest
+    # took an hour" is the same silent-degradation class as a dead alert relay.
+    warnings.warn(
+        _RUST_MISSING_MSG.format(err=RUST_CORE_IMPORT_ERROR),
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+
+def _require_rust_core() -> None:
+    """Fail closed when the caller asked for the Rust path and it is not there.
+
+    `use_rust` defaults to True, so without this the default call quietly changes
+    which engine ran - and the engines are only proven equal by a gate that ran
+    against a build this process may not have loaded.
+    """
+    if HAS_RUST_CORE or ALLOW_PY_FALLBACK:
+        return
+    raise ImportError(_RUST_MISSING_MSG.format(err=RUST_CORE_IMPORT_ERROR))
 
 
 def _index_to_wallclock_ms(idx: pd.DatetimeIndex) -> np.ndarray:
@@ -124,6 +167,8 @@ class NT8ParityEngine:
         Simulate trade execution matching NinjaTrader 8 tick-for-tick.
         Dispatches to high-speed PyO3 Rust extension (nt8_parity_core) by default.
         """
+        if use_rust:
+            _require_rust_core()
         if use_rust and HAS_RUST_CORE:
             return self._simulate_rust(
                 df, signals, limit_prices, stop_losses,
@@ -456,6 +501,8 @@ class NT8ParityEngine:
         Includes bar-by-bar MFE/MAE excursion tracking and Confirmed Re-entry Protocol.
         Dispatches to high-speed PyO3 Rust extension (nt8_parity_core) by default.
         """
+        if use_rust:
+            _require_rust_core()
         if use_rust and HAS_RUST_CORE:
             return self._simulate_mtf_rust(
                 df_5m, df_1m, signals_5m,

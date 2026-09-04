@@ -203,10 +203,21 @@ async fn handle(
 
 pub async fn start_proxy_server(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: std::net::SocketAddr = format!("127.0.0.1:{}", port).parse()?;
-    let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(l) => l,
-        Err(_) => return Ok(()),
-    };
+    // A bind failure used to `return Ok(())`. That reported SUCCESS for a proxy that had
+    // not started: a second fj_widget would come up, silently fail to bind 8636, and open
+    // a window served by the FIRST instance's proxy - an orphan that looks alive.
+    // Observed 2026-09-03. Propagate it; the caller decides whether to die.
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    serve_on(listener, port).await
+}
+
+/// Serve on a listener the caller already bound. Used by `main` so the port check and
+/// the bind are the SAME operation - a pre-flight "is 8636 free?" probe followed by a
+/// separate bind is a race, and the loser of that race is the silent orphan above.
+pub async fn serve_on(
+    listener: tokio::net::TcpListener,
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let client = Arc::new(reqwest::Client::builder().build()?);
 

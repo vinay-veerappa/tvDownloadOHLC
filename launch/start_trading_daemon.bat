@@ -70,5 +70,5 @@ if %errorlevel% equ 0 (
 echo.
 echo [RESTARTING] the daemon exited; restarting in 10s. A dead daemon is a dead HUD.
 echo [%DATE% %TIME%] restarting in 10s >> "%LOGFILE%"
-timeout /t 10 /nobreak >nul
+ping 127.0.0.1 -n 11 >nul
 goto daemon_loop

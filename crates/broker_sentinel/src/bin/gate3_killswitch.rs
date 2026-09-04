@@ -1,4 +1,4 @@
-//! Gate 3 verification harness — isolated killswitch test.
+﻿//! Gate 3 verification harness â€” isolated killswitch test.
 //!
 //! Reproduces the exact playbook scenario on a mock NT8 port so the real
 //! trading stack is untouched:
@@ -66,7 +66,7 @@ async fn main() {
     // To run this isolated test we bind a mock server on a TEST port and run
     // the sentinel logic against it via a temp-config trick. However the
     // sentinel hardcodes NT8_PORT=7890 by design (production constant), so the
-    // isolated test validates the LOGIC by binding mock on 7890 — impossible
+    // isolated test validates the LOGIC by binding mock on 7890 â€” impossible
     // while NT8 is live.
     //
     // Therefore: Phase A/C run against the REAL live NT8 (observe only).
@@ -140,10 +140,32 @@ async fn main() {
     }
     let snap3 = s2.snapshot();
     assert!(fired, "killswitch did not fire after mock death");
+
+    // TWO-SIDED timing bound. This block previously printed `detect_ms + 3000` and then
+    // asserted a hardcoded `true` against a "< 3000ms requirement" the inflated number
+    // did not even satisfy - so the only thing actually proven was that the killswitch
+    // fired at all, within the 6s the poll loop happens to run for. For a killswitch the
+    // latency IS the property, so assert it, in both directions:
+    //   * too SLOW  - the flatten misses the move it exists to stop.
+    //   * too EAGER - firing before the dead-timer elapses means a transient blip
+    //     flattens a live position. Not the safer direction; just a different loss.
+    const DEAD_AFTER_MS: u64 = 3000;
+    const DETECT_FLOOR_MS: u64 = 2000; // dead timer runs from the last SUCCESSFUL poll,
+                                       // which precedes t_kill - hence floor < 3000.
+    const DETECT_CEILING_MS: u64 = 6000; // dead threshold + poll interval + slack.
+    assert!(
+        detect_ms >= DETECT_FLOOR_MS,
+        "killswitch fired {}ms after kill, BEFORE the {}ms dead threshold could have          elapsed - it would trip on a transient blip",
+        detect_ms, DEAD_AFTER_MS
+    );
+    assert!(
+        detect_ms <= DETECT_CEILING_MS,
+        "killswitch took {}ms to fire, over the {}ms budget",
+        detect_ms, DETECT_CEILING_MS
+    );
     println!(
-        "[PHASE B.2] PASS: dead port detected + KILLSWITCH TRIGGER fired at ~{}ms after kill (< 3000ms requirement: {})",
-        detect_ms + 3000, // dead timer must first exceed 3000ms by design
-        true
+        "[PHASE B.2] PASS: dead port detected + KILLSWITCH TRIGGER fired {}ms after kill          (asserted {}..={}ms; dead threshold {}ms)",
+        detect_ms, DETECT_FLOOR_MS, DETECT_CEILING_MS, DEAD_AFTER_MS
     );
     println!("   trigger record: {}", snap3.flatten_fired);
     println!("[PHASE B] dry-run broker call: arm_live_flatten=false -> sentinel logged the Tradovate /v1/order/placeorder call it WOULD make");
@@ -160,5 +182,5 @@ async fn main() {
 
     println!("");
     println!("GATE 3 PASSED: killswitch detection, trigger, cushion formula, and broker path all verified in simulation.");
-    println!("NOTE: full live-fire (real Tradovate Demo flatten) requires demo API credentials in sentinel.json — arm_live_flatten=false by default.");
+    println!("NOTE: full live-fire (real Tradovate Demo flatten) requires demo API credentials in sentinel.json â€” arm_live_flatten=false by default.");
 }

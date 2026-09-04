@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Contract for GET /api/data on the trading_daemon (port 8635), captured 2026-09-03",
+    "from the live daemon AFTER the Node cutover.",
+    "",
+    "This is a CONTRACT, not a data snapshot. Balances move every 200ms, so pinning",
+    "values would fail on the first run and teach everyone to ignore the gate. What is",
+    "pinned is the shape and the invariants that a degraded poller would violate.",
+    "",
+    "minAccounts is an operator-tunable FLOOR, not a fact. It was 109 at capture. It is",
+    "set below that on purpose so a routine fleet change does not go red - but it is NOT",
+    "set to 1, because 'accounts is non-empty' passes while the poller returns garbage.",
+    "If the fleet legitimately shrinks past this, editing this number is a deliberate act."
+  ],
+  "requiredTopLevelKeys": [
+    "accounts", "positions", "copierRows", "copierSystem",
+    "totalNetLiquidation", "totalRealizedPnL", "totalUnrealizedPnL",
+    "totalOpenContracts", "activeAccountsCount", "activeContracts", "timestamp"
+  ],
+  "requiredAccountKeys": [
+    "name", "provider", "denomination", "cashValue", "netLiquidation",
+    "realizedPnL", "unrealizedPnL", "buyingPower"
+  ],
+  "requiredCopierSystemKeys": ["loaded", "mode", "isActing", "severity", "headline"],
+  "numericTopLevelKeys": [
+    "totalNetLiquidation", "totalRealizedPnL", "totalUnrealizedPnL",
+    "totalOpenContracts", "activeAccountsCount", "timestamp"
+  ],
+  "minAccounts": 100,
+  "accountsCountAtCapture": 109,
+  "maxTimestampAgeMs": 5000,
+  "requiredRoutes": ["/health", "/api/data", "/api/lockouts", "/api/guard/config"]
+}
