@@ -176,7 +176,7 @@ def _variant_signal_kernel(
             # The prior leg's BPR/IFVG are the reversal evidence; no FVG-count AND.
             if ce == 1 and (prior_leg_has_bpr or prior_leg_has_ifvg):
                 ok = _emit_long_signal(
-                    c, o, l, leg_cisd_level, leg_origin_low,
+                    i, c, o, l, leg_cisd_level, leg_origin_low,
                     tick_size, min_risk, max_risk,
                     stop_type_int, stop_loss_bps, entry_mechanism_int,
                     sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, sig_count,
@@ -184,7 +184,7 @@ def _variant_signal_kernel(
                 if ok: sig_count += 1
             elif ce == -1 and (prior_leg_has_bpr or prior_leg_has_ifvg):
                 ok = _emit_short_signal(
-                    c, o, h, leg_cisd_level, leg_origin_high,
+                    i, c, o, h, leg_cisd_level, leg_origin_high,
                     tick_size, min_risk, max_risk,
                     stop_type_int, stop_loss_bps, entry_mechanism_int,
                     sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, sig_count,
@@ -194,7 +194,7 @@ def _variant_signal_kernel(
             # V2: CISD trigger + 2+ unmitigated FVGs in the OPPOSING delivery run
             if ce == 1 and not v2_triggered and prior_bear_fvg >= 2:
                 ok = _emit_long_signal(
-                    c, o, l, leg_cisd_level, leg_origin_low,
+                    i, c, o, l, leg_cisd_level, leg_origin_low,
                     tick_size, min_risk, max_risk,
                     stop_type_int, stop_loss_bps, entry_mechanism_int,
                     sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, sig_count,
@@ -204,7 +204,7 @@ def _variant_signal_kernel(
                     v2_triggered = True
             elif ce == -1 and not v2_triggered and prior_bull_fvg >= 2:
                 ok = _emit_short_signal(
-                    c, o, h, leg_cisd_level, leg_origin_high,
+                    i, c, o, h, leg_cisd_level, leg_origin_high,
                     tick_size, min_risk, max_risk,
                     stop_type_int, stop_loss_bps, entry_mechanism_int,
                     sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, sig_count,
@@ -305,7 +305,7 @@ def _resolve_short_bracket(c, h, leg_cisd_level, leg_origin_high, tick_size,
 
 
 @_njit
-def _emit_long_signal(c, o, l, leg_cisd_level, leg_origin_low,
+def _emit_long_signal(bar_i, c, o, l, leg_cisd_level, leg_origin_low,
                       tick_size, min_risk, max_risk,
                       stop_type_int, stop_loss_bps, entry_mechanism_int,
                       sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, slot):
@@ -317,7 +317,7 @@ def _emit_long_signal(c, o, l, leg_cisd_level, leg_origin_low,
         return False
     if risk < min_risk or risk > max_risk:
         return False
-    sig_idx[slot] = -1  # caller patches with the real bar index
+    sig_idx[slot] = bar_i
     sig_dir[slot] = 1
     sig_entry[slot] = ep
     sig_stop[slot] = rs
@@ -326,7 +326,7 @@ def _emit_long_signal(c, o, l, leg_cisd_level, leg_origin_low,
 
 
 @_njit
-def _emit_short_signal(c, o, h, leg_cisd_level, leg_origin_high,
+def _emit_short_signal(bar_i, c, o, h, leg_cisd_level, leg_origin_high,
                        tick_size, min_risk, max_risk,
                        stop_type_int, stop_loss_bps, entry_mechanism_int,
                        sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, slot):
@@ -338,7 +338,7 @@ def _emit_short_signal(c, o, h, leg_cisd_level, leg_origin_high,
         return False
     if risk < min_risk or risk > max_risk:
         return False
-    sig_idx[slot] = -1
+    sig_idx[slot] = bar_i
     sig_dir[slot] = -1
     sig_entry[slot] = ep
     sig_stop[slot] = rs
@@ -647,6 +647,23 @@ class IFVGCISDStrategy:
         min_risk_bps = float(p.get("min_risk_bps", cfg.min_risk_bps))
         max_risk_bps = float(p.get("max_risk_bps", cfg.max_risk_bps))
 
+        # Stop-type / entry-mechanism projections into the kernel's int space.
+        # Both come from the manifest (single source of truth) unless the caller
+        # overrides — the C# bot reads the SAME manifest via IfvgCisdConfig.cs.
+        entry_mechanism = str(p.get("entry_mechanism", cfg.entry_mechanism)).lower()
+        stop_type_map = {
+            "bps_stat": 0,
+            "structural": 1,
+            "structural_capped_bps": 2,
+            "skip_if_out_of_band": 3,
+        }
+        mechanism_map = {"market": 0, "cisd_limit": 1}
+        stop_type_int = stop_type_map[
+            str(p.get("stop_loss_type", cfg.stop_loss_type)).lower()
+        ]
+        stop_loss_bps = float(p.get("stop_loss_bps", cfg.stop_loss_bps))
+        mechanism_int = mechanism_map[entry_mechanism]
+
         sig_idx, sig_dir, sig_entry, sig_stop, sig_risk = _variant_signal_kernel(
             htf_open.astype(np.float64), htf_high.astype(np.float64),
             htf_low.astype(np.float64), htf_close.astype(np.float64),
@@ -660,6 +677,7 @@ class IFVGCISDStrategy:
             sig_htf["bull_cisd_level"].values.astype(np.float64),
             sig_htf["bear_cisd_level"].values.astype(np.float64),
             variant_int, tick_size, min_risk_bps, max_risk_bps,
+            stop_type_int, stop_loss_bps, mechanism_int,
         )
 
         # ── Post-process: apply time/session filters and daily trade limits ──
@@ -677,7 +695,6 @@ class IFVGCISDStrategy:
         signal_rows: list[dict[str, Any]] = []
         last_signal_date: Optional[Any] = None
         daily_trades = 0
-        entry_mechanism = str(p.get("entry_mechanism", cfg.entry_mechanism)).lower()
 
         for j in range(len(sig_idx)):
             i = sig_idx[j]
