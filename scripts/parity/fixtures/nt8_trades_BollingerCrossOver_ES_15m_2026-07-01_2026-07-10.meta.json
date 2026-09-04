@@ -1,0 +1,75 @@
+{
+  "_comment": [
+    "First entry in the NT8 ground-truth trade corpus (plan phase 4.2).",
+    "",
+    "Captured from a LIVE NT8 Strategy Analyzer run through the MCP bridge on",
+    "2026-09-04, saved with NT8's OWN field names and its OWN timestamp format so",
+    "that `scripts/parity/trade_set_parity.py::normalise_trades` is exercised",
+    "against the real payload rather than a schema someone guessed. The alias",
+    "table in that module was written before this capture and this file is what",
+    "confirms it: marketPosition / entryPrice / exitPrice / profitCurrency /",
+    "exitName are the real keys, and the timestamps are ET-NAIVE.",
+    "",
+    "WHY BollingerCrossOver, a stock NT8 sample, and not one of this repo's bots:",
+    "none of this repo's C# strategies are deployed to NT8 (checked 2026-09-04 --",
+    "the Strategies directory has 27 files and contains no ICTFVGCISDBot and none",
+    "of the the_strat bots). Getting them there needs a sync + recompile, and a",
+    "recompile wipes every static singleton in a live NT8 that is currently",
+    "running an armed RiskGuard across 109 accounts. That is the user's call, not",
+    "a step to take while building a harness.",
+    "",
+    "So this fixture proves the PLUMBING, not parity. It is a real NT8 trade set",
+    "in the real format, which is what the harness needs to be tested against.",
+    "A real parity measurement additionally needs a matched pair of strategies",
+    "and the globals below to be correct.",
+    "",
+    "READ effectiveGlobals BEFORE USING THIS FOR ANYTHING NUMERIC.",
+    "GlobalMergePolicy was MergeBackAdjusted, so every price here is on a",
+    "back-adjusted continuous series. The frozen profile in",
+    "scripts/parity/backtest_profile.json requires MergeNonBackAdjusted; this",
+    "capture predates that change being made. profileHash is null because this",
+    "run did not go through the profile path at all."
+  ],
+
+  "capturedAt": "2026-09-04T23:10:00Z",
+  "source": "nt_backtest via nt8-mcp-bridge 1.5.2-chart-discovery",
+  "strategy": "BollingerCrossOver",
+  "strategyParams": "14/2 (Period, NumberOfStandardDeviations)",
+  "instrument": "ES DEC26",
+  "symbolRequested": "ES 12-26",
+  "period": "Minute",
+  "periodValue": 15,
+  "barSeconds": 900,
+  "from": "2026-07-01",
+  "to": "2026-07-10",
+  "timestampZone": "America/New_York",
+  "timestampsAreNaive": true,
+
+  "effectiveGlobals": {
+    "GlobalMergePolicy": "MergeBackAdjusted",
+    "IsTickReplayEnabled": "False"
+  },
+  "profileHash": null,
+
+  "reportedMetrics": {
+    "totalTrades": 47,
+    "winners": 27,
+    "losers": 20,
+    "tradeWinRatePct": 57.4,
+    "profitFactor": 0.691,
+    "grossProfit": 9762.5,
+    "grossLoss": -14137.5,
+    "netProfit": -4375,
+    "maxDrawdown": -7287.5,
+    "totalCommission": 0,
+    "largestWinner": 2112.5,
+    "largestLoser": -2662.5,
+    "exitReasons": {"Close position": 40, "Exit on session close": 7}
+  },
+
+  "knownIssuesWithThisCapture": [
+    "totalCommission is 0 -- IncludeCommission was not set on this run, so these figures are not comparable to an account statement.",
+    "Every exit is 'Close position' or 'Exit on session close': this sample strategy is always-in-market and reverses, so there are no Stop Loss or Profit Target exits to compare exit-reason parity against. A corpus entry with bracket exits is still needed.",
+    "The bridge IGNORED a strategy name it could not resolve. A prior call in the same session requested '@SampleMACrossOver' (leading @) and the bridge ran '_McpTestBot' -- whatever was already loaded in the reused SA window -- returning totalTrades: 0 as though the requested strategy simply had not traded. ALWAYS check that the returned summary's name= matches what was asked for. Filed against nt8-mcp-bridge."
+  ]
+}
