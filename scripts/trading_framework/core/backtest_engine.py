@@ -17,6 +17,104 @@ if _current_dir.name == "scripts":
 
 from scripts.trading_framework.core.base import BaseBacktester
 
+# ---------------------------------------------------------------------------
+# Signal geometry
+#
+# A long whose stop sits ABOVE its entry is not a risky trade, it is an
+# arithmetically impossible one: the "stop" is hit immediately and books a
+# PROFIT. Nothing checked for it, and the consequence was not subtle.
+#
+# Measured 2026-09-04, NQ1 `mean_reversion` over 2024-01-01..2026-03-31:
+# 106 of 702 signals (15.1%) had the stop on the wrong side of entry, and of the
+# 38 trades that resulted, 36 exited with reason "Stop Loss" for an AVERAGE OF
+# +48.6 POINTS (max +439.75). The run reported win rate 76.3%, profit factor
+# 31.64 and Sharpe 9.38 -- entirely plausible-looking numbers, produced by
+# stop-losses that made money.
+#
+# The cause in that strategy is instructive and is why this check belongs at the
+# ENGINE boundary rather than in one strategy: the stop was anchored to a
+# Bollinger band rather than to the entry --
+#
+#     entry_price = close
+#     stop_price  = bb_lower - atr * mult      (for a long)
+#
+# -- and a mean-reversion long has `close < bb_lower` by construction, so
+# whenever the overshoot exceeded `atr * mult` the stop landed above the entry.
+# Any strategy that computes a stop from a level instead of from its own entry
+# can do this, so the engine is the place that must not accept it.
+#
+# Stops and targets are DROPPED and COUNTED, matching how misalignment is
+# handled: a caller gets a number rather than a plausible Sharpe.
+# `strict_geometry=True` raises instead, for callers that know their signals
+# should all be well formed.
+# ---------------------------------------------------------------------------
+def validate_signal_geometry(signals: pd.DataFrame, risk_params: Dict[str, Any],
+                             tick_size: float = 0.25):
+    """Drop signals whose stop/target cannot be what they claim to be.
+
+    Returns (kept_signals, report). Rules, all direction-aware:
+      * long  -> stop < entry < target;  short -> stop > entry > target
+      * |entry - stop| must be at least one tick (a sub-tick stop is not a
+        price, and 12 of the 702 signals above were below one NQ tick)
+      * every price finite and positive
+    """
+    n_in = int(len(signals))
+    empty_report = {
+        'signals_in': n_in, 'signals_kept': n_in,
+        'dropped_stop_wrong_side': 0, 'dropped_target_wrong_side': 0,
+        'dropped_stop_sub_tick': 0, 'dropped_non_finite': 0,
+        'tick_size': float(tick_size),
+    }
+    if n_in == 0:
+        return signals, empty_report
+
+    strict = bool(risk_params.get('strict_geometry', False))
+    tick = float(risk_params.get('tick_size', tick_size))
+
+    entry = signals['entry_price'].to_numpy(dtype='float64')
+    stop = signals['stop_price'].to_numpy(dtype='float64')
+    is_long = signals['direction'].astype(str).str.lower().to_numpy() == 'long'
+    has_target = 'target1_price' in signals.columns
+    target = (signals['target1_price'].to_numpy(dtype='float64') if has_target
+              else np.where(is_long, entry + tick, entry - tick))
+
+    finite = np.isfinite(entry) & np.isfinite(stop) & np.isfinite(target)
+    finite &= (entry > 0) & (stop > 0) & (target > 0)
+
+    stop_ok = np.where(is_long, stop < entry, stop > entry)
+    target_ok = np.where(is_long, target > entry, target < entry)
+    size_ok = np.abs(entry - stop) >= tick
+
+    keep = finite & stop_ok & target_ok & size_ok
+    report = {
+        'signals_in': n_in,
+        'signals_kept': int(keep.sum()),
+        # Attributed to the FIRST rule each signal broke, so the counts sum to
+        # the number dropped instead of double-counting one bad signal.
+        'dropped_non_finite': int((~finite).sum()),
+        'dropped_stop_wrong_side': int((finite & ~stop_ok).sum()),
+        'dropped_target_wrong_side': int((finite & stop_ok & ~target_ok).sum()),
+        'dropped_stop_sub_tick': int((finite & stop_ok & target_ok & ~size_ok).sum()),
+        'tick_size': tick,
+    }
+
+    n_dropped = n_in - report['signals_kept']
+    if n_dropped:
+        msg = ("signal geometry: {} of {} signals are impossible as written "
+               "(stop_wrong_side={}, target_wrong_side={}, sub_tick_stop={}, "
+               "non_finite={}). A stop on the wrong side of entry is hit "
+               "immediately and books a PROFIT, so these do not represent risk."
+               .format(n_dropped, n_in, report['dropped_stop_wrong_side'],
+                       report['dropped_target_wrong_side'],
+                       report['dropped_stop_sub_tick'],
+                       report['dropped_non_finite']))
+        if strict:
+            raise ValueError(msg)
+        print("[backtest_engine] WARNING: " + msg)
+
+    return signals[keep].copy(), report
+
+
 class VectorizedBacktester(BaseBacktester):
     """
     High-performance Vectorized / Semi-Vectorized Backtesting Engine.
@@ -237,10 +335,20 @@ class VectorizedBacktester(BaseBacktester):
                 'frame_end': str(data.index[-1]) if len(data.index) else None,
             })
 
-        # 1. Alignment and Pre-check -- see _align_signals_to_frame for why this
-        #    is bounded in time rather than left to get_indexer's silent snap.
+        # 1a. Geometry -- a stop on the wrong side of entry books a profit.
+        signals, geometry = validate_signal_geometry(signals, risk_params)
+        if signals.empty:
+            return self._null_metrics(data, alignment={
+                'signals_in': geometry['signals_in'], 'signals_kept': 0,
+                'note': 'every signal was refused by the geometry check',
+                'geometry': geometry,
+            })
+
+        # 1b. Alignment -- see _align_signals_to_frame for why this is bounded
+        #     in time rather than left to get_indexer's silent snap.
         signals, entry_indices, alignment = self._align_signals_to_frame(
             signals, data, risk_params)
+        alignment['geometry'] = geometry
 
         if signals.empty:
             return self._null_metrics(data, alignment=alignment)

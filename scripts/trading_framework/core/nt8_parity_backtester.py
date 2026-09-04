@@ -30,7 +30,10 @@ if _current_dir.name == "scripts":
         sys.path.insert(0, _root_dir)
 
 from scripts.trading_framework.core.base import BaseBacktester
-from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
+from scripts.trading_framework.core.backtest_engine import (
+    VectorizedBacktester,
+    validate_signal_geometry,
+)
 from scripts.execution.nt8_parity_engine import NT8ParityEngine, NT8Trade
 
 
@@ -149,12 +152,17 @@ class NT8ParityBacktester(BaseBacktester):
 
         # (c) the canonical one-row-per-signal frame -- expand it onto the bars
         if all(c in signals.columns for c in self._CANONICAL_COLS):
+            # Same geometry check as the vectorized engine, and this is the
+            # engine on which it was found: 36 of 38 trades here exited with
+            # reason "Stop Loss" for an average of +48.6 points.
+            signals, geometry = validate_signal_geometry(signals, {})
             # Reuse the bounded aligner rather than reimplementing bfill here:
             # the unbounded version of exactly this mapping is what collapsed a
             # whole signal set onto bar 0 elsewhere in this codebase.
             placed, idx, alignment = VectorizedBacktester._align_signals_to_frame(
                 signals, data, {})
             alignment["inputShape"] = "canonical_signal_frame"
+            alignment["geometry"] = geometry
 
             sig = pd.Series(0, index=data.index, dtype="int32")
             lmt = data["close"].astype("float64").copy()
