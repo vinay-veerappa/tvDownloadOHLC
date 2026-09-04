@@ -356,6 +356,29 @@ So it is not a tick pump; it is the market-data plumbing the narratives, conflue
 
 **Cheaper fix if the memory matters:** hold candles per symbol as a DataFrame or numpy arrays rather than lists of dicts. That captures most of the reclaim without touching the settlement semantics. Profile first — 260 MB on a 24-core box may simply not be worth spending anything on.
 
+#### The CPU was the real cost, and it was one line (fixed 2026-09-03, commit `2e6daf80`)
+Profiling the whole box for process sprawl found the sprawl is not the problem: **21 Python processes, 959 MB, 19.3% of one core** — but 18 of them sit at ~0% CPU, and the apparent duplicate pairs are parent/child shims (a ~10 MB `python -m X` that spawned the real ~50 MB worker), so killing the "extra" would orphan the worker. The cost was concentrated in `stream_chart.py`: **16.3% of a core sustained, ~84% of all Python CPU**.
+
+`save_candles_to_parquet` is called with a *single* finalised candle (`:1198`) but rebuilt the derived `timestamp` string column across every row each time. `.dt.strftime()` is an element-wise Python loop, so appending one bar re-rendered 598,143 identical strings. Stage profile of one save:
+
+| stage | time | share |
+|---|---|---|
+| read | 30 ms | 1.2% |
+| concat + dedup + sort | 32 ms | 1.3% |
+| **timestamp strftime** | **2,219 ms** | **91.9%** |
+| write | 134 ms | 5.5% |
+
+The column is now computed for new rows only, and the existing one healed only when missing or non-string. Byte-identical output (`DataFrame.equals`) against the live files: NQ 2,240→174 ms (12.9×), ES 2,167→172 ms (12.6×), QQQ 791→105 ms (7.5×). The remaining ~130 ms is the parquet write, now the floor.
+
+⚠️ **The dtype guard must be `is_string_dtype`, not `== object`.** Pandas returns the newer `str` dtype for this column, so an `== object` test is always False, heals on every call, and yields **exactly zero speedup while looking correct** — measured 1.0× on the first attempt for precisely that reason.
+
+**Verified in production** after restart, sampled over 7 minutes: **CPU 16.3% → 1.0%**, memory plateaued (695–702 MB, not climbing).
+
+⚠️ **Unresolved: resident memory is now ~700 MB against the 316–410 MB observed on the old process.** That is *not* attributable to this change — the pre-fix code created the same string column, and more of them. The likeliest explanation is that the old process had run 54 hours and Windows had trimmed its working set during idle periods, while a freshly restarted process holds its pages resident; but the two were never measured side by side, so this is unconfirmed. If memory turns out to matter, the fix is the dict-per-candle representation above, not anything in this change.
+
+#### Lesson for the Rust question
+A Rust port would have made the same 598k-row strftime perhaps 10× faster while still doing O(entire history) work per appended bar — and would have carried the defect across, faster and harder to see. **The algorithm was the problem, not the language.**
+
 Everything else in Python (`strategy_engine/runner.py` 87 MB, `api.main` 49 MB) is too small for a rewrite to pay.
 
 ### 5. Smaller open items
