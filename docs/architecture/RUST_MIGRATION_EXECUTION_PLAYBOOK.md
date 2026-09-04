@@ -402,6 +402,26 @@ It also makes the trigger genuinely one-time. Today `chart_handler:1224` calls `
 
 **Sequencing matters:** fix the session-boundary filter *before* restoring the return, or the first run stampedes the Schwab API.
 
+#### Resolved 2026-09-03 — bridging is live again, and it recovered 72,500 bars
+All four steps executed (`e9e7de51`, `6e44eefd`, `003047b6`, `e74f1c17`).
+
+* **Session derived per symbol from its own history** rather than 28 hardcoded schedules. A minute is "dense" if a bar is present on ≥80% of weekdays; a gap counts only if the minutes it is missing are normally dense. Across the watchlist: **117,977 weekend-only "gaps" → 153 real ones**, full-history scan 24.3 s → 1.9 s.
+* ⚠️ **The 0.90 threshold hid VIX's real 03:15 ET session.** Its early block is present on only 40/48 weekdays — and the 8 misses are collector restarts, several of them the very outages the detector exists to find. **The outage suppressed detection of itself.** 0.80 is the measured inflection: it resolves VIX to 03:15–16:15 while NFLX only goes 2→7 gaps (at 0.75 NFLX jumps to 21, at 0.70 to 61). Only VIX among the indices has an early session; VVIX/VXN/OVX/RVX/GVZ/VXD/VOLI/VIX9D are RTH-only and SPX is 09:30.
+* **`detect_gaps` reads the parquet `time` column**, so `CANDLE_WINDOW` dropped **15,000 → 1,500** (~157 MB → ~18 MB of dicts). Nothing else needed that depth.
+* **`session_status()`** distinguishes "clean" from "cannot tell". Seven symbols (GVZ, OVX, RVX, VIX9D, VOLI, VXD, VXN) have 7 weekdays against a 10-day minimum and were unmonitored while looking healthy.
+
+⚠️ **I caused a Hub outage doing this — read before changing the caps.** `MAX_GAPS_PER_PASS` is **per symbol**, which bounds nothing when the caller loops over the watchlist. The first live run walked 27 symbols at up to 5 gaps each; the Hub is **one** Schwab connection. It served ten symbols (~45,000 bars) and then died mid-GOOGL, taking the live feed down until restarted by hand. Three limits now, none of which a per-symbol cap provides:
+
+| limit | value | why |
+|---|---|---|
+| `MAX_BRIDGE_REQUESTS_PER_WINDOW` | 20 / 300 s, **global** | a fleet walk cannot burst |
+| `BRIDGE_REQUEST_SPACING_SEC` | 1.0 | an in-budget run still must not saturate the Hub |
+| `HUB_FAILURE_COOLDOWN_SEC` | 300 | one failure previously cascaded across all 27 symbols |
+
+**Result after the fix**, verified live: exactly 20 requests issued, **zero Hub failures**, Hub healthy, **+72,500 bars recovered**, and integrity confirmed on NQ/GC/QQQ/SPY (no duplicate timestamps, still sorted, `timestamp` column consistent with `time`). Remaining gaps are worked on later passes — `/GC` alone still reports 38.
+
+**`stream_chart.py` now: CPU 16.3% → 2%, RAM ~700 MB → 540 MB.**
+
 #### Lesson for the Rust question
 A Rust port would have made the same 598k-row strftime perhaps 10× faster while still doing O(entire history) work per appended bar — and would have carried the defect across, faster and harder to see. **The algorithm was the problem, not the language.**
 
