@@ -19,6 +19,11 @@ from pandas.api.types import is_string_dtype
 import pyarrow.parquet as pq
 
 from scripts.streaming import gap_detect
+from scripts.streaming.parquet_io import (
+    CANDLE_COLS,
+    PARQUET_ROW_GROUP_SIZE,
+    read_parquet_tail,
+)
 from datetime import datetime, timezone, timedelta, time as dt_time
 from zoneinfo import ZoneInfo
 import httpx
@@ -444,11 +449,11 @@ def init_chart_data(symbol):
     # Restore main 1m data from Parquet
     if os.path.exists(files["parquet"]):
         try:
-            df = pd.read_parquet(files["parquet"])
+            # Only the last CANDLE_WINDOW bars are kept, so decode only the row
+            # groups that contain them - reading the whole file to take a 1,500-row
+            # tail was ~400x more rows than needed, for all 27 symbols, at startup.
+            df = read_parquet_tail(files["parquet"], CANDLE_WINDOW, columns=CANDLE_COLS)
             if not df.empty:
-                if 'timestamp' in df.columns:
-                    df = df.drop(columns=['timestamp'])
-                # Only keep last 15,000 candles in memory to save RAM
                 df = df.tail(CANDLE_WINDOW)
                 data["candles"] = deduplicate_candles(df.to_dict(orient="records"))
                 data["last_update"] = get_now_iso()
@@ -1257,7 +1262,7 @@ def save_candles_to_parquet(symbol, candles, parquet_path):
 
         # Atomic write: temp file → os.replace (atomic on same filesystem)
         tmp_path = parquet_path + '.tmp'
-        combined.to_parquet(tmp_path, index=False)
+        combined.to_parquet(tmp_path, index=False, row_group_size=PARQUET_ROW_GROUP_SIZE)
         os.replace(tmp_path, parquet_path)
     except Exception as e:
         print(f"❌ Error saving parquet for {symbol}: {e}")
@@ -1378,7 +1383,8 @@ async def handle_history(request):
         if not os.path.exists(parquet_path):
             return web.json_response({"error": f"No parquet data for {symbol}"}, status=404)
             
-        df = pd.read_parquet(parquet_path)
+        # Same reason as init_chart_data: `limit` bars are wanted, not the file.
+        df = read_parquet_tail(parquet_path, limit, columns=CANDLE_COLS)
         df = df.tail(limit)
         
         candles = df.to_dict(orient="records")
