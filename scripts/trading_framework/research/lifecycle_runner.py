@@ -3,6 +3,15 @@ import sys
 import json
 import asyncio
 from pathlib import Path
+
+# This module prints emoji at every stage. On a default Windows console stdout
+# is cp1252, which cannot encode them, so the FIRST status line raised
+# UnicodeEncodeError and killed the run before any data was loaded. Reconfigure
+# rather than strip the emoji: the same hazard reaches anything this module
+# prints, including exception text from deeper in the stack.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 import pandas as pd
 import numpy as np
 import optuna
@@ -19,7 +28,7 @@ from scripts.libs_py.data.loader import DataLoader
 from scripts.trading_framework.config.config_loader import load_config
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.strategies.registry import get_strategy
-from scripts.trading_framework.ml.walk_forward import PurgedKFold
+from scripts.trading_framework.ml.walk_forward import sequential_evaluation_folds
 from scripts.trading_framework.reporting.risk_profiler import RiskProfiler
 from scripts.trading_framework.reporting.optimization_summary import OptimizationReporter
 
@@ -66,36 +75,103 @@ class ResearchLifecycleRunner:
 
         raise ValueError(f"Unsupported param grid spec for '{key}': {spec}")
 
+    # Bars a trade is allowed to search forward for its exit. Must match
+    # VectorizedBacktester's MAX_SEARCH, or the buffer reserved per fold does
+    # not cover the search the engine actually performs.
+    EXIT_BUFFER_BARS = 1440
+    # Bars skipped between consecutive evaluation windows.
+    EMBARGO_BARS = 1440
+
     def _optimize_params(self, data, trials=10):
-        """Standardized Layer 6 Optuna optimization."""
+        """Standardized Layer 6 Optuna optimization.
+
+        HISTORY. This objective used to call `generate_signals(fold_train)` and
+        then `backtester.run(signals, fold_test)`. Those are two DIFFERENT
+        frames. `Index.get_indexer(..., method='bfill')` snaps an out-of-range
+        timestamp to the next available bar with no distance limit and returns
+        -1 only when no later bar exists at all, so every train-fold signal
+        mapped to index 0 of the test frame and passed the engine's `!= -1`
+        validity check. The objective was therefore "score N signals as if all
+        of them entered on the first bar of the test window", which Optuna
+        maximised for as many trials as it was given. The PurgedKFold wrapper
+        could not detect this: the signals had never been indexed to the test
+        fold at all, so there was nothing for a purge to do.
+
+        The construction now keeps the three boundaries separate -- see
+        `sequential_evaluation_folds` -- and passes `strict_alignment=True`, so
+        if signals and frame ever diverge again the run RAISES instead of
+        returning a plausible number.
+
+        Caveat worth carrying: `VectorizedBacktester` builds Sharpe from a
+        per-BAR series that is zero except at exit bars, so the value scales
+        with frame length. Fold Sharpes are comparable to EACH OTHER because the
+        windows are equal-length; they are NOT comparable to the OOS Sharpe,
+        which is measured over a much longer frame.
+        """
+        folds = sequential_evaluation_folds(
+            len(data), n_splits=3,
+            exit_buffer=self.EXIT_BUFFER_BARS, embargo=self.EMBARGO_BARS,
+        )
+        width = folds[0]['test_end'] - folds[0]['test_start']
+        print(f"   Evaluation windows: {len(folds)} x {width} bars "
+              f"(+{self.EXIT_BUFFER_BARS} exit buffer, {self.EMBARGO_BARS} embargo)")
+
         def objective(trial):
             # Dynamic grid from strategy architecture (ADR-017)
             grid = self.strategy.get_param_grid()
             params = {}
             for k, v in grid.items():
                 params[k] = self._suggest_from_grid(trial, k, v)
-            
-            # --- Layer 6: Purged Cross-Validation ---
-            pkf = PurgedKFold(n_splits=3, purge_window=100)
+
             fold_sharpes = []
-            
-            for fold_idx, (train_idx, test_idx) in enumerate(pkf.split(data)):
-                fold_train = data.iloc[train_idx]
-                fold_test = data.iloc[test_idx]
-                
-                signals = self.strategy.generate_signals(fold_train, params)
+            for f in folds:
+                # The generator sees history up to the END of the window and no
+                # further, so a signal inside the window cannot be informed by a
+                # bar after it.
+                gen_df = data.iloc[: f['gen_end']]
+                signals = self.strategy.generate_signals(gen_df, params)
+                if signals is None or len(signals) == 0:
+                    fold_sharpes.append(-1.0)
+                    continue
+
+                # Only signals raised INSIDE this window are this window's
+                # evidence. Everything earlier belongs to a previous fold and is
+                # exactly what used to be collapsed onto bar 0.
+                w_start = data.index[f['test_start']]
+                w_end = data.index[f['test_end'] - 1]
+                st = pd.to_datetime(signals['signal_time'])
+                signals = signals[(st >= w_start) & (st <= w_end)]
                 if signals.empty:
                     fold_sharpes.append(-1.0)
                     continue
-                    
-                metrics = self.backtester.run(signals, fold_test, {'leverage': 1.0})
+
+                # Scored on a frame that BEGINS at the window (so every
+                # signal_time is an exact index member) and runs past its end
+                # (so a late trade can still resolve).
+                score_df = data.iloc[f['score_start']: f['score_end']]
+                metrics = self.backtester.run(signals, score_df, {
+                    'leverage': 1.0,
+                    'ticker': self.ticker,
+                    'strict_alignment': True,
+                })
+
+                # A fold that produced NO trades must not outscore a fold that
+                # lost money. `_null_metrics` returns sharpe 0.0, which is
+                # better than any real loss, so scoring it as-is rewards
+                # parameter sets that stop trading. Measured 2026-09-04 on
+                # mean_reversion: an empty fold scored 0.0000 and outranked a
+                # trading fold at -0.0222 in the same objective.
+                if int(metrics.get('num_trades', 0)) == 0:
+                    fold_sharpes.append(-1.0)
+                    continue
+
                 fold_sharpes.append(metrics.get('sharpe_ratio', -1.0))
-                
-                trial.report(fold_sharpes[-1], fold_idx)
+
+                trial.report(fold_sharpes[-1], f['fold'])
                 if trial.should_prune():
                     raise optuna.exceptions.TrialPruned()
-                    
-            return np.mean(fold_sharpes) if fold_sharpes else -1.0
+
+            return float(np.mean(fold_sharpes)) if fold_sharpes else -1.0
 
         study = optuna.create_study(
             study_name=f"{self.strategy_name}_{self.ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",

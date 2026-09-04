@@ -78,6 +78,106 @@ class VectorizedBacktester(BaseBacktester):
         ]
         return out
         
+    # ------------------------------------------------------------------
+    # Signal / frame alignment
+    #
+    # `Index.get_indexer(..., method='bfill')` snaps a missing timestamp to the
+    # NEXT available bar with NO distance limit, and returns -1 only when there
+    # is no later bar at all. That is a silent, unbounded reindex: signals
+    # generated on a DIFFERENT frame than the one being backtested do not error,
+    # they execute at whatever bar happens to come next.
+    #
+    # Measured 2026-09-04: passing a train fold's signals against a test fold's
+    # frame mapped EVERY pre-frame signal to index 0 and passed the `!= -1`
+    # check, so the whole set was scored as if it had entered on the first bar
+    # of the test window. The purged-CV machinery wrapped around that could not
+    # see it, because the signals had never been indexed to the test fold at all.
+    #
+    # Note the bound is in TIME, not bars. Between two adjacent bars there are
+    # no other bars, so bfill always lands exactly one bar forward and a
+    # bar-count limit can never bind. What varies is how much wall clock that
+    # one bar spans -- a signal at 17:05 on a frame that jumps 17:00 -> 18:00
+    # snaps forward 55 minutes and still measures as "one bar".
+    #
+    # Rules:
+    #   * a snap is allowed up to `max_snap_seconds`, defaulting to the frame's
+    #     own modal bar spacing (i.e. at most one normal bar late);
+    #   * anything beyond that is DROPPED, and every drop is COUNTED and
+    #     returned, so a caller passing the wrong frame gets a number instead of
+    #     a plausible Sharpe;
+    #   * `strict_alignment=True` turns any drop into a raise, for callers that
+    #     know the two frames must correspond exactly.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _frame_bar_seconds(data: pd.DataFrame) -> float:
+        if len(data.index) < 3:
+            return 60.0
+        diffs = np.diff(data.index.values[:5000]).astype('timedelta64[s]').astype(float)
+        diffs = diffs[diffs > 0]
+        if diffs.size == 0:
+            return 60.0
+        return float(np.median(diffs))
+
+    def _align_signals_to_frame(self, signals: pd.DataFrame, data: pd.DataFrame,
+                                risk_params: Dict[str, Any]):
+        """Map signal_time -> bar index, bounding the forward snap in TIME.
+
+        Returns (signals, entry_indices, report). `report` is always populated and
+        is carried into the metrics dict, so a run record can store it and a gate
+        can assert on it.
+        """
+        bar_seconds = self._frame_bar_seconds(data)
+        max_snap = float(risk_params.get('max_snap_seconds', bar_seconds))
+        strict = bool(risk_params.get('strict_alignment', False))
+        n_in = int(len(signals))
+
+        sig_ns = signals['signal_time'].to_numpy(dtype='datetime64[ns]')
+        idx_ns = data.index.to_numpy(dtype='datetime64[ns]')
+
+        raw = data.index.get_indexer(signals['signal_time'], method='bfill')
+        exact = data.index.get_indexer(signals['signal_time'])
+
+        past_frame_end = raw == -1
+        safe = np.where(past_frame_end, 0, raw)
+        snap_seconds = (idx_ns[safe] - sig_ns).astype('timedelta64[s]').astype(float)
+        snap_seconds = np.where(past_frame_end, np.inf, snap_seconds)
+
+        before_frame_start = sig_ns < idx_ns[0]
+        too_far = snap_seconds > max_snap
+        keep = (~past_frame_end) & (~too_far)
+
+        report = {
+            'signals_in': n_in,
+            'signals_kept': int(keep.sum()),
+            'dropped_past_frame_end': int(past_frame_end.sum()),
+            'dropped_before_frame_start': int((before_frame_start & ~keep).sum()),
+            'dropped_snap_too_far': int((too_far & ~past_frame_end).sum()),
+            'snapped_within_tolerance': int((keep & (exact == -1)).sum()),
+            'max_snap_seconds_allowed': max_snap,
+            'frame_bar_seconds': bar_seconds,
+            'frame_start': str(data.index[0]) if len(data.index) else None,
+            'frame_end': str(data.index[-1]) if len(data.index) else None,
+        }
+
+        n_dropped = n_in - report['signals_kept']
+        if n_dropped and strict:
+            raise ValueError(
+                "strict_alignment: {} of {} signals could not be placed on the "
+                "backtest frame [{} .. {}] within {:.0f}s. "
+                "before_frame_start={}, snap_too_far={}, past_frame_end={}. "
+                "This almost always means the signals were generated on a "
+                "different frame than the one passed as `data`.".format(
+                    n_dropped, n_in, report['frame_start'], report['frame_end'],
+                    max_snap, report['dropped_before_frame_start'],
+                    report['dropped_snap_too_far'], report['dropped_past_frame_end'])
+            )
+        if report['dropped_before_frame_start']:
+            print("[backtest_engine] WARNING: {} signal(s) predate the backtest frame "
+                  "and were dropped, not snapped forward to bar 0. Frames likely mismatched."
+                  .format(report['dropped_before_frame_start']))
+
+        return signals[keep].copy(), raw[keep], report
+
     def run(self, signals: Union[pd.Series, pd.DataFrame], data: pd.DataFrame, risk_params: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(signals, pd.Series):
             return self._run_raw_vectorized(signals, data, risk_params)
@@ -87,6 +187,21 @@ class VectorizedBacktester(BaseBacktester):
             raise ValueError("Unsupported signal format. Use pd.Series or pd.DataFrame.")
 
     def _run_raw_vectorized(self, signals: pd.Series, data: pd.DataFrame, risk_params: Dict[str, Any]) -> Dict[str, Any]:
+        # `execution_signals * data['returns']` is an INDEX-ALIGNED multiply:
+        # pandas silently unions the two indexes and fills NaN, so passing a
+        # signal series from a different frame returns NaN metrics rather than
+        # raising. Same family as the bfill snap on the standardized path --
+        # the wrong frame produces a number instead of a complaint. Here the
+        # two indexes must be identical, so say so.
+        if not signals.index.equals(data.index):
+            overlap = int(signals.index.isin(data.index).sum())
+            raise ValueError(
+                "raw-vectorized backtest requires the signal series and the price "
+                "frame to share one index; got {} signal rows vs {} bars with {} "
+                "overlapping. An index-aligned multiply would have returned NaN "
+                "metrics instead of failing.".format(
+                    len(signals.index), len(data.index), overlap)
+            )
         execution_signals = signals.shift(1).fillna(0)
         strategy_returns = execution_signals * data['returns']
         trades = execution_signals.diff().abs()
@@ -108,14 +223,13 @@ class VectorizedBacktester(BaseBacktester):
         if signals.empty:
             return self._null_metrics(data)
 
-        # 1. Alignment and Pre-check
-        entry_indices = data.index.get_indexer(signals['signal_time'], method='bfill')
-        valid_mask = entry_indices != -1
-        signals = signals[valid_mask].copy()
-        entry_indices = entry_indices[valid_mask]
+        # 1. Alignment and Pre-check -- see _align_signals_to_frame for why this
+        #    is bounded in time rather than left to get_indexer's silent snap.
+        signals, entry_indices, alignment = self._align_signals_to_frame(
+            signals, data, risk_params)
 
         if signals.empty:
-            return self._null_metrics(data)
+            return self._null_metrics(data, alignment=alignment)
 
         # 2. Performance Matrix Search (Layer 5 - ADR-008)
         MAX_SEARCH = 1440 
@@ -295,6 +409,9 @@ class VectorizedBacktester(BaseBacktester):
         }
 
         return {
+            # Echoed so a result can never be read without knowing how many
+            # signals actually reached the frame it was scored on.
+            'signal_alignment': alignment,
             'total_return_%': (cum_returns.iloc[-1] - 1) * 100,
             'sharpe_ratio': self._calculate_sharpe(equity_returns),
             'max_drawdown_%': self._calculate_max_drawdown(cum_returns) * 100,
@@ -308,8 +425,12 @@ class VectorizedBacktester(BaseBacktester):
             'performance_by_measurement': perf_by_measurement,
         }
 
-    def _null_metrics(self, data: pd.DataFrame) -> Dict[str, Any]:
+    def _null_metrics(self, data: pd.DataFrame,
+                      alignment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        # An empty result and a MISALIGNED result look identical in every metric,
+        # so the alignment report travels with the null case too.
         return {
+            'signal_alignment': alignment or {},
             'total_return_%': 0.0, 'sharpe_ratio': 0.0, 'max_drawdown_%': 0.0,
             'num_trades': 0, 'equity_curve': pd.Series(1.0, index=data.index),
             'trade_returns_pct': pd.Series([], dtype=float),
