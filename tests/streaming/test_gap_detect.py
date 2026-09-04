@@ -15,6 +15,7 @@ from scripts.streaming.gap_detect import (
     build_session_mask,
     detect_gaps,
     missing_dense_minutes,
+    session_status,
 )
 
 MIN = 60_000
@@ -186,6 +187,97 @@ def test_declines_when_history_is_too_thin_to_classify():
 def test_handles_degenerate_input():
     assert detect_gaps(np.array([], dtype=np.int64)) == []
     assert detect_gaps(np.array([1_700_000_000_000], dtype=np.int64)) == []
+
+
+# ---------------------------------------------------------------- session threshold
+
+def _early_session_series(days=48, missed_early_days=8):
+    """A VIX-shaped symbol: an early block plus RTH, with the early block absent on
+    some days because the collector restarted."""
+    out = []
+    day = pd.Timestamp("2026-06-01", tz=ET)
+    d = 0
+    while d < days:
+        if day.weekday() < 5:
+            rth = day.replace(hour=9, minute=31, second=0, microsecond=0)
+            out += [int(rth.value // 1_000_000) + m * MIN for m in range(390)]
+            if d >= missed_early_days:  # early block missing on the first N days
+                early = day.replace(hour=3, minute=15, second=0, microsecond=0)
+                out += [int(early.value // 1_000_000) + m * MIN for m in range(375)]
+            d += 1
+        day += pd.Timedelta(days=1)
+    return np.array(sorted(out), dtype=np.int64)
+
+
+def test_a_session_present_on_83pct_of_days_is_still_a_session():
+    """Regression test for the 0.90 -> 0.80 threshold decision.
+
+    VIX trades from 03:15 ET but its early block is present on only 40/48 weekdays; the
+    8 misses are collector restarts, several of them the outages this detector exists to
+    find. At 0.90 the block scored "not a session" and VIX's missing pre-market became
+    permanently invisible - the outage suppressed detection of itself.
+    """
+    s = _early_session_series()
+    mask = build_session_mask(s)
+    assert mask is not None
+    assert mask[3 * 60 + 15], "03:15 must be part of the session at the shipped threshold"
+    assert mask.sum() > 700, f"expected the early block to be included, got {mask.sum()}"
+
+
+def test_that_session_is_invisible_at_a_stricter_threshold():
+    """NEGATIVE CONTROL: proves the test above is sensitive to the threshold and not
+    passing for some unrelated reason."""
+    s = _early_session_series()
+    strict = build_session_mask(s, dense_frac=0.90)
+    assert not strict[3 * 60 + 15]
+    assert strict.sum() == 390  # RTH only
+
+
+def test_missing_early_blocks_are_reported_as_gaps():
+    s = _early_session_series()
+    gaps = detect_gaps(s, now_ms=int(s[-1]) + MIN, include_trailing=False, max_age_days=None)
+    # Each day that lacks its early block is one gap of 375 dense minutes.
+    assert gaps, "days missing their early session must be reported"
+    assert any(g[2] == 375 for g in gaps), [g[2] for g in gaps]
+
+
+def test_thin_minutes_stay_excluded_at_the_shipped_threshold():
+    """The other half of the threshold trade: a minute present on ~60% of days is
+    thin liquidity, not a session, and must not manufacture gaps."""
+    dense = _series("2026-06-01", minutes=390, days=48)
+    rng = np.random.default_rng(0)
+    thin = []
+    day = pd.Timestamp("2026-06-01", tz=ET)
+    d = 0
+    while d < 48:
+        if day.weekday() < 5:
+            if rng.random() < 0.60:  # present on ~60% of days
+                base = day.replace(hour=3, minute=0, second=0, microsecond=0)
+                thin += [int(base.value // 1_000_000) + m * MIN for m in range(60)]
+            d += 1
+        day += pd.Timedelta(days=1)
+    series = np.array(sorted(np.concatenate([dense, np.array(thin, dtype=np.int64)])), dtype=np.int64)
+    mask = build_session_mask(series)
+    assert not mask[3 * 60 + 30], "a 60%-present overnight minute must not count as session"
+
+
+# ---------------------------------------------------------------- session_status
+
+def test_session_status_reports_an_unmonitored_symbol():
+    """`detect_gaps` returns [] both for 'clean' and for 'cannot tell'. Seven watchlist
+    symbols were in the second state and looked healthy."""
+    short = _series("2026-06-01", minutes=390, days=3)
+    st = session_status(short)
+    assert st["monitored"] is False
+    assert "weekdays of history" in st["reason"]
+    assert detect_gaps(short, now_ms=int(short[-1]) + MIN) == []  # the ambiguous []
+
+
+def test_session_status_describes_a_monitored_symbol(rth):
+    st = session_status(rth)
+    assert st["monitored"] is True
+    assert st["session_minutes"] == 390
+    assert st["session_et"] == "09:30-15:59"
 
 
 # ---------------------------------------------------------------- batching

@@ -47,10 +47,31 @@ ET_TZ = "America/New_York"
 MINUTES_PER_DAY = 1440
 
 # A minute counts as part of the session if it carries a bar on this fraction of
-# weekdays. 0.90 is deliberately strict: the cost of calling a live minute "thin" is a
-# missed bridge, while the cost of calling a thin minute "dense" is an API call that
-# cannot succeed and a gap that is re-detected forever.
-DEFAULT_DENSE_FRAC = 0.90
+# weekdays.
+#
+# 0.80, chosen by measurement rather than taste. The threshold trades two opposite
+# errors: too high hides a real session (missed bridges), too low promotes
+# thin-liquidity minutes to "expected" and manufactures gaps that no API call can fill.
+#
+# ⚠️ A REAL SESSION CAN SIT JUST UNDER THE THRESHOLD. VIX trades from 03:15 ET, but its
+# early session is present on only 40 of 48 weekdays (83.3%) - the 8 misses are streamer
+# restarts, several of them the very outages this detector exists to find. At 0.90 the
+# whole 03:15-09:31 block scored "not a session", so VIX's missing pre-market became
+# permanently invisible: THE OUTAGE SUPPRESSED DETECTION OF ITSELF. At 0.80 the session
+# resolves correctly to 03:15-16:15 (776 min) and those 8 days are reported.
+#
+# Measured total gaps across the watchlist, and the cost of going lower:
+#     0.90 ->  86   VIX early session INVISIBLE
+#     0.85 ->  91
+#     0.80 -> 153   VIX 03:15-16:15 correct; NFLX 2 -> 7
+#     0.75 -> 241   NFLX 21   <- thin overnight equity minutes start qualifying
+#     0.70 -> 345   NFLX 61
+#     0.60 -> 623   NFLX 127
+#
+# Only VIX among the indices has an early session; VVIX/VXN/OVX/RVX/GVZ/VXD/VOLI/VIX9D
+# are RTH-only (first bar 09:31), and SPX is 09:30. SPY/QQQ carry 00:00-07:00 data at
+# 70-90% coverage, which is why 0.75 and below start generating false gaps on them.
+DEFAULT_DENSE_FRAC = 0.80
 
 # Below this many weekdays of history the density estimate is noise, and the safe
 # response is to decline to judge rather than to guess a session.
@@ -99,6 +120,39 @@ def build_session_mask(
     counts = np.bincount(seen["m"].to_numpy(), minlength=MINUTES_PER_DAY)
     per_minute_days[: len(counts)] = counts
     return (per_minute_days / n_days) >= dense_frac
+
+
+def session_status(times_ms: np.ndarray, dense_frac: float = DEFAULT_DENSE_FRAC) -> dict:
+    """Describe what the detector can and cannot say about a symbol.
+
+    `detect_gaps` returns [] both when a symbol is clean and when it has too little
+    history to judge - an empty list that means "nothing wrong" and one that means
+    "I cannot tell" are indistinguishable at the call site. Measured 2026-09-03, SEVEN
+    watchlist symbols were in the second state (GVZ, OVX, RVX, VIX9D, VOLI, VXD, VXN -
+    each with 7 weekdays of history against MIN_DAYS_FOR_MASK=10) and were therefore
+    unmonitored while looking healthy. Use this to report that state rather than
+    inferring health from an empty list.
+    """
+    times_ms = np.asarray(times_ms, dtype=np.int64)
+    if times_ms.size < 2:
+        return {"monitored": False, "reason": "insufficient bars", "weekdays": 0}
+    idx = _to_et(times_ms)
+    weekdays = int(idx[idx.weekday < 5].normalize().nunique())
+    mask = build_session_mask(times_ms, dense_frac=dense_frac)
+    if mask is None:
+        return {
+            "monitored": False,
+            "reason": f"only {weekdays} weekdays of history (need {MIN_DAYS_FOR_MASK})",
+            "weekdays": weekdays,
+        }
+    on = np.flatnonzero(mask)
+    return {
+        "monitored": True,
+        "reason": "",
+        "weekdays": weekdays,
+        "session_minutes": int(mask.sum()),
+        "session_et": f"{on[0] // 60:02d}:{on[0] % 60:02d}-{on[-1] // 60:02d}:{on[-1] % 60:02d}",
+    }
 
 
 def missing_dense_minutes(
