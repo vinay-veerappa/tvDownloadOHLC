@@ -52,8 +52,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 NT8_SRC = REPO_ROOT / "scripts" / "ninjatrader"
 
 # Strategy source dirs — all subfolders sync to a single flat NT8 Strategies/Vinay/
+#
+# ⚠️ OWNERSHIP RULE (2026-09-04 cleanup; see docs/architecture/NT8_STRATEGY_OWNERSHIP.md):
+#   - THIS repo owns every trading BOT (strategies/<feature>/) and every indicator.
+#   - nt8-riskguard owns the FRAMEWORK only: RiskManagerBase.cs, RiskGatekeeper.cs,
+#     IntradayStrategyBase.cs. Those deploy via nt8-mcp-bridge's vendored-core sweep
+#     (P1-149 pair rule) and are NOT listed here.
+#   - The old `base/` folder was a full snapshot of riskguard's strategies/ — every
+#     bot in it duplicated a feature folder. Deleted. ICTFVGBoS.cs (legacy bot) moved
+#     to ifvg_cisd/.
+#   - Never add a bot .cs to nt8-riskguard or its vendor pin; the bridge deploy
+#     enforces this with a bot-name denylist.
 STRATEGIES_SRC_DIRS = [
-    ("base",           NT8_SRC / "strategies" / "base"),
     ("ib_breakout",    NT8_SRC / "strategies" / "ib_breakout"),
     ("ema_pullback",   NT8_SRC / "strategies" / "ema_pullback"),
     ("failed_auction", NT8_SRC / "strategies" / "failed_auction"),
@@ -61,7 +71,18 @@ STRATEGIES_SRC_DIRS = [
     ("ifvg_cisd",      NT8_SRC / "strategies" / "ifvg_cisd"),
     ("bandits_8020",   NT8_SRC / "strategies" / "bandits_8020"),
     ("supertrend",     NT8_SRC / "strategies" / "supertrend"),
+    ("keltner_channel", NT8_SRC / "strategies" / "keltner_channel"),
+    ("the_strat",      NT8_SRC / "strategies" / "the_strat"),
 ]
+
+# Framework files owned by nt8-riskguard and deployed by the bridge. They live in
+# the SAME NT8 destination (Strategies/Vinay/), so they are expected contents of
+# the destination, NOT orphans — this tool must not report or touch them.
+EXTERNAL_FRAMEWORK_FILES = {
+    "riskmanagerbase.cs",
+    "riskgatekeeper.cs",
+    "intradaystrategybase.cs",
+}
 
 # Shared source dir — classes used by both strategies and indicators
 SHARED_SRC = NT8_SRC / "shared"
@@ -265,6 +286,11 @@ def main():
     strategy_orphans = []
     if "strategies" in scopes and STRATEGIES_DST.exists():
         src_lower = lower(all_strategy_src_names)
+        # Framework files owned by nt8-riskguard deploy into the SAME destination
+        # via the bridge's vendored-core sweep. They are expected contents, not
+        # orphans — without this allowlist every run cries wolf on 3 files that
+        # are exactly where they belong.
+        src_lower |= EXTERNAL_FRAMEWORK_FILES
         strategy_orphans = sorted(f.name for f in STRATEGIES_DST.glob("*.cs")
                                   if f.name.lower() not in src_lower)
 

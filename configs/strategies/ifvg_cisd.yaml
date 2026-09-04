@@ -1,0 +1,64 @@
+# =============================================================================
+# IFVG/CISD Strategy — Cross-Platform Config Manifest (SINGLE SOURCE OF TRUTH)
+# =============================================================================
+# Read by BOTH platforms:
+#   - Python:  scripts/strategies/ifvg_cisd/core/config.py (loads this file)
+#   - C#:      scripts/utils/gen_ifvg_cisd_config.py regenerates
+#              scripts/ninjatrader/indicators/ifvg_cisd/IfvgCisdConfig.cs from it.
+#
+# PARITY CONTRACT (docs/strategies/ifvg_cisd/PARITY_WORKFLOW.md):
+#   1. Change a value HERE, never in one platform's code.
+#   2. Run the generator + --verify gate; both sides must re-derive it.
+#   3. A hand-edited value in C# or Python that disagrees with this file is
+#      a defect, not a tuning decision.
+#
+# NT8 bar timestamps are bar-CLOSE stamped (Time[0] = bar completion).
+# Python resample labels are bar-OPEN stamps. All time windows below are
+# ET wall-clock and apply identically on both sides; the parity runner
+# accounts for the stamping difference.
+# =============================================================================
+
+meta:
+  manifest_version: 1
+  strategy: ifvg_cisd
+  canonical_cs_repo: tvDownloadOHLC  # C# sources live in scripts/ninjatrader/
+
+session:
+  earliest_entry_hhmm: 945        # Judas-open trap filter (09:45 turnaround)
+  latest_entry_hhmm: 1530
+  flatten_by_hhmm: 1555           # ADR-020 prop-firm liquidation
+  lunch_filter_enabled: true
+  lunch_start_hhmm: 1130          # NOTE: C# label said "12:00" but the shared
+  lunch_end_hhmm: 1330           # truth is 11:30-13:30 (matches Python + spec)
+
+risk:
+  min_risk_bps: 2.0               # risk floor (skip if structural risk < this)
+  max_risk_bps: 15.0              # risk ceiling (skip if structural risk > this)
+  stop_loss_type: bps_stat        # bps_stat | structural | structural_capped_bps | skip_if_out_of_band
+  stop_loss_bps: 5.0              # for bps_stat / structural_capped_bps
+  queen_target_bps: 10.0          # TP1 (50% off at 1R equivalent, CoverTheQueen)
+  runner_target_bps: 30.0         # TP2
+
+structure:
+  htf_resample: 5min              # HTF CISD/FVG/IFVG/BPR timeframe
+  variant: variant2                # baseline | variant1 | variant2
+  entry_mechanism: cisd_limit     # market | cisd_limit  (C# EntryMode 0 | 1)
+  require_directional_candle: false
+  include_vi: true                # VI merger in FVG/IFVG boundaries
+  strict_ifvg_only: true          # baseline variant only
+  atr_risk_mult: 1.8              # baseline variant ATR stop
+  cisd_scan_max_bars: 500         # extreme-open scan lookback (parity: C# must match)
+
+gates:
+  max_trades_per_day: 2
+  use_htf_filter: false           # 4H EMA macro filter — OFF for V1/V2 parity
+  htf_ema_period: 2400
+  require_external_sweep: false
+  enable_midline_reclaims: true   # single-TF mode only
+  enable_confirmed_reentry: true  # only active when stop_loss_type == bps_stat
+  reentry_window_bars: 20
+
+sim:
+  eod_flatten_hhmm: 1550          # Python sim EOD exit (ET)
+  commission_per_contract: 1.05
+  slippage_ticks: 1

@@ -48,6 +48,20 @@ from scripts.libs_py.price_action.volatility_leading import (
     compute_kaufman_efficiency,
     compute_bar_overlap,
 )
+from scripts.strategies.ifvg_cisd.core.config import load_config
+
+
+def htf_completion_label(htf_index: pd.DatetimeIndex, freq_minutes: int) -> pd.DatetimeIndex:
+    """
+    Convert bar-OPEN resample labels to bar-COMPLETION stamps.
+
+    NT8 stamps Time[0] at bar close. pandas resample labels at bar open.
+    A 5m bar labeled 10:00 completes at 10:05 — only at 10:05 does the
+    CISD close that generated the signal become knowable. All signal
+    timestamps must be completion-stamped so that (a) the sim cannot enter
+    retroactively and (b) they join directly against NT8's diag CSV times.
+    """
+    return htf_index + pd.Timedelta(minutes=freq_minutes)
 
 
 # ── Numba-compiled variant signal kernel ──────────────────────────────
@@ -58,6 +72,7 @@ def _variant_signal_kernel(
     ifvg_event_arr, bpr_event_arr,
     bull_cisd_level_arr, bear_cisd_level_arr,
     variant_int, tick_size, min_risk_bps, max_risk_bps,
+    stop_type_int, stop_loss_bps, entry_mechanism_int,
 ):
     n = len(htf_open)
     sig_idx = np.full(n, -1, dtype=np.int64)
@@ -160,43 +175,175 @@ def _variant_signal_kernel(
             # V1: CISD trigger + (prior leg had BPR OR prior leg had IFVG)
             # The prior leg's BPR/IFVG are the reversal evidence; no FVG-count AND.
             if ce == 1 and (prior_leg_has_bpr or prior_leg_has_ifvg):
-                ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
-                rs = leg_origin_low - 2*tick_size if not np.isnan(leg_origin_low) else l - 2*tick_size
-                if rs >= ep: rs = l - 2*tick_size
-                risk = abs(ep - rs)
-                if risk >= min_risk and risk <= max_risk:
-                    sig_idx[sig_count]=i; sig_dir[sig_count]=1; sig_entry[sig_count]=ep
-                    sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
+                ok = _emit_long_signal(
+                    c, o, l, leg_cisd_level, leg_origin_low,
+                    tick_size, min_risk, max_risk,
+                    stop_type_int, stop_loss_bps, entry_mechanism_int,
+                    sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, sig_count,
+                )
+                if ok: sig_count += 1
             elif ce == -1 and (prior_leg_has_bpr or prior_leg_has_ifvg):
-                ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
-                rs = leg_origin_high + 2*tick_size if not np.isnan(leg_origin_high) else h + 2*tick_size
-                if rs <= ep: rs = h + 2*tick_size
-                risk = abs(rs - ep)
-                if risk >= min_risk and risk <= max_risk:
-                    sig_idx[sig_count]=i; sig_dir[sig_count]=-1; sig_entry[sig_count]=ep
-                    sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
+                ok = _emit_short_signal(
+                    c, o, h, leg_cisd_level, leg_origin_high,
+                    tick_size, min_risk, max_risk,
+                    stop_type_int, stop_loss_bps, entry_mechanism_int,
+                    sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, sig_count,
+                )
+                if ok: sig_count += 1
         elif variant_int == 2:
             # V2: CISD trigger + 2+ unmitigated FVGs in the OPPOSING delivery run
             if ce == 1 and not v2_triggered and prior_bear_fvg >= 2:
-                ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
-                rs = leg_origin_low - 2*tick_size if not np.isnan(leg_origin_low) else l - 2*tick_size
-                if rs >= ep: rs = l - 2*tick_size
-                risk = abs(ep - rs)
-                if risk >= min_risk and risk <= max_risk:
-                    sig_idx[sig_count]=i; sig_dir[sig_count]=1; sig_entry[sig_count]=ep
-                    sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
+                ok = _emit_long_signal(
+                    c, o, l, leg_cisd_level, leg_origin_low,
+                    tick_size, min_risk, max_risk,
+                    stop_type_int, stop_loss_bps, entry_mechanism_int,
+                    sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, sig_count,
+                )
+                if ok:
+                    sig_count += 1
                     v2_triggered = True
             elif ce == -1 and not v2_triggered and prior_bull_fvg >= 2:
-                ep = leg_cisd_level if not np.isnan(leg_cisd_level) else c
-                rs = leg_origin_high + 2*tick_size if not np.isnan(leg_origin_high) else h + 2*tick_size
-                if rs <= ep: rs = h + 2*tick_size
-                risk = abs(rs - ep)
-                if risk >= min_risk and risk <= max_risk:
-                    sig_idx[sig_count]=i; sig_dir[sig_count]=-1; sig_entry[sig_count]=ep
-                    sig_stop[sig_count]=rs; sig_risk[sig_count]=risk; sig_count += 1
+                ok = _emit_short_signal(
+                    c, o, h, leg_cisd_level, leg_origin_high,
+                    tick_size, min_risk, max_risk,
+                    stop_type_int, stop_loss_bps, entry_mechanism_int,
+                    sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, sig_count,
+                )
+                if ok:
+                    sig_count += 1
                     v2_triggered = True
 
     return sig_idx[:sig_count], sig_dir[:sig_count], sig_entry[:sig_count], sig_stop[:sig_count], sig_risk[:sig_count]
+
+
+@_njit
+def _resolve_long_bracket(c, l, leg_cisd_level, leg_origin_low, tick_size,
+                          stop_type_int, stop_loss_bps, entry_mechanism_int):
+    """
+    Resolve entry/stop for a bullish CISD signal with VALID geometry.
+
+    Entry (mechanism):
+      0 (market)    : flip-bar close.
+      1 (cisd_limit): the armed CISD level — a pullback entry. Only valid if
+                      the level is BELOW the flip close (a discount the market
+                      may still give). Otherwise degrade to market close.
+    Stop (type):
+      0 (bps_stat)          : entry - stop_loss_bps of entry. The statistical SL:
+                              with the entry right, this is never hit.
+      1 (structural)        : the crossed origin level (leg_origin_low) MINUS a
+                              2-tick buffer — but ONLY when it sits below entry.
+                              If the crossed level is above the entry (invalid
+                              long geometry), skip the trade entirely.
+      2 (structural_capped) : structural, but capped at stop_loss_bps.
+      3 (skip_if_out_of_band): structural stop, and skip if its distance is
+                              outside [min_risk, max_risk] — mirrors the
+                              Python-only pre-2026-09 behaviour.
+    Returns (ok, entry, stop, risk).
+    """
+    ep = c
+    if entry_mechanism_int == 1 and not np.isnan(leg_cisd_level) and leg_cisd_level < c:
+        ep = leg_cisd_level
+
+    if stop_type_int == 0:  # bps_stat
+        rs = ep - (ep * stop_loss_bps / 10000.0)
+        return True, ep, rs, ep - rs
+
+    # structural family: the crossed origin is the invalidation level
+    if np.isnan(leg_origin_low):
+        # no crossed level recorded — degrade to bps_stat rather than guess
+        rs = ep - (ep * stop_loss_bps / 10000.0)
+        return True, ep, rs, ep - rs
+
+    struct_stop = leg_origin_low - 2.0 * tick_size
+    if struct_stop >= ep:
+        # Crossed level at/above entry: invalid long geometry. Types 1 and 3
+        # skip; type 2 degrades to the bps cap.
+        if stop_type_int == 2:
+            rs = ep - (ep * stop_loss_bps / 10000.0)
+            return True, ep, rs, ep - rs
+        return False, ep, struct_stop, 0.0
+
+    risk = ep - struct_stop
+    if stop_type_int == 2:  # structural capped at bps ceiling
+        max_risk = ep * stop_loss_bps / 10000.0
+        if risk > max_risk:
+            rs = ep - max_risk
+            return True, ep, rs, ep - rs
+    return True, ep, struct_stop, risk
+
+
+@_njit
+def _resolve_short_bracket(c, h, leg_cisd_level, leg_origin_high, tick_size,
+                           stop_type_int, stop_loss_bps, entry_mechanism_int):
+    """Mirror of _resolve_long_bracket for shorts."""
+    ep = c
+    if entry_mechanism_int == 1 and not np.isnan(leg_cisd_level) and leg_cisd_level > c:
+        ep = leg_cisd_level
+
+    if stop_type_int == 0:  # bps_stat
+        rs = ep + (ep * stop_loss_bps / 10000.0)
+        return True, ep, rs, rs - ep
+
+    if np.isnan(leg_origin_high):
+        rs = ep + (ep * stop_loss_bps / 10000.0)
+        return True, ep, rs, rs - ep
+
+    struct_stop = leg_origin_high + 2.0 * tick_size
+    if struct_stop <= ep:
+        if stop_type_int == 2:
+            rs = ep + (ep * stop_loss_bps / 10000.0)
+            return True, ep, rs, rs - ep
+        return False, ep, struct_stop, 0.0
+
+    risk = struct_stop - ep
+    if stop_type_int == 2:
+        max_risk = ep * stop_loss_bps / 10000.0
+        if risk > max_risk:
+            rs = ep + max_risk
+            return True, ep, rs, rs - ep
+    return True, ep, struct_stop, risk
+
+
+@_njit
+def _emit_long_signal(c, o, l, leg_cisd_level, leg_origin_low,
+                      tick_size, min_risk, max_risk,
+                      stop_type_int, stop_loss_bps, entry_mechanism_int,
+                      sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, slot):
+    ok, ep, rs, risk = _resolve_long_bracket(
+        c, l, leg_cisd_level, leg_origin_low, tick_size,
+        stop_type_int, stop_loss_bps, entry_mechanism_int,
+    )
+    if not ok:
+        return False
+    if risk < min_risk or risk > max_risk:
+        return False
+    sig_idx[slot] = -1  # caller patches with the real bar index
+    sig_dir[slot] = 1
+    sig_entry[slot] = ep
+    sig_stop[slot] = rs
+    sig_risk[slot] = risk
+    return True
+
+
+@_njit
+def _emit_short_signal(c, o, h, leg_cisd_level, leg_origin_high,
+                       tick_size, min_risk, max_risk,
+                       stop_type_int, stop_loss_bps, entry_mechanism_int,
+                       sig_idx, sig_dir, sig_entry, sig_stop, sig_risk, slot):
+    ok, ep, rs, risk = _resolve_short_bracket(
+        c, h, leg_cisd_level, leg_origin_high, tick_size,
+        stop_type_int, stop_loss_bps, entry_mechanism_int,
+    )
+    if not ok:
+        return False
+    if risk < min_risk or risk > max_risk:
+        return False
+    sig_idx[slot] = -1
+    sig_dir[slot] = -1
+    sig_entry[slot] = ep
+    sig_stop[slot] = rs
+    sig_risk[slot] = risk
+    return True
 
 
 @dataclass
@@ -242,21 +389,27 @@ class IFVGCISDStrategy:
         if "close" not in df.columns or df.empty:
             return pd.DataFrame(columns=self.OUTPUT_COLUMNS)
 
-        resample_tf = p.get("resample_tf", "5min")
-        max_trades_per_day = p.get("max_trades_per_day", 1)
+        # Shared manifest defaults (configs/strategies/ifvg_cisd.yaml) — the same
+        # file the C# generator projects into IfvgCisdConfig.cs. Explicit params
+        # override; absence falls through to the manifest so the two platforms
+        # can never silently disagree on a default.
+        cfg = load_config()
+
+        resample_tf = p.get("resample_tf", cfg.htf_resample)
+        max_trades_per_day = p.get("max_trades_per_day", cfg.max_trades_per_day)
         r_mult_tp1 = p.get("r_mult_tp1", 1.0)
         r_mult_tp2 = p.get("r_mult_tp2", 2.5)
-        atr_risk_mult = p.get("atr_risk_mult", 1.8)
+        atr_risk_mult = p.get("atr_risk_mult", cfg.atr_risk_mult)
         tick_size = float(p.get("tick_size", 0.25))
 
-        variant = str(p.get("variant", "baseline")).lower()
-        filter_lunch = bool(p.get("filter_lunch", True))
+        variant = str(p.get("variant", cfg.variant)).lower()
+        filter_lunch = bool(p.get("filter_lunch", cfg.lunch_filter_enabled))
         use_ker_filter = bool(p.get("use_ker_filter", False))
         ker_min = float(p.get("ker_min", 0.45))
         use_barbwire_filter = bool(p.get("use_barbwire_filter", False))
         max_bar_overlap = float(p.get("max_bar_overlap", 65.0))
-        include_vi = bool(p.get("include_vi", True))
-        strict_ifvg_only = bool(p.get("strict_ifvg_only", True))
+        include_vi = bool(p.get("include_vi", cfg.include_vi))
+        strict_ifvg_only = bool(p.get("strict_ifvg_only", cfg.strict_ifvg_only))
 
         # 1. Compute HTF CISD / FVG / iFVG / BPR
         df_htf = resample_ohlcv(df, resample_tf)
@@ -326,10 +479,24 @@ class IFVGCISDStrategy:
             sig_htf["htf_long"] = recent_cisd_bull & ((sig_htf["ifvg_htf"] == 1) | (sig_htf["fvg_htf"] == 1))
             sig_htf["htf_short"] = recent_cisd_bear & ((sig_htf["ifvg_htf"] == -1) | (sig_htf["fvg_htf"] == -1))
 
-        # Merge causally onto 1m execution timeline (no lookahead)
+        # Merge causally onto 1m execution timeline (no lookahead).
+        # The HTF signal computed on the bar labeled 10:00 is only knowable
+        # at its COMPLETION (10:05). merge_asof(backward) on the raw open
+        # labels would expose the signal to 1m bars from 10:00-10:04 — up to
+        # (freq-1) minutes of lookahead. Re-index the HTF frame on
+        # completion stamps before merging so a 1m bar only sees signals
+        # whose HTF bar has fully closed.
+        cfg = load_config()
+        try:
+            resample_minutes = int("".join(ch for ch in resample_tf if ch.isdigit()))
+        except ValueError:
+            resample_minutes = 5
+        sig_htf_completion = sig_htf[["htf_long", "htf_short"]].copy()
+        sig_htf_completion.index = htf_completion_label(sig_htf.index, resample_minutes)
+
         df = pd.merge_asof(
             df,
-            sig_htf[["htf_long", "htf_short"]],
+            sig_htf_completion,
             left_index=True,
             right_index=True,
             direction="backward",
@@ -337,21 +504,28 @@ class IFVGCISDStrategy:
         df["htf_long"] = df["htf_long"].fillna(False)
         df["htf_short"] = df["htf_short"].fillna(False)
 
-        # Execution ATR and Swings
+        # Execution ATR and Swings.
+        # NOTE: no .bfill() — backfilling the first 13 bars of ATR uses
+        # FUTURE bars' true ranges (lookahead). Bars without a full ATR
+        # simply carry NaN and are filtered out of the entry mask below.
         high_low = df["high"] - df["low"]
         high_close = (df["high"] - df["close"].shift(1)).abs()
         low_close = (df["low"] - df["close"].shift(1)).abs()
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        df["atr"] = tr.rolling(14, min_periods=14).mean().bfill()
+        df["atr"] = tr.rolling(14, min_periods=14).mean()
         df["swing_low2"] = df["low"].rolling(2).min()
         df["swing_high2"] = df["high"].rolling(2).max()
 
         t = df.index.time
-        in_rth = (t >= time(9, 45)) & (t <= time(15, 30))
-        time_mask = in_rth
+        in_rth = (t >= time(cfg.earliest_entry_hhmm // 100, cfg.earliest_entry_hhmm % 100)) & (
+            t <= time(cfg.latest_entry_hhmm // 100, cfg.latest_entry_hhmm % 100)
+        )
+        time_mask = in_rth & df["atr"].notna()
 
-        if filter_lunch:
-            not_lunch = (t < time(11, 30)) | (t > time(13, 30))
+        if cfg.lunch_filter_enabled:
+            lunch_start = time(cfg.lunch_start_hhmm // 100, cfg.lunch_start_hhmm % 100)
+            lunch_end = time(cfg.lunch_end_hhmm // 100, cfg.lunch_end_hhmm % 100)
+            not_lunch = (t < lunch_start) | (t > lunch_end)
             time_mask = time_mask & not_lunch
 
         sig_mask_long = time_mask & df["htf_long"]
@@ -384,8 +558,8 @@ class IFVGCISDStrategy:
             entry_price = float(row["close"])
             # Baseline uses ATR-based risk (no CISD level available in this path)
             raw_risk = float(row["atr"]) * atr_risk_mult
-            min_risk_bps = float(p.get("min_risk_bps", 2.0))
-            max_risk_bps = float(p.get("max_risk_bps", 15.0))
+            min_risk_bps = float(p.get("min_risk_bps", cfg.min_risk_bps))
+            max_risk_bps = float(p.get("max_risk_bps", cfg.max_risk_bps))
             entry_ref = float(row["close"])
             min_risk = entry_ref * min_risk_bps / 10000.0
             max_risk = entry_ref * max_risk_bps / 10000.0
@@ -433,11 +607,13 @@ class IFVGCISDStrategy:
         variant: str,
         p: Dict[str, Any],
     ) -> pd.DataFrame:
-        max_trades_per_day = p.get("max_trades_per_day", 1)
+        cfg = load_config()
+        resample_tf = str(p.get("resample_tf", cfg.htf_resample))
+        max_trades_per_day = p.get("max_trades_per_day", cfg.max_trades_per_day)
         r_mult_tp1 = p.get("r_mult_tp1", 1.0)
         r_mult_tp2 = p.get("r_mult_tp2", 2.5)
         tick_size = float(p.get("tick_size", 0.25))
-        filter_lunch = bool(p.get("filter_lunch", True))
+        filter_lunch = bool(p.get("filter_lunch", cfg.lunch_filter_enabled))
         write_diag_csv = bool(p.get("write_diag_csv", False))
         diag_csv_path: Optional[Path] = None
         diag_rows: list[dict[str, Any]] = []
@@ -468,8 +644,8 @@ class IFVGCISDStrategy:
 
         # ── Call Numba-compiled variant signal kernel ──
         variant_int = 1 if variant == "variant1" else 2
-        min_risk_bps = float(p.get("min_risk_bps", 2.0))
-        max_risk_bps = float(p.get("max_risk_bps", 15.0))
+        min_risk_bps = float(p.get("min_risk_bps", cfg.min_risk_bps))
+        max_risk_bps = float(p.get("max_risk_bps", cfg.max_risk_bps))
 
         sig_idx, sig_dir, sig_entry, sig_stop, sig_risk = _variant_signal_kernel(
             htf_open.astype(np.float64), htf_high.astype(np.float64),
@@ -487,14 +663,25 @@ class IFVGCISDStrategy:
         )
 
         # ── Post-process: apply time/session filters and daily trade limits ──
+        # Signal timestamps are bar-COMPLETION stamps (NT8 Time[0] semantics):
+        # a 5m bar labeled 10:00 completes at 10:05, and only then is the CISD
+        # close that fired the signal knowable. htf_index[i] is the OPEN label,
+        # so we shift by the resample interval before applying session filters
+        # and before the sim consumes signal_time.
+        try:
+            resample_minutes = int("".join(ch for ch in resample_tf if ch.isdigit()))
+        except ValueError:
+            resample_minutes = 5
+        htf_index = htf_completion_label(sig_htf.index, resample_minutes)
+
         signal_rows: list[dict[str, Any]] = []
         last_signal_date: Optional[Any] = None
         daily_trades = 0
-        htf_index = sig_htf.index
-        entry_mechanism = str(p.get("entry_mechanism", "market")).lower()
+        entry_mechanism = str(p.get("entry_mechanism", cfg.entry_mechanism)).lower()
 
         for j in range(len(sig_idx)):
             i = sig_idx[j]
+            # Completion stamp: signal becomes actionable at HTF bar close.
             ts = htf_index[i]
             direction = "LONG" if sig_dir[j] == 1 else "SHORT"
             entry_price = float(sig_entry[j])
@@ -509,11 +696,14 @@ class IFVGCISDStrategy:
             if daily_trades >= max_trades_per_day:
                 continue
 
-            # RTH filter
+            # Session window (ET) — from the shared manifest
             t = ts.time()
-            if not (time(9, 45) <= t <= time(15, 30)):
+            hhmm = ts.hour * 100 + ts.minute
+            if not (cfg.earliest_entry_hhmm <= hhmm <= cfg.latest_entry_hhmm):
                 continue
-            if filter_lunch and (time(11, 30) <= t <= time(13, 30)):
+            if cfg.lunch_filter_enabled and (
+                cfg.lunch_start_hhmm <= hhmm <= cfg.lunch_end_hhmm
+            ):
                 continue
 
             target1_price = entry_price + (risk * r_mult_tp1) if direction == "LONG" else entry_price - (risk * r_mult_tp1)
