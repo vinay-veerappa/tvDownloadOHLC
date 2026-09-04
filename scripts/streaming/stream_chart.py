@@ -13,6 +13,7 @@ if sys.platform == 'win32':
 
 import time
 import sqlite3
+from collections import deque
 import pandas as pd
 from pandas.api.types import is_string_dtype
 import pyarrow.parquet as pq
@@ -87,6 +88,42 @@ CANDLE_WINDOW_SOFT_MAX = int(CANDLE_WINDOW * 1.33)  # prune only when this is ex
 # parquet merge, so they are worked newest-first, a few per pass, rather than in one
 # burst that would hammer the API and stall the event loop.
 MAX_GAPS_PER_PASS = 5
+
+# ⚠️ MAX_GAPS_PER_PASS IS PER SYMBOL, AND THAT IS NOT A GLOBAL LIMIT.
+# Measured 2026-09-03: on the first live run after bridging was revived, startup walked
+# 27 symbols at up to 5 gaps each. The Hub is ONE Schwab connection; it served ten
+# symbols (~45,000 bars recovered) and then died mid-GOOGL, taking the live feed with
+# it. A per-symbol cap bounds nothing when the caller loops over symbols.
+MAX_BRIDGE_REQUESTS_PER_WINDOW = 20
+BRIDGE_WINDOW_SECONDS = 300
+# Space requests so a burst cannot saturate the Hub's single upstream connection.
+BRIDGE_REQUEST_SPACING_SEC = 1.0
+# If the Hub does fail, stop asking. Retrying into a dead Hub is what turned one failure
+# into a cascade across every remaining symbol.
+HUB_FAILURE_COOLDOWN_SEC = 300
+
+_bridge_request_times = deque()
+_bridge_paused_until = 0.0
+
+
+def _bridge_budget_remaining():
+    """How many bridge requests may still be issued right now."""
+    now = time.time()
+    if now < _bridge_paused_until:
+        return 0
+    while _bridge_request_times and now - _bridge_request_times[0] > BRIDGE_WINDOW_SECONDS:
+        _bridge_request_times.popleft()
+    return max(0, MAX_BRIDGE_REQUESTS_PER_WINDOW - len(_bridge_request_times))
+
+
+def _note_bridge_request():
+    _bridge_request_times.append(time.time())
+
+
+def _pause_bridging(reason):
+    global _bridge_paused_until
+    _bridge_paused_until = time.time() + HUB_FAILURE_COOLDOWN_SEC
+    print(f"⛔ Bridging paused for {HUB_FAILURE_COOLDOWN_SEC}s: {reason}")
 
 # Session masks are derived from the full stored history (~1.5 s for all symbols) and
 # change only as the collection profile changes, so they are cached per symbol and
@@ -342,6 +379,14 @@ async def bridge_gaps(symbol, gaps):
             print(f"⚠️ [{symbol}] Gap too old to bridge via API: {start_dt} -> {end_dt}")
             continue
         
+        if _bridge_budget_remaining() <= 0:
+            print(f"  ⏳ [{symbol}] Bridge budget exhausted; remaining gaps deferred to a later pass.")
+            break
+        # Space the requests. The Hub multiplexes one upstream Schwab connection, so a
+        # back-to-back burst is what killed it on the first live run.
+        await asyncio.sleep(BRIDGE_REQUEST_SPACING_SEC)
+        _note_bridge_request()
+
         print(f"🔧 [{symbol}] Bridging gap: {start_dt} -> {end_dt}")
         
         try:
@@ -369,7 +414,13 @@ async def bridge_gaps(symbol, gaps):
                     })
                 print(f"   ✅ Fetched {len(candles)} bars")
             else:
-                print(f"  ❌ Hub Request Failed for {symbol} gap: {resp.get('message')}")
+                msg = str(resp.get('message'))
+                print(f"  ❌ Hub Request Failed for {symbol} gap: {msg}")
+                # A connection-level failure means the Hub is down, not that this range
+                # is unavailable. Stop, or every remaining symbol retries into a corpse.
+                if "Connection Error" in msg or "connection attempts failed" in msg:
+                    _pause_bridging(f"Hub unreachable while bridging {symbol}")
+                    break
         except Exception as e:
             print(f"  ❌ Bridge error: {e}")
             
@@ -461,12 +512,19 @@ async def check_and_bridge_gaps(symbol):
         return
 
     # Newest first: a hole from an hour ago matters more than one from five weeks ago,
-    # and the cap below means the oldest may not be reached this pass.
+    # and the caps below mean the oldest may not be reached this pass.
     found.sort(key=lambda g: g[0], reverse=True)
-    if len(found) > MAX_GAPS_PER_PASS:
-        print(f"🔧 [{symbol}] {len(found)} gaps found; bridging the {MAX_GAPS_PER_PASS} "
-              f"most recent this pass (the rest on a later pass)")
-        found = found[:MAX_GAPS_PER_PASS]
+
+    budget = _bridge_budget_remaining()
+    if budget <= 0:
+        # Silent here on purpose: _pause_bridging already said why, and this runs once
+        # per symbol - printing would turn one Hub failure into 27 lines of noise.
+        return
+    limit = min(MAX_GAPS_PER_PASS, budget)
+    if len(found) > limit:
+        print(f"🔧 [{symbol}] {len(found)} gaps found; bridging {limit} this pass "
+              f"(per-symbol cap {MAX_GAPS_PER_PASS}, global budget {budget} remaining)")
+        found = found[:limit]
 
     total_missing = sum(g[2] for g in found)
     print(f"🔧 [{symbol}] Bridging {len(found)} gap(s), {total_missing} missing bars...")
