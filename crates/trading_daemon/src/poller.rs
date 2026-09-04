@@ -1,4 +1,4 @@
-﻿//! High-frequency poller: executes three concurrent requests to NT8 port 7890
+//! High-frequency poller: executes three concurrent requests to NT8 port 7890
 //! every 200ms, matching pnl_widget_server.js exactly.
 //!
 //! 1. GET /api/account      (singular, per live contract)
@@ -76,15 +76,14 @@ pub fn compute_fleet_summary(accounts: &Value, positions: &Value, copier_snapsho
         // JS truthiness mirror: `Number(acc.netLiquidation || acc.cashValue) || 0`
         // A present-but-0 netLiquidation falls through to cashValue.
         let nl = acc.get("netLiquidation").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let liq = if nl != 0.0 && !nl.is_nan() { nl } else { cash_value };
-        let liq = if liq.is_nan() { 0.0 } else { liq };
+        let mut liq = if nl != 0.0 && !nl.is_nan() { nl } else { cash_value };
         let r_pnl = acc.get("realizedPnL").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let mut u_pnl = acc.get("unrealizedPnL").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
         if let Some(p) = pos {
             if let Some(up) = p.get("unrealizedPnL") {
                 if !up.is_null() {
-                    // JS: `Number(pos.unrealizedPnL) || uPnl` â€” 0/NaN keeps the account value.
+                    // JS: `Number(pos.unrealizedPnL) || uPnl` — 0/NaN keeps the account value.
                     let v = up.as_f64().unwrap_or(f64::NAN);
                     if v != 0.0 && !v.is_nan() {
                         u_pnl = v;
@@ -92,6 +91,12 @@ pub fn compute_fleet_summary(accounts: &Value, positions: &Value, copier_snapsho
                 }
             }
         }
+
+        let original_upnl = acc.get("unrealizedPnL").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        if original_upnl == 0.0 && u_pnl != 0.0 {
+            liq += u_pnl;
+        }
+        let liq = if liq.is_nan() { 0.0 } else { liq };
 
         total_liq += liq;
         total_realized += r_pnl;
@@ -104,8 +109,13 @@ pub fn compute_fleet_summary(accounts: &Value, positions: &Value, copier_snapsho
             active_accounts_count += 1;
         }
 
-        // Preserve the original account object verbatim (parity with Node)
-        accounts_out.push(acc.clone());
+        // Preserve the original account object, but ensure unrealizedPnL and netLiquidation reflect live state
+        let mut acc_out = acc.clone();
+        if let Some(obj) = acc_out.as_object_mut() {
+            obj.insert("unrealizedPnL".to_string(), serde_json::json!(u_pnl));
+            obj.insert("netLiquidation".to_string(), serde_json::json!(liq));
+        }
+        accounts_out.push(acc_out);
     }
 
     let mut total_open_contracts: i64 = 0;

@@ -6,4 +6,5 @@ members = [
     "broker_sentinel",
     "pnl_widget_native",
     "pnl_widget_gdi",
+    "fj_daemon",
 ]

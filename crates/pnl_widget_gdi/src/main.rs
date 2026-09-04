@@ -10,7 +10,7 @@
 #![windows_subsystem = "windows"]
 
 use serde::Deserialize;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicIsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use winapi::shared::minwindef::*;
@@ -25,11 +25,15 @@ const POLL_MS: u64 = 250;
 const LOCKOUT_POLL_MS: u64 = 3000;
 const CONFIG_POLL_MS: u64 = 30_000;
 
+const WM_REFRESH_COMBO: UINT = WM_USER + 101;
+static MAX_SCROLL: AtomicI32 = AtomicI32::new(0);
+
 const IDC_SYMBOL: i32 = 2001;
 const IDC_QTY: i32 = 2002;
 const IDC_ATM: i32 = 2003;
 const IDC_STOP: i32 = 2004;
 const IDC_TARGET: i32 = 2005;
+const IDC_SEARCH: i32 = 2006;
 
 // ---------------------------------------------------------------- data model
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -101,14 +105,12 @@ struct UiState {
     guard: GuardConfig,
     tab: Tab,
     show_all: bool,
-    panic_armed: bool,
-    panic_armed_until: u64,
+    search_query: String,
+    scroll_offset: i32,
     sort_col: usize,
     sort_asc: bool,
     status: String,
     status_kind: u8,
-    close_confirm: Option<String>,
-    close_confirm_at: u64,
     busy: std::collections::HashSet<String>,
 }
 
@@ -126,10 +128,10 @@ fn with_ui<T>(f: impl FnOnce(&mut UiState) -> T) -> T {
             lockouts: std::collections::HashMap::new(),
             guard: GuardConfig::default(),
             tab: Tab::Pnl, show_all: false,
-            panic_armed: false, panic_armed_until: 0,
+            search_query: String::new(),
+            scroll_offset: 0,
             sort_col: 1, sort_asc: false,
             status: String::new(), status_kind: 0,
-            close_confirm: None, close_confirm_at: 0,
             busy: std::collections::HashSet::new(),
         });
     }
@@ -231,14 +233,34 @@ fn idem() -> String {
 }
 
 // ---------------------------------------------------------------- formatting
+fn fmt_with_commas(v: f64, show_plus: bool) -> String {
+    let sign = if v > 0.0 {
+        if show_plus { "+" } else { "" }
+    } else if v < 0.0 {
+        "-"
+    } else {
+        ""
+    };
+    let abs_v = v.abs();
+    let int_part = abs_v.trunc() as u64;
+    let frac_part = ((abs_v.fract() * 100.0).round() as u64) % 100;
+
+    let s = int_part.to_string();
+    let mut with_commas = String::with_capacity(s.len() + s.len() / 3);
+    let rem = s.len() % 3;
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (i % 3 == rem || (rem == 0 && i % 3 == 0)) {
+            with_commas.push(',');
+        }
+        with_commas.push(ch);
+    }
+    format!("{}${}.{:02}", sign, with_commas, frac_part)
+}
 fn fmt_money(v: f64) -> String {
-    let sign = if v > 0.0 { "+" } else if v < 0.0 { "-" } else { "" };
-    format!("{}${:.2}", sign, v.abs())
+    fmt_with_commas(v, true)
 }
 fn fmt_plain(v: f64) -> String {
-    if v.abs() >= 1_000_000.0 { format!("${:.2}M", v / 1_000_000.0) }
-    else if v.abs() >= 10_000.0 { format!("${:.1}K", v / 1_000.0) }
-    else { format!("${:.2}", v) }
+    fmt_with_commas(v, false)
 }
 fn acc_type(name: &str, provider: &str) -> &'static str {
     let n = name.to_uppercase();
@@ -406,7 +428,6 @@ enum Hit {
     Buy(String),
     Sell(String),
     Close(String),
-    CloseConfirm(String),
 }
 static HITS: Mutex<Vec<(RECT, Hit)>> = Mutex::new(Vec::new());
 
@@ -422,27 +443,32 @@ unsafe fn paint_pnl(d: &mut Dc, f: &Fonts, ui: &UiState, w: i32, h: i32) {
     };
 
     // stat cards
+    let total_fleet_pnl = data.totalRealizedPnL + data.totalUnrealizedPnL;
     let stats = [
         ("TOTAL FLEET NET LIQ", fmt_plain(data.totalNetLiquidation),
             if data.totalNetLiquidation != 0.0 { d.th.bright } else { d.th.dim }),
-        ("OPEN UNREALIZED", fmt_money(data.totalUnrealizedPnL),
+        ("OPEN P&L", fmt_money(data.totalUnrealizedPnL),
             if data.totalUnrealizedPnL > 0.0 { d.th.green } else if data.totalUnrealizedPnL < 0.0 { d.th.red } else { d.th.dim }),
         ("REALIZED TODAY", fmt_money(data.totalRealizedPnL),
             if data.totalRealizedPnL > 0.0 { d.th.green } else if data.totalRealizedPnL < 0.0 { d.th.red } else { d.th.dim }),
-        ("OPEN CONTRACTS", format!("{}", data.totalOpenContracts),
+        ("TOTAL FLEET P&L", fmt_money(total_fleet_pnl),
+            if total_fleet_pnl > 0.0 { d.th.green } else if total_fleet_pnl < 0.0 { d.th.red } else { d.th.dim }),
+        ("OPEN CONTRACTS", if data.totalOpenContracts > 0 { format!("{}", data.totalOpenContracts) } else { "0 FLAT".to_string() },
             if data.totalOpenContracts > 0 { d.th.amber } else { d.th.dim }),
     ];
-    let card_w = (w - 20 - 24) / 4;
+    let num_cards = stats.len() as i32;
+    let gap = 6;
+    let card_w = (w - 20 - (num_cards - 1) * gap) / num_cards;
     for (i, (label, val, colr)) in stats.iter().enumerate() {
         let r = RECT {
-            left: 10 + (i as i32) * (card_w + 8),
+            left: 10 + (i as i32) * (card_w + gap),
             top: d.y,
-            right: 10 + (i as i32) * (card_w + 8) + card_w,
+            right: 10 + (i as i32) * (card_w + gap) + card_w,
             bottom: d.y + 46,
         };
         d.round(&r, d.th.card, d.th.border, 6);
-        d.text(label, r.left + 8, r.top + 6, d.th.dim, f.tiny);
-        d.text(val, r.left + 8, r.top + 22, *colr, f.bold);
+        d.text(label, r.left + 6, r.top + 6, d.th.dim, f.tiny);
+        d.text(val, r.left + 6, r.top + 22, *colr, f.bold);
     }
     d.y += 54;
 
@@ -461,14 +487,45 @@ unsafe fn paint_pnl(d: &mut Dc, f: &Fonts, ui: &UiState, w: i32, h: i32) {
 
     // table header
     let hdr_y = d.y;
-    d.text("Account", 14, hdr_y, d.th.dim, f.tiny);
-    d.text("Position / Contracts", 200, hdr_y, d.th.dim, f.tiny);
-    let un_w = d.text_w("Unrealized", f.tiny);
-    d.text("Unrealized", w - 285 - un_w, hdr_y, d.th.dim, f.tiny);
-    let re_w = d.text_w("Realized", f.tiny);
-    d.text("Realized", w - 190 - re_w, hdr_y, d.th.dim, f.tiny);
-    let nl_w = d.text_w("Net Liq", f.tiny);
-    d.text("Net Liq", w - 100 - nl_w, hdr_y, d.th.dim, f.tiny);
+    
+    // Col 0: Account
+    let sort0_ind = if ui.sort_col == 0 { if ui.sort_asc { " ▲" } else { " ▼" } } else { "" };
+    let c0_txt = format!("Account{}", sort0_ind);
+    d.text(&c0_txt, 14, hdr_y, if ui.sort_col == 0 { d.th.blue } else { d.th.dim }, f.tiny);
+    let r0 = RECT { left: 8, top: hdr_y - 2, right: 190, bottom: hdr_y + 18 };
+    HITS.lock().unwrap().push((r0, Hit::Sort(0)));
+
+    // Col 1: Position / Contracts
+    let sort1_ind = if ui.sort_col == 1 { if ui.sort_asc { " ▲" } else { " ▼" } } else { "" };
+    let c1_txt = format!("Position / Contracts{}", sort1_ind);
+    d.text(&c1_txt, 200, hdr_y, if ui.sort_col == 1 { d.th.blue } else { d.th.dim }, f.tiny);
+    let r1 = RECT { left: 190, top: hdr_y - 2, right: w - 370, bottom: hdr_y + 18 };
+    HITS.lock().unwrap().push((r1, Hit::Sort(1)));
+
+    // Col 2: Open P&L
+    let sort2_ind = if ui.sort_col == 2 { if ui.sort_asc { " ▲" } else { " ▼" } } else { "" };
+    let c2_txt = format!("Open P&L{}", sort2_ind);
+    let un_w = d.text_w(&c2_txt, f.tiny);
+    d.text(&c2_txt, w - 280 - un_w, hdr_y, if ui.sort_col == 2 { d.th.blue } else { d.th.dim }, f.tiny);
+    let r2 = RECT { left: w - 370, top: hdr_y - 2, right: w - 280, bottom: hdr_y + 18 };
+    HITS.lock().unwrap().push((r2, Hit::Sort(2)));
+
+    // Col 3: Realized
+    let sort3_ind = if ui.sort_col == 3 { if ui.sort_asc { " ▲" } else { " ▼" } } else { "" };
+    let c3_txt = format!("Realized{}", sort3_ind);
+    let re_w = d.text_w(&c3_txt, f.tiny);
+    d.text(&c3_txt, w - 195 - re_w, hdr_y, if ui.sort_col == 3 { d.th.blue } else { d.th.dim }, f.tiny);
+    let r3 = RECT { left: w - 280, top: hdr_y - 2, right: w - 195, bottom: hdr_y + 18 };
+    HITS.lock().unwrap().push((r3, Hit::Sort(3)));
+
+    // Col 4: Net Liq
+    let sort4_ind = if ui.sort_col == 4 { if ui.sort_asc { " ▲" } else { " ▼" } } else { "" };
+    let c4_txt = format!("Net Liq{}", sort4_ind);
+    let nl_w = d.text_w(&c4_txt, f.tiny);
+    d.text(&c4_txt, w - 92 - nl_w, hdr_y, if ui.sort_col == 4 { d.th.blue } else { d.th.dim }, f.tiny);
+    let r4 = RECT { left: w - 195, top: hdr_y - 2, right: w - 60, bottom: hdr_y + 18 };
+    HITS.lock().unwrap().push((r4, Hit::Sort(4)));
+
     d.text("B/S/C", w - 58, hdr_y, d.th.dim, f.tiny);
     d.y += 20;
 
@@ -478,11 +535,15 @@ unsafe fn paint_pnl(d: &mut Dc, f: &Fonts, ui: &UiState, w: i32, h: i32) {
         if p.marketPosition != "Flat" { pos_map.insert(p.account.as_str(), p); }
     }
     let mut rows: Vec<(&Account, Option<&Position>)> = Vec::new();
+    let q = ui.search_query.trim().to_uppercase();
     for a in &data.accounts {
+        if !q.is_empty() && !a.name.to_uppercase().contains(&q) {
+            continue;
+        }
         let pos = pos_map.get(a.name.as_str()).copied();
         let active = a.netLiquidation > 0.0 || a.cashValue > 0.0 || a.realizedPnL != 0.0
             || a.unrealizedPnL != 0.0 || pos.is_some();
-        if !ui.show_all && !active { continue; }
+        if !ui.show_all && !active && q.is_empty() { continue; }
         rows.push((a, pos));
     }
     rows.sort_by(|(a, pa), (b, pb)| {
@@ -492,7 +553,7 @@ unsafe fn paint_pnl(d: &mut Dc, f: &Fonts, ui: &UiState, w: i32, h: i32) {
             match ui.sort_col {
                 0 => (0, 0.0, acc.name.clone()),
                 1 => (if has { 0 } else { 1 }, -qty, String::new()),
-                2 => (0, acc.unrealizedPnL, String::new()),
+                2 => (0, if let Some(p) = pos { if p.unrealizedPnL != 0.0 { p.unrealizedPnL } else { acc.unrealizedPnL } } else { acc.unrealizedPnL }, String::new()),
                 3 => (0, acc.realizedPnL, String::new()),
                 _ => (0, if acc.netLiquidation != 0.0 { acc.netLiquidation } else { acc.cashValue }, String::new()),
             }
@@ -505,25 +566,38 @@ unsafe fn paint_pnl(d: &mut Dc, f: &Fonts, ui: &UiState, w: i32, h: i32) {
     });
 
     let row_h = 26;
-    for (a, pos) in &rows {
-        if d.y + row_h > h - 30 {
-            d.text("\u{2193} more accounts (resize window)", 10, d.y + 2, d.th.dim, f.tiny);
-            break;
+    let table_top = d.y;
+    let table_bottom = h - 24;
+    let visible_h = (table_bottom - table_top).max(0);
+    let total_rows_h = rows.len() as i32 * row_h;
+    let max_scroll = (total_rows_h - visible_h).max(0);
+    MAX_SCROLL.store(max_scroll, Ordering::Relaxed);
+    let scroll_offset = ui.scroll_offset.min(max_scroll);
+
+    for (idx, (a, pos)) in rows.iter().enumerate() {
+        let row_y = table_top + (idx as i32 * row_h) - scroll_offset;
+        if row_y + row_h <= table_top || row_y >= table_bottom {
+            continue; // off-screen row
         }
-        let rr = RECT { left: 8, top: d.y, right: w - 8, bottom: d.y + row_h - 2 };
+        let rr = RECT { left: 8, top: row_y, right: w - 8, bottom: row_y + row_h - 2 };
         d.fill(&rr, d.th.card);
+
+        // numbers (right-aligned mono)
+        let up = if let Some(p) = pos { if p.unrealizedPnL != 0.0 { p.unrealizedPnL } else { a.unrealizedPnL } } else { a.unrealizedPnL };
+        let rp = a.realizedPnL;
+        let nl = if a.netLiquidation != 0.0 { a.netLiquidation } else { a.cashValue };
 
         // name + type badge + locked badge
         let mut nx = 14;
-        nx += d.text(&a.name, nx, d.y + 6, d.th.text, f.small) + 6;
+        nx += d.text(&a.name, nx, row_y + 6, d.th.text, f.small) + 6;
         let at = acc_type(&a.name, &a.provider);
         let bw = d.text_w(at, f.tiny) + 10;
-        let br = RECT { left: nx, top: d.y + 5, right: nx + bw, bottom: d.y + 20 };
+        let br = RECT { left: nx, top: row_y + 5, right: nx + bw, bottom: row_y + 20 };
         d.pill(&br, at, RGB(0x9d, 0xb2, 0xd4), d.th.btn, d.th.btn, f.tiny);
         nx = br.right + 4;
         let locked = *ui.lockouts.get(&a.name).unwrap_or(&false);
         if locked {
-            let lb = RECT { left: nx, top: d.y + 5, right: nx + 52, bottom: d.y + 20 };
+            let lb = RECT { left: nx, top: row_y + 5, right: nx + 52, bottom: row_y + 20 };
             d.pill(&lb, "LOCKED", d.th.red, d.th.red_bg, d.th.red, f.tiny);
         }
 
@@ -532,63 +606,77 @@ unsafe fn paint_pnl(d: &mut Dc, f: &Fonts, ui: &UiState, w: i32, h: i32) {
             Some(p) => {
                 let is_long = p.marketPosition.eq_ignore_ascii_case("long");
                 let price = if p.avgPrice > 0.0 { format!(" @ {:.2}", p.avgPrice) } else { String::new() };
-                let label = format!("{} {} {}{}",
+                let pnl_str = if up != 0.0 { format!(" ({})", fmt_money(up)) } else { String::new() };
+                let label = format!("{} {} {}{}{}",
                     if is_long { "LONG" } else { "SHORT" },
-                    p.quantity.abs() as i64, p.symbol, price);
+                    p.quantity.abs() as i64, p.symbol, price, pnl_str);
                 let bw = d.text_w(&label, f.tiny) + 14;
-                let prc = RECT { left: 200, top: d.y + 3, right: 200 + bw.max(80), bottom: d.y + 21 };
+                let prc = RECT { left: 200, top: row_y + 3, right: 200 + bw.max(80), bottom: row_y + 21 };
                 d.pill(&prc, &label,
                     if is_long { d.th.green } else { d.th.red },
                     if is_long { d.th.green_bg } else { d.th.red_bg },
                     if is_long { d.th.green } else { d.th.red }, f.tiny);
             }
             None => {
-                d.text("0 (FLAT)", 204, d.y + 6, d.th.dim, f.tiny);
+                d.text("0 (FLAT)", 204, row_y + 6, d.th.dim, f.tiny);
             }
         }
 
-        // numbers (right-aligned mono)
-        let up = if let Some(p) = pos { if p.unrealizedPnL != 0.0 { p.unrealizedPnL } else { a.unrealizedPnL } } else { a.unrealizedPnL };
-        let rp = a.realizedPnL;
-        let nl = if a.netLiquidation != 0.0 { a.netLiquidation } else { a.cashValue };
         let s1 = fmt_money(up);
-        d.text(&s1, w - 285 - d.text_w(&s1, f.mono), d.y + 6, pnl_color(up, d.th), f.mono);
+        d.text(&s1, w - 280 - d.text_w(&s1, f.mono), row_y + 6, pnl_color(up, d.th), f.mono);
         let s2 = fmt_money(rp);
-        d.text(&s2, w - 190 - d.text_w(&s2, f.mono), d.y + 6, pnl_color(rp, d.th), f.mono);
+        d.text(&s2, w - 195 - d.text_w(&s2, f.mono), row_y + 6, pnl_color(rp, d.th), f.mono);
         let s3 = fmt_plain(nl);
-        d.text(&s3, w - 100 - d.text_w(&s3, f.mono), d.y + 6, d.th.bright, f.mono);
+        d.text(&s3, w - 92 - d.text_w(&s3, f.mono), row_y + 6, d.th.bright, f.mono);
 
         // B/S/C buttons
         let bx = w - 86;
         if locked {
             for (i, lbl) in ["B", "S", "C"].iter().enumerate() {
-                let b = RECT { left: bx + (i as i32) * 22, top: d.y + 3, right: bx + (i as i32) * 22 + 20, bottom: d.y + 21 };
+                let b = RECT { left: bx + (i as i32) * 22, top: row_y + 3, right: bx + (i as i32) * 22 + 20, bottom: row_y + 21 };
                 d.round(&b, d.th.card, d.th.border, 4);
                 let tw = d.text_w(lbl, f.tiny);
-                d.text(lbl, b.left + (22 - tw) / 2, d.y + 6, d.th.dim, f.tiny);
+                d.text(lbl, b.left + (20 - tw) / 2, row_y + 6, d.th.dim, f.tiny);
             }
         } else {
             // B
-            let bb = RECT { left: bx, top: d.y + 3, right: bx + 20, bottom: d.y + 21 };
+            let bb = RECT { left: bx, top: row_y + 3, right: bx + 20, bottom: row_y + 21 };
             d.round(&bb, d.th.green_bg, d.th.green, 4);
             let tw = d.text_w("B", f.tiny);
-            d.text("B", bb.left + (22 - tw) / 2, d.y + 6, d.th.green, f.tiny);
+            d.text("B", bb.left + (20 - tw) / 2, row_y + 6, d.th.green, f.tiny);
             HITS.lock().unwrap().push((bb, Hit::Buy(a.name.clone())));
             // S
-            let sb = RECT { left: bx + 22, top: d.y + 3, right: bx + 42, bottom: d.y + 21 };
+            let sb = RECT { left: bx + 22, top: row_y + 3, right: bx + 42, bottom: row_y + 21 };
             d.round(&sb, d.th.red_bg, d.th.red, 4);
             let tw = d.text_w("S", f.tiny);
-            d.text("S", sb.left + (22 - tw) / 2, d.y + 6, d.th.red, f.tiny);
+            d.text("S", sb.left + (20 - tw) / 2, row_y + 6, d.th.red, f.tiny);
             HITS.lock().unwrap().push((sb, Hit::Sell(a.name.clone())));
-            // C
-            let cb = RECT { left: bx + 44, top: d.y + 3, right: bx + 64, bottom: d.y + 21 };
-            d.round(&cb, d.th.card, d.th.border, 4);
-            let tw = d.text_w("C", f.tiny);
-            d.text("C", cb.left + (22 - tw) / 2, d.y + 6, d.th.dim, f.tiny);
+            // C with amber glow when position exists!
+            let cb = RECT { left: bx + 44, top: row_y + 3, right: bx + 64, bottom: row_y + 21 };
+            let has_pos = pos.is_some();
+            if has_pos {
+                d.round(&cb, d.th.amber_bg, d.th.amber, 4);
+                let tw = d.text_w("C", f.tiny);
+                d.text("C", cb.left + (20 - tw) / 2, row_y + 6, d.th.amber, f.tiny);
+            } else {
+                d.round(&cb, d.th.card, d.th.border, 4);
+                let tw = d.text_w("C", f.tiny);
+                d.text("C", cb.left + (20 - tw) / 2, row_y + 6, d.th.dim, f.tiny);
+            }
             HITS.lock().unwrap().push((cb, Hit::Close(a.name.clone())));
         }
+    }
 
-        d.y += row_h;
+    // Scrollbar indicator on right edge
+    if max_scroll > 0 {
+        let sb_x = w - 4;
+        let sb_track = RECT { left: sb_x, top: table_top, right: w - 1, bottom: table_bottom };
+        d.fill(&sb_track, d.th.card);
+        let thumb_h = ((visible_h as f32 / total_rows_h as f32) * visible_h as f32).max(18.0) as i32;
+        let scroll_pct = ui.scroll_offset as f32 / max_scroll as f32;
+        let thumb_y = table_top + (scroll_pct * (visible_h - thumb_h) as f32) as i32;
+        let sb_thumb = RECT { left: sb_x, top: thumb_y, right: w - 1, bottom: thumb_y + thumb_h };
+        d.round(&sb_thumb, d.th.dim, d.th.border, 2);
     }
 }
 
@@ -765,6 +853,10 @@ unsafe fn paint_all(hdc: HDC, w: i32, h: i32) {
         d.round(&fr, th.card, th.border, 6);
         d.text(ftxt, fr.left + 9, tab_y + 6, th.dim, fonts.tiny);
         HITS.lock().unwrap().push((fr, Hit::Filter));
+
+        let search_w = 110;
+        let search_x = (fr.left - search_w - 10).max(tx + 50);
+        d.text("SEARCH", search_x - 48, tab_y + 6, th.dim, fonts.tiny);
     }
     d.y = tab_y + 32;
 
@@ -845,9 +937,9 @@ fn place_order(side: &'static str, account: &str) {
     let acc = account.to_string();
     std::thread::spawn(move || {
         let (code, body_txt) = fire("/api/order/atm", body);
-        with_ui(|u| { u.busy.remove(&format!("{}|{}", acc, side)); });
-        if code == 200 && !body_txt.contains("\"error\"") {
-            let v = serde_json::from_str::<serde_json::Value>(&body_txt).ok().unwrap_or_default();
+        let v = serde_json::from_str::<serde_json::Value>(&body_txt).ok().unwrap_or_default();
+        let has_err = v.get("error").map(|e| !e.is_null() && e.as_str().map(|s| !s.is_empty()).unwrap_or(true)).unwrap_or(false);
+        if code == 200 && !has_err {
             let strat = v.get("strategyName").and_then(|x| x.as_str()).unwrap_or("?").to_string();
             let sp = v.get("stopPrice").and_then(|x| x.as_f64()).unwrap_or(0.0);
             let tp = v.get("targetPrice").and_then(|x| x.as_f64()).unwrap_or(0.0);
@@ -858,8 +950,9 @@ fn place_order(side: &'static str, account: &str) {
                 set_status(&format!("OK {} {} {} [{}]", side.to_uppercase(), qty, symbol, bracket), 1);
             }
         } else {
-            let err = serde_json::from_str::<serde_json::Value>(&body_txt).ok()
-                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()))
+            let err = v.get("error").and_then(|e| e.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("HTTP {}", code));
             set_status(&format!("REJECTED {}: {}", acc, err), 2);
         }
@@ -874,12 +967,18 @@ fn close_position(account: &str) {
     let acc = account.to_string();
     let body = serde_json::json!({ "account": acc }).to_string();
     std::thread::spawn(move || {
-        let (code, _) = fire("/api/position/close", body);
+        let (code, body_txt) = fire("/api/position/close", body);
         with_ui(|u| { u.busy.remove(&format!("{}|close", acc)); });
-        if (200..300).contains(&code) {
+        let v = serde_json::from_str::<serde_json::Value>(&body_txt).ok().unwrap_or_default();
+        let has_err = v.get("error").map(|e| !e.is_null() && e.as_str().map(|s| !s.is_empty()).unwrap_or(true)).unwrap_or(false);
+        if (200..300).contains(&code) && !has_err {
             set_status(&format!("OK flatten {}", acc), 1);
         } else {
-            set_status(&format!("CLOSE FAILED {}: HTTP {}", acc, code), 2);
+            let err = v.get("error").and_then(|e| e.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("HTTP {}", code));
+            set_status(&format!("CLOSE FAILED {}: {}", acc, err), 2);
         }
         invalidate();
     });
@@ -920,15 +1019,23 @@ unsafe fn create_ticket_controls(hwnd: HWND, hinst: HINSTANCE) {
     }
     SendMessageA(atm, CB_SETCURSEL, 0, 0);
 
+    // Default SL: 40 ticks
     CreateWindowExA(
-        WS_EX_CLIENTEDGE, b"EDIT\0".as_ptr() as *const _, b"0\0".as_ptr() as *const _,
+        WS_EX_CLIENTEDGE, b"EDIT\0".as_ptr() as *const _, b"40\0".as_ptr() as *const _,
         WS_CHILD | WS_VISIBLE | ES_NUMBER,
         478, 45, 44, 24, hwnd, IDC_STOP as *mut _, hinst, null_mut());
 
+    // Default Target: 80 ticks
     CreateWindowExA(
-        WS_EX_CLIENTEDGE, b"EDIT\0".as_ptr() as *const _, b"0\0".as_ptr() as *const _,
+        WS_EX_CLIENTEDGE, b"EDIT\0".as_ptr() as *const _, b"80\0".as_ptr() as *const _,
         WS_CHILD | WS_VISIBLE | ES_NUMBER,
         564, 45, 44, 24, hwnd, IDC_TARGET as *mut _, hinst, null_mut());
+
+    // Search edit control in tab bar
+    CreateWindowExA(
+        WS_EX_CLIENTEDGE, b"EDIT\0".as_ptr() as *const _, null_mut(),
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        400, 84, 110, 22, hwnd, IDC_SEARCH as *mut _, hinst, null_mut());
 }
 
 unsafe fn refresh_symbol_combo() {
@@ -936,31 +1043,62 @@ unsafe fn refresh_symbol_combo() {
     if hwnd.is_null() { return; }
     let h = GetDlgItem(hwnd, IDC_SYMBOL);
     if h.is_null() { return; }
-    let guard = with_ui(|u| u.guard.clone());
+    let (guard, data) = with_ui(|u| (u.guard.clone(), u.data.clone()));
     let qs = quarterlies();
     let roots: Vec<String> = if guard.allowed_roots.is_empty() {
         SYMBOLS_FALLBACK.iter().map(|s| s.to_string()).collect()
     } else {
         guard.allowed_roots.clone()
     };
+
+    let cur_sel_idx = SendMessageA(h, CB_GETCURSEL, 0, 0);
+    let mut cur_text = String::new();
+    if cur_sel_idx >= 0 {
+        let mut buf = [0u8; 64];
+        let len = SendMessageA(h, CB_GETLBTEXT, cur_sel_idx as WPARAM, buf.as_mut_ptr() as LPARAM);
+        if len > 0 {
+            cur_text = String::from_utf8_lossy(&buf[..len as usize]).to_string();
+        }
+    }
+
     SendMessageA(h, CB_RESETCONTENT, 0, 0);
-    let mut added: isize = 0;
+    let mut added_symbols: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // 1. Dynamic open position symbols first
+    if let Some(d) = data {
+        for p in &d.positions {
+            if p.marketPosition != "Flat" && !p.symbol.is_empty() {
+                let sym = p.symbol.to_uppercase();
+                if added_symbols.insert(sym.clone()) {
+                    let ansi: Vec<u8> = sym.bytes().chain(std::iter::once(0)).collect();
+                    SendMessageA(h, CB_ADDSTRING, 0, ansi.as_ptr() as LPARAM);
+                }
+            }
+        }
+    }
+
+    // 2. Allowed roots x quarterlies
     for r in &roots {
         for q in &qs {
             let s = format!("{} {}", r, q);
-            let ansi: Vec<u8> = s.bytes().chain(std::iter::once(0)).collect();
-            let rc = SendMessageA(h, CB_ADDSTRING, 0, ansi.as_ptr() as LPARAM);
-            if rc >= 0 { added += 1; }
+            if added_symbols.insert(s.clone()) {
+                let ansi: Vec<u8> = s.bytes().chain(std::iter::once(0)).collect();
+                SendMessageA(h, CB_ADDSTRING, 0, ansi.as_ptr() as LPARAM);
+            }
         }
     }
-    if SendMessageA(h, CB_GETCOUNT, 0, 0) > 0 {
+
+    if !cur_text.is_empty() {
+        let ansi: Vec<u8> = cur_text.bytes().chain(std::iter::once(0)).collect();
+        let idx = SendMessageA(h, CB_FINDSTRINGEXACT, -1isize as WPARAM, ansi.as_ptr() as LPARAM);
+        if idx >= 0 {
+            SendMessageA(h, CB_SETCURSEL, idx as WPARAM, 0);
+        } else if SendMessageA(h, CB_GETCOUNT, 0, 0) > 0 {
+            SendMessageA(h, CB_SETCURSEL, 0, 0);
+        }
+    } else if SendMessageA(h, CB_GETCOUNT, 0, 0) > 0 {
         SendMessageA(h, CB_SETCURSEL, 0, 0);
     }
-    let count = SendMessageA(h, CB_GETCOUNT, 0, 0);
-    let _ = std::fs::write(
-        std::env::temp_dir().join("pnl_gdi_debug.txt"),
-        format!("added={} count={} roots={:?} qs={:?}\n", added, count, roots, qs),
-    );
 }
 
 // ---------------------------------------------------------------- wndproc
@@ -987,6 +1125,29 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
             0
         }
         WM_ERASEBKGND => 1,
+        WM_REFRESH_COMBO => {
+            refresh_symbol_combo();
+            0
+        }
+        WM_MOUSEWHEEL => {
+            let delta = (wparam >> 16) as i16;
+            let scroll_delta = -(delta as i32 / 120) * 52;
+            let max_s = MAX_SCROLL.load(Ordering::Relaxed);
+            with_ui(|u| {
+                u.scroll_offset = (u.scroll_offset + scroll_delta).clamp(0, max_s);
+            });
+            invalidate();
+            0
+        }
+        WM_SIZE => {
+            let w = (lparam & 0xFFFF) as i32;
+            let h_search = GetDlgItem(hwnd, IDC_SEARCH);
+            if !h_search.is_null() {
+                SetWindowPos(h_search, null_mut(), (w - 240).max(280), 84, 110, 22, SWP_NOZORDER);
+            }
+            invalidate();
+            0
+        }
         WM_LBUTTONDOWN => {
             let x = (lparam & 0xFFFF) as i16 as i32;
             let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
@@ -999,7 +1160,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
                     Hit::Panic => {
                         panic_flatten();
                     }
-                    Hit::Tab(t) => { with_ui(|u| { u.tab = t; }); repaint = true; }
+                    Hit::Tab(t) => {
+                        with_ui(|u| { u.tab = t; });
+                        let h_search = GetDlgItem(hwnd, IDC_SEARCH);
+                        if !h_search.is_null() {
+                            ShowWindow(h_search, if t == Tab::Pnl { SW_SHOW } else { SW_HIDE });
+                        }
+                        repaint = true;
+                    }
                     Hit::Filter => { with_ui(|u| u.show_all = !u.show_all); repaint = true; }
                     Hit::Sort(col) => {
                         with_ui(|u| {
@@ -1011,7 +1179,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
                     Hit::Buy(acc) => place_order("buy", &acc),
                     Hit::Sell(acc) => place_order("sell", &acc),
                     Hit::Close(acc) => close_position(&acc),
-                    Hit::CloseConfirm(acc) => close_position(&acc),
                 }
             }
             if repaint { invalidate(); }
@@ -1027,6 +1194,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam:
             let id = (wparam & 0xFFFF) as i32;
             if id == IDC_SYMBOL && (code == CBN_SELCHANGE as u16 || code == CBN_EDITCHANGE as u16) {
                 invalidate(); // max-cap chip reads current symbol
+            } else if id == IDC_SEARCH && code == EN_CHANGE as u16 {
+                let mut buf = [0u16; 64];
+                let h_search = GetDlgItem(hwnd, IDC_SEARCH);
+                let n = GetWindowTextW(h_search, buf.as_mut_ptr(), 64);
+                let q = String::from_utf16_lossy(&buf[..n as usize]);
+                with_ui(|u| {
+                    u.search_query = q;
+                    u.scroll_offset = 0;
+                });
+                invalidate();
             }
             0
         }
@@ -1055,7 +1232,7 @@ fn main() {
         RegisterClassA(&wc);
 
         let hwnd = CreateWindowExA(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST,
             b"FleetPnlShell\0".as_ptr() as *const _,
             b"Fleet P&L Monitor\0".as_ptr() as *const _,
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
@@ -1069,10 +1246,16 @@ fn main() {
         std::thread::spawn(lockout_loop);
         std::thread::spawn(config_loop);
         std::thread::spawn(|| {
-            std::thread::sleep(Duration::from_millis(1200));
-            unsafe { refresh_symbol_combo(); }
-            std::thread::sleep(Duration::from_millis(4000));
-            unsafe { refresh_symbol_combo(); }
+            std::thread::sleep(Duration::from_millis(600));
+            let hwnd = HWND_MAIN.load(Ordering::Relaxed) as *mut winapi::shared::windef::HWND__;
+            if !hwnd.is_null() {
+                unsafe { PostMessageA(hwnd, WM_REFRESH_COMBO, 0, 0); }
+            }
+            std::thread::sleep(Duration::from_millis(3000));
+            let hwnd = HWND_MAIN.load(Ordering::Relaxed) as *mut winapi::shared::windef::HWND__;
+            if !hwnd.is_null() {
+                unsafe { PostMessageA(hwnd, WM_REFRESH_COMBO, 0, 0); }
+            }
         });
 
         let mut msg: MSG = std::mem::zeroed();

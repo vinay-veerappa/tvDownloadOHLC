@@ -53,6 +53,23 @@ if !errorlevel! equ 0 (
 echo.
 
 :: -----------------------------------------------------------
+:: 1b. Native GDI widget window (fed by the daemon on 8635)
+:: -----------------------------------------------------------
+echo [START] Native GDI widget...
+powershell -NoProfile -Command "if (Get-Process pnl_widget_gdi -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"
+if !errorlevel! equ 0 (
+    echo         ALREADY RUNNING - skipping.
+) else (
+    if exist "%CD%\crates\target\release\pnl_widget_gdi.exe" (
+        start "" "%CD%\crates\target\release\pnl_widget_gdi.exe"
+        echo         Started ^(native, 15MB^).
+    ) else (
+        echo         SKIPPED - pnl_widget_gdi.exe not built ^(cd crates ^&^& cargo build --release -p pnl_widget_gdi^)
+    )
+)
+echo.
+
+:: -----------------------------------------------------------
 :: 2. FinancialJuice widget (port 8636)
 :: -----------------------------------------------------------
 echo [START] FinancialJuice widget...
@@ -66,12 +83,14 @@ if !errorlevel! equ 0 (
 echo.
 
 :: -----------------------------------------------------------
-:: 3. Inject TV HUD (only if CDP is up)
+:: 3. Inject TV HUD (only if CDP is up) — hard 30s timeout so a
+::    wedged CDP can NEVER hang the stack launcher (measured hang
+::    2026-09-03: injector blocked on a dead 9222).
 :: -----------------------------------------------------------
 powershell -NoProfile -Command "try { Invoke-RestMethod -Uri 'http://127.0.0.1:9222/json/version' -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }"
 if !errorlevel! equ 0 (
-    echo [START] Injecting account_pnl HUD into TradingView...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\tradingview\tv_hud_manager.ps1" -HUD "account_pnl" -Action inject
+    echo [START] Injecting account_pnl HUD into TradingView ^(30s timeout^)...
+    powershell -NoProfile -Command "& { $p = Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','scripts\tradingview\tv_hud_manager.ps1','-HUD','account_pnl','-Action','inject' -PassThru -WindowStyle Hidden; if (-not $p.WaitForExit(30000)) { $p.Kill(); Write-Host '        TIMEOUT - HUD injection killed after 30s (TV CDP wedged). The daemon pusher still feeds the HUD; re-run inject later.' } else { Write-Host '        injected.' } }"
 ) else (
     echo [SKIP]  TV HUD injection - TradingView not running.
 )
