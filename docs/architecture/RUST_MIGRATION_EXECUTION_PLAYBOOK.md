@@ -231,7 +231,7 @@ crates\target\release\gate3_killswitch.exe                         # sentinel si
 3. **`stream_chart.py` (Futures Data Streamer)**: Remains in Python (1,424 LOC, **268 MB measured** — now the single largest process on the box). Currently streams Schwab/yfinance candles to SQLite `dev.db`. Candidate for future Rust migration if Python CPU or latency becomes a bottleneck.
 4. **Scheduled Tasks**: `TradingDaemon` and `BrokerSentinel` registered; if the repo moves, re-run `launch/register_trading_daemon_task.ps1` and `launch/register_broker_sentinel_task.ps1`.
 5. **⚠️ ZERO TESTS.** 3,940 LOC across five crates, `#[test]` count **0**, and this repo has no CI at all (no `.github/workflows/`, no `tools/ci_local.py`). The three gates are one-shot scripts run by hand. The sibling repos hold 3170/0 with 46 mutation batteries over the same trading path. **This is the largest remaining gap** and none of the fixes below close it.
-6. **Bearer token** `d0b837223cab4653` is hardcoded in 32 tracked files, now including three Rust sources — and declared **twice inside `trading_daemon`** (`poller.rs:17` and `state.rs:9`, while `server.rs` imports from `poller`). Rotating it means finding both copies in one crate.
+6. **Bearer token hardcoded in 33 tracked files** (find them with `git grep -l NT8_TOKEN` / the literal in `crates/trading_daemon/src/poller.rs:17`). ⚠️ **Do not paste the literal into a doc** — this line used to quote it, and committing this file is what took the count from 32 to 33. Breakdown: 25 in `scripts/research/`, 3 in the Rust crates, 2 in `launch/widgets/`, the rest in archive/docs. It is declared **twice inside `trading_daemon`** (`poller.rs:17` and `state.rs:9`, while `server.rs` imports from `poller`), so rotating it means finding both copies in one crate. It is loopback-only, which is why this is low severity and not zero.
 7. **`load_config()` in `broker_sentinel/src/lib.rs` fails silently.** A malformed `sentinel.json` falls through to `SentinelConfig::default()` with no warning — the operator's tuned limits vanish and the config file still reads as if it applied.
 
 ---
@@ -305,8 +305,43 @@ Both source files were restored to their exact original SHA-256 after the batter
 
 **`crates/run_all_gates.ps1`** is the single entry point: release build, `cargo test`, then Gates 1–3, with a PASS/FAIL summary and non-zero exit on any failure. ⚠️ It sets `PYO3_PYTHON` for you — a bare `cargo test` at the workspace root **fails to build `pyo3-ffi`** without it, because system Python is 3.14 and PyO3 0.21 refuses anything above 3.12. ⚠️ Use `-SkipBuild` while the daemon and widgets are live; Windows will not let `cargo build --release` replace a running binary.
 
-### Still open after this pass
-* **No CI.** 31 tests and 3 gates that only run when someone remembers. `run_all_gates.ps1` is the entry point a CI job would call.
-* **`nt8_parity_core` has no unit tests** — it is covered only by Gate 2's end-to-end bit-exact replay, on one instrument and one year of synthetic signals.
-* **`pnl_widget_gdi` (1,266 LOC) has no tests**, and `trading_daemon`'s `server.rs` / `state.rs` / `cdp.rs` are untested — only `poller.rs` is covered.
-* Bearer token in 32 files, twice inside `trading_daemon`; `load_config()` silent fallback (open items 6 and 7 above).
+---
+
+## What is left — measured 2026-09-03 (post-commit `f0bdb527`)
+
+### Footprint: the migration's headline goal is met
+| | procs | RAM |
+|---|---|---|
+| **Rust** (daemon + 2 widgets + sentinel) | 4 | **60.2 MB** |
+| Python | 21 | 825.8 MB |
+| Node | 10 | 817.7 MB |
+
+Against the 3,383 MB measured before Track 1, total is now ~1,704 MB. **No Node process is a migration target any more** — the remaining ten are `tradingview-mcp` (343 MB), `nt-mcp-server.js` (50 MB), two Next.js servers, the sequential-thinking MCP and IDE helpers. `pnl_widget_server.js` and `fj_widget_server.js` are gone from the process table entirely.
+
+### 1. Test coverage — the real gap
+| crate | LOC | tests |
+|---|---|---|
+| `trading_daemon` | 1,292 | 21 (⚠️ `poller.rs` only) |
+| `broker_sentinel` | 720 | 10 |
+| `nt8_parity_core` | 631 | **0** |
+| `pnl_widget_gdi` | 1,266 | **0** |
+| `fj_widget` | 437 | **0** |
+
+Within `trading_daemon`, **736 LOC are untested**: `state.rs` (258 — the 2.5s lockout sweep and emergency-flatten trigger), `server.rs` (218 — the order-proxy routes), `cdp.rs` (209 — the TV push), `main.rs` (51). The lockout sweep is the one that matters most: it is risk machinery with no test at all.
+
+`nt8_parity_core` is covered only by Gate 2's end-to-end bit-exact replay — one instrument, one year, synthetic signals. No unit test pins tick snapping, the BE-lock fill sequence, or the consecutive-loss pause in isolation, so a failure there reports as a whole-year trade-count mismatch rather than naming the rule that broke.
+
+### 2. No CI
+Still no `.github/workflows/`. 31 tests and 3 gates that run only when someone remembers. `crates/run_all_gates.ps1` is the single command a CI job would call — the job does not exist yet. Note the sibling repos' rule: **run `gh run list` before trusting any claim of green**, which here would return nothing at all.
+
+### 3. Sentinel live-fire — blocked, not forgotten
+Detection, trigger, cushion formula and the Tradovate REST path are built and gate-verified in simulation; the sentinel runs observe-only at ~5–11 MB. **Blocked on broker API credentials.** Until then it is *configured and evaluating*, not *enforcing* — it logs the flatten it would have made. Do not size positions as though a killswitch exists.
+
+### 4. `stream_chart.py` — the last real migration candidate
+**260 MB**, 1,424 LOC, the single largest process on the box and the live tick-ingest path. It is the only remaining component where a Rust port would buy something measurable. Everything else in Python (`strategy_engine/runner.py` 87 MB, `api.main` 49 MB) is small enough that the rewrite would not pay.
+
+### 5. Smaller open items
+* **Bearer token** — see open item 6 above (33 files, twice inside `trading_daemon`).
+* **`broker_sentinel::load_config()` fails silently** — a malformed `sentinel.json` falls through to `SentinelConfig::default()` with no warning, so the operator's tuned limits vanish while the config file still reads as though it applied. Same class as the PyO3 fallback fixed in this pass, and not yet fixed.
+* **`cargo test` needs `PYO3_PYTHON`** or `pyo3-ffi` fails to build (system Python is 3.14; PyO3 0.21 caps at 3.12). `run_all_gates.ps1` sets it; a bare `cargo test` does not.
+* **A full `cargo build --release` cannot run while the binaries are live** — Windows holds the file locks. Needs a stop/build/start window, or `-SkipBuild`.
