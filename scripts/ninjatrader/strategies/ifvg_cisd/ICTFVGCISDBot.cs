@@ -24,12 +24,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public int Variant { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Entry Mode (0=Market, 1=FVG Touch, 2=FVG CE 50%)", Order = 1, GroupName = "1. Strategy Variant")]
-        [Range(0, 2)]
+        [Display(Name = "Entry Mode (0=Market, 1=CISD Limit)", Order = 1, GroupName = "1. Strategy Variant")]
+        [Range(0, 1)]
         public int EntryMode { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Use MTF 5m+1m Precision Entry", Order = 2, GroupName = "1. Strategy Variant")]
+        [Display(Name = "Stop Loss Type (0=BpsStat,1=Struct,2=StructCapped,3=SkipOOB)", Order = 2, GroupName = "1. Strategy Variant")]
+        [Range(0, 3)]
+        public int StopLossType { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Use MTF 5m+1m Precision Entry", Order = 3, GroupName = "1. Strategy Variant")]
         public bool UseMtfExecution { get; set; }
 
         [NinjaScriptProperty]
@@ -41,7 +46,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public bool UseHtfFilter { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Filter NY Lunch (12:00-13:30)", Order = 5, GroupName = "1. Strategy Variant")]
+        [Display(Name = "Filter NY Lunch (11:30-13:30)", Order = 5, GroupName = "1. Strategy Variant")]
         public bool FilterLunch { get; set; }
 
         [NinjaScriptProperty]
@@ -121,21 +126,25 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             LatestEntry = 1530;
             FlattenBy = 1555;
 
-            Variant = 2;
-            EntryMode = 1;                 // 1 = FVG Limit Touch
+            // Strategy defaults come from the SHARED MANIFEST (Indicators.Vinay.IfvgCisdConfig.cs,
+            // auto-generated from configs/strategies/ifvg_cisd.yaml). Never
+            // hand-tune a value here that the manifest owns.
+            Variant = Indicators.Vinay.IfvgCisdConfig.Variant;                    // manifest: variant2
+            EntryMode = Indicators.Vinay.IfvgCisdConfig.EntryMode;                 // manifest: cisd_limit
+            StopLossType = Indicators.Vinay.IfvgCisdConfig.StopLossTypeId;         // manifest: bps_stat
             UseMtfExecution = true;        // Multi-Timeframe: 5m Structure + 1m Precision Entry
             UseStage2Distribution = false;
-            UseHtfFilter = true;           // Enabled: 4H Macro Trend Alignment (Python parity)
-            HtfEmaPeriod = 2400;           // 2400 bars on 5m = 4-Hour 50 EMA (98.84% parity with Python)
-            FilterLunch = true;            // Blackout 12:00-13:30
-            RequireExternalSweep = false;  // False: unconstrained 5m CISD state deliveries (Python parity)
-            EnableConfirmedReentry = true; // Confirmed Re-entry Protocol
-            QueenTargetBps = 10.0;         // +10 Basis Points (0.10%)
-            RunnerTargetBps = 30.0;        // +30 Basis Points (0.30%)
-            StopLossBps = 5.0;             // 5.0 Basis Points default stop ceiling
-            MinRiskBps = 2.0;              // 2 Basis Points risk floor
-            MaxRiskBps = 15.0;             // 15 Basis Points universal risk ceiling
-            EnableMidlineReclaims = true;
+            UseHtfFilter = Indicators.Vinay.IfvgCisdConfig.UseHtfFilter;           // manifest: false (V1/V2 parity)
+            HtfEmaPeriod = Indicators.Vinay.IfvgCisdConfig.HtfEmaPeriod;
+            FilterLunch = Indicators.Vinay.IfvgCisdConfig.LunchFilterEnabled;      // manifest: 11:30-13:30
+            RequireExternalSweep = Indicators.Vinay.IfvgCisdConfig.RequireExternalSweep;
+            EnableConfirmedReentry = Indicators.Vinay.IfvgCisdConfig.EnableConfirmedReentry;
+            QueenTargetBps = Indicators.Vinay.IfvgCisdConfig.QueenTargetBps;
+            RunnerTargetBps = Indicators.Vinay.IfvgCisdConfig.RunnerTargetBps;
+            StopLossBps = Indicators.Vinay.IfvgCisdConfig.StopLossBps;
+            MinRiskBps = Indicators.Vinay.IfvgCisdConfig.MinRiskBps;
+            MaxRiskBps = Indicators.Vinay.IfvgCisdConfig.MaxRiskBps;
+            EnableMidlineReclaims = Indicators.Vinay.IfvgCisdConfig.EnableMidlineReclaims;
 
             AddSecondaryTimeframe = true;
             DebugMode = true;
@@ -153,14 +162,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
             if (AddSecondaryTimeframe && BarsArray.Length > 1)
             {
-                // Run the 5-minute CISD indicator on BarsArray[1] (5m series)
-                ictIndicator = ICTFVGCISDIndicator(BarsArray[1], Variant, EntryMode, UseHtfFilter, FilterLunch, RequireExternalSweep, QueenTargetBps, RunnerTargetBps, StopLossBps, MinRiskBps, MaxRiskBps, EnableMidlineReclaims, DrawVisuals);
+                // Run the 5-minute CISD indicator on BarsArray[1] (5m series).
+                // Signature parity contract: indicator params are
+                // (Variant, EntryMode, StopLossType, UseHtfFilter, FilterLunch,
+                //  RequireExternalSweep, Queen, Runner, StopBps, MinBps, MaxBps,
+                //  Midlines, Visuals) — mirrors the shared manifest.
+                ictIndicator = ICTFVGCISDIndicator(BarsArray[1], Variant, EntryMode, StopLossType, UseHtfFilter, FilterLunch, RequireExternalSweep, QueenTargetBps, RunnerTargetBps, StopLossBps, MinRiskBps, MaxRiskBps, EnableMidlineReclaims, DrawVisuals);
                 if (ictIndicator != null) ictIndicator.HtfEmaPeriod = HtfEmaPeriod;
             }
             else
             {
                 // Single timeframe execution on BarsArray[0]
-                ictIndicator = ICTFVGCISDIndicator(BarsArray[0], Variant, EntryMode, UseHtfFilter, FilterLunch, RequireExternalSweep, QueenTargetBps, RunnerTargetBps, StopLossBps, MinRiskBps, MaxRiskBps, EnableMidlineReclaims, DrawVisuals);
+                ictIndicator = ICTFVGCISDIndicator(BarsArray[0], Variant, EntryMode, StopLossType, UseHtfFilter, FilterLunch, RequireExternalSweep, QueenTargetBps, RunnerTargetBps, StopLossBps, MinRiskBps, MaxRiskBps, EnableMidlineReclaims, DrawVisuals);
                 if (ictIndicator != null) ictIndicator.HtfEmaPeriod = HtfEmaPeriod;
             }
 

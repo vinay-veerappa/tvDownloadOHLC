@@ -113,7 +113,21 @@ INDICATOR_SRC_DIRS = [
     ("vinay",        NT8_SRC / "indicators" / "vinay",       INDICATORS_ROOT / "Vinay"),
     ("redtail",      NT8_SRC / "indicators" / "redtail",     INDICATORS_ROOT / "RedTail"),
     ("third_party",  NT8_SRC / "indicators" / "third_party", INDICATORS_ROOT / "ThirdParty"),
+    # TheStrat indicators (TheStratClassifier, TheStratFTFCHud) - repo-owned,
+    # deploy to Indicators/Vinay alongside the Strat bots' shared core.
+    ("the_strat",    NT8_SRC / "indicators" / "the_strat",   INDICATORS_ROOT / "Vinay"),
+    # ifvg_cisd indicators (ICTFVGCISDIndicator, IfvgCisdConfig) — repo-owned
+    # since the 2026-09-04 ownership cleanup; deploy beside the other Vinay
+    # indicators. The gap note below no longer applies to these.
+    ("ifvg_cisd",    NT8_SRC / "indicators" / "ifvg_cisd",   INDICATORS_ROOT / "Vinay"),
+    # NOTE: remaining indicator subfolders (ema_pullback, ib_breakout, ...)
+    # still have no entry — deploy by hand until each gets its own mapping.
 ]
+
+# Canonical Strat config — the ONE file both stacks read:
+#   Python: scripts.libs_py.the_strat.config.load_strat_config()
+#   NT8:    StratConfig.cs (Strategies/Vinay/strat_config.json)
+STRAT_CONFIG_SRC = REPO_ROOT / "scripts" / "strategies" / "the_strat" / "strat_config.json"
 
 
 def file_hash(path: Path) -> str:
@@ -196,6 +210,38 @@ def sync_dir(src_dir: Path, dst_dir: Path, label: str, dry_run: bool = False, ve
     return result
 
 
+def sync_one(src_file: Path, dst_dir: Path, label: str, dry_run: bool = False, verify: bool = False) -> dict:
+    """Sync a single .cs file into dst_dir. Same semantics as sync_dir's per-file loop."""
+    result = {"copied": [], "identical": [], "missing_dst": []}
+    dst_file = dst_dir / src_file.name
+    if not dst_file.exists():
+        result["missing_dst"].append(src_file.name)
+        if not verify:
+            if not dry_run:
+                shutil.copy2(src_file, dst_file)
+                print(f"  [COPIED]  {src_file.name}  (new file)")
+            else:
+                print(f"  [DRY-RUN] {src_file.name}  (would copy — new file)")
+        else:
+            print(f"  [MISSING] {src_file.name}  (in repo, NOT in NT8)")
+        return result
+    if file_hash(src_file) == file_hash(dst_file):
+        result["identical"].append(src_file.name)
+        if verify:
+            print(f"  [OK]      {src_file.name}")
+    else:
+        result["copied"].append(src_file.name)
+        if not verify:
+            if not dry_run:
+                shutil.copy2(src_file, dst_file)
+                print(f"  [SYNCED]  {src_file.name}  (content differed)")
+            else:
+                print(f"  [DRY-RUN] {src_file.name}  (would sync — content differs)")
+        else:
+            print(f"  [DRIFT]   {src_file.name}  (source differs from NT8)")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description="Sync repo strategy .cs files to NT8 live folder.")
     parser.add_argument("--verify", action="store_true", help="Show drift status without copying.")
@@ -250,11 +296,44 @@ def main():
             print()
 
         # ── Shared files: shared classes -> NT8 Strategies/Vinay/ (compiled with strategies) ──
+        # rglob (recursive): shared/ has subfolders (ict/ engines). A plain glob
+        # here silently skipped every engine file — the "gate on disk, wired to
+        # nothing" shape. NT8 compiles Strategies/ recursively so subfolder
+        # structure under shared/ is repo organisation, not deploy scoping.
         if SHARED_SRC.exists():
             print(f"[Shared/] {SHARED_SRC} -> {STRATEGIES_DST}")
-            r = sync_dir(SHARED_SRC, STRATEGIES_DST, "shared", args.dry_run, args.verify)
-            all_results.append(("Shared", r))
-            all_strategy_src_names.update(f.name for f in SHARED_SRC.glob("*.cs"))
+            for shared_cs in sorted(SHARED_SRC.rglob("*.cs")):
+                # preserve no subfolder: shared classes deploy flat beside the
+                # strategies that consume them (Strategies/Vinay/ compiles as one)
+                r = sync_one(shared_cs, STRATEGIES_DST, "shared", args.dry_run, args.verify)
+                all_results.append(("Shared/" + shared_cs.name, r))
+                all_strategy_src_names.add(shared_cs.name)
+            print()
+
+        # ── Canonical Strat config JSON -> NT8 Strategies/Vinay/ (read by StratConfig.cs) ──
+        # Same file Python reads. Content-differs or missing is drift, not optional.
+        if STRAT_CONFIG_SRC.exists():
+            dst_json = STRATEGIES_DST / STRAT_CONFIG_SRC.name
+            if args.verify:
+                if not dst_json.exists():
+                    print(f"  [MISSING] {STRAT_CONFIG_SRC.name}  (in repo, NOT in NT8)")
+                    all_results.append(("StratConfig", {"copied": [], "identical": [], "missing_dst": [STRAT_CONFIG_SRC.name]}))
+                elif file_hash(STRAT_CONFIG_SRC) == file_hash(dst_json):
+                    print(f"  [OK]      {STRAT_CONFIG_SRC.name}")
+                    all_results.append(("StratConfig", {"copied": [], "identical": [STRAT_CONFIG_SRC.name], "missing_dst": []}))
+                else:
+                    print(f"  [DRIFT]   {STRAT_CONFIG_SRC.name}  (source differs from NT8)")
+                    all_results.append(("StratConfig", {"copied": [STRAT_CONFIG_SRC.name], "identical": [], "missing_dst": []}))
+            else:
+                if not dst_json.exists() or file_hash(STRAT_CONFIG_SRC) != file_hash(dst_json):
+                    if not args.dry_run:
+                        STRATEGIES_DST.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(STRAT_CONFIG_SRC, dst_json)
+                        print(f"  [SYNCED]  {STRAT_CONFIG_SRC.name}  -> {STRATEGIES_DST}")
+                    else:
+                        print(f"  [DRY-RUN] {STRAT_CONFIG_SRC.name}  (would sync -> {STRATEGIES_DST})")
+                else:
+                    print(f"  [OK]      {STRAT_CONFIG_SRC.name}")
             print()
 
     # ── Indicator files: each source subfolder -> its OWN NT8 Indicators/<Name>/ ──
@@ -301,9 +380,13 @@ def main():
     indicator_orphans = []
     if "indicators" in scopes:
         src_lower = lower(all_indicator_src_names)
+        # Dedupe: several source dirs may share one destination (vinay + the_strat
+        # both land in Indicators/Vinay/) — scanning it twice reports each orphan twice.
+        seen_dsts = set()
         for dst_dir in indicator_dsts:
-            if not dst_dir.exists():
+            if dst_dir in seen_dsts or not dst_dir.exists():
                 continue
+            seen_dsts.add(dst_dir)
             indicator_orphans.extend(
                 f"{dst_dir.name}/{f.name}" for f in sorted(dst_dir.glob("*.cs"))
                 if f.name.lower() not in src_lower)
