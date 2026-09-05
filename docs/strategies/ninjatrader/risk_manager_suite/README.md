@@ -46,7 +46,7 @@ last good one).
 
 ## What to read instead
 
-* **How to write a bot**: [STRATEGY_WORKFLOW.md §5.7](../../../architecture/STRATEGY_WORKFLOW.md) —
+* **How to write a bot**: [STRATEGY_WORKFLOW.md §3.4](../../../architecture/STRATEGY_WORKFLOW.md) —
   a new bot inherits `GovernedStrategy` (`scripts/ninjatrader/shared/`), which is
   this repo's own layer over `RiskManagerBase` and needs no change to it.
 * **Deploying**: `python scripts/utils/sync_nt8_strategies.py --verify` then without

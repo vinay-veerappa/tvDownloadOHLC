@@ -268,6 +268,6 @@ def test_a_new_bot_must_derive_from_the_governed_base():
     assert not new, (
         "these bots derive from something other than GovernedStrategy and are "
         "not on the recorded exception list: {}. A new bot inherits "
-        "GovernedStrategy (section 5.7); it gets the decision log, the frozen "
+        "GovernedStrategy (section 3.4); it gets the decision log, the frozen "
         "defaults and unique entry names without writing any of it."
         .format(new))

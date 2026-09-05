@@ -190,7 +190,7 @@ def _emit_governance_gates(a, gov: dict) -> None:
     gates = gov.get("gates") or {}
     if not gates:
         return
-    a("        // ---- governance gate names (section 5.7) --------------------------")
+    a("        // ---- governance gate names (section 3.4) --------------------------")
     a("        // GovernedStrategy records its own refusals under these, so a bot")
     a("        // blocked by a FRAMEWORK rule lands in the roster instead of")
     a("        // vanishing -- the C# half of the funnel gap in section 11 item 13.")

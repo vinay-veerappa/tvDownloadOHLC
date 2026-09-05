@@ -145,7 +145,7 @@ mean deciding the convention on the cases that matter least.
 | | |
 |---|---|
 | **Bots** | all fourteen (frozen in `tests/uninstrumented.py`, shrink-only) |
-| **Base** | `scripts/ninjatrader/shared/GovernedStrategy.cs` (STRATEGY_WORKFLOW.md §5.7) |
+| **Base** | `scripts/ninjatrader/shared/GovernedStrategy.cs` (STRATEGY_WORKFLOW.md §3.4) |
 
 **These were two tickets and are now one, because one edit closes both.** B7 was
 "emit a unique entry signal name" and B8 was "call the decision log" — both were
@@ -282,7 +282,7 @@ Work ticket <TICKET> from docs/architecture/BOT_FIX_BACKLOG.md.
 Read docs/architecture/STRATEGY_WORKFLOW.md first -- it is the canonical
 procedure. Section 1.3 defines which execution defaults are frozen,
 overridable or analysis-derived; section 5.5 defines the decision log and its
-six rules; section 5.7 defines GovernedStrategy and what it already supplies.
+six rules; section 3.4 defines GovernedStrategy and what it already supplies.
 
 0. FIRST PRINCIPLES, BEFORE ANYTHING ELSE. Do not start from the ticket's
    proposed fix. Answer these and say so in your reply:

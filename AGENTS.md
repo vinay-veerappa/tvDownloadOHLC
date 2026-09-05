@@ -63,7 +63,7 @@ measured · **2** = a required stage raised.
    green with no reachable red. **The gate roster is layer 0 of parity**: if the
    two sides evaluate different criteria they are different strategies and no
    recall number between them is interpretable.
-5b. **A new C# bot inherits `GovernedStrategy`** (§5.7) and writes NO logging
+5b. **A new C# bot inherits `GovernedStrategy`** (§3.4) and writes NO logging
    code. Implement `OnEvaluate(SetupEvaluation e)` — `Trigger` / `Gate` /
    `Measure` — plus `ConfigureStrategy()` and `GetStrategyName()`. It contains
    no orders, no clock reads and no `Print`. `CheckForSignal()` is **sealed**
@@ -74,6 +74,13 @@ measured · **2** = a required stage raised.
    bots that do inherit it are exactly the ten that hardcoded their own flatten
    times (tickets B1–B6). `tests/test_instrumentation.py` fails a new bot that
    derives from anything else.
+5c. **Instrumentation is the DEFAULT and the exceptions only shrink.**
+   `scripts/trading_framework/tests/uninstrumented.py` freezes the fourteen
+   hunters and fourteen bots that do not yet report their criteria. Not on that
+   list and silent = FAIL. On it and now reporting = its line MUST be removed.
+   **There is nowhere to add a new strategy**, which is what makes this a
+   default rather than a convention. Do not add a line to widen it without
+   saying so explicitly and filing a ticket in `BOT_FIX_BACKLOG.md`.
 6. **Never hardcode a point value, tick size, session window or risk default.**
    They are frozen in `scripts/trading_framework/config/trading_defaults.json` and
    read through `config/defaults.py`. There were three point-value tables and they
@@ -93,7 +100,7 @@ measured · **2** = a required stage raised.
 ## Known C# bot defects
 
 Do not re-derive these. `docs/architecture/BOT_FIX_BACKLOG.md` carries tickets
-B1-B6 with a loop prompt; `scripts/trading_framework/tests/known_bot_divergences.py`
+B1–B9 with a loop prompt; `scripts/trading_framework/tests/known_bot_divergences.py`
 is its machine-readable half and a test fails if the two drift apart. The one to
 know: **`BBMRReversionBot` allows 99 trades/day where the Python `mean_reversion`
 that predicts it allows 3**, so that pair cannot be compared at the trade-set

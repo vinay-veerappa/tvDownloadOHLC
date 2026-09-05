@@ -107,7 +107,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             throw new System.ArgumentException("no session for " + hhmm);
         }
 
-        // ---- governance gate names (section 5.7) --------------------------
+        // ---- governance gate names (section 3.4) --------------------------
         // GovernedStrategy records its own refusals under these, so a bot
         // blocked by a FRAMEWORK rule lands in the roster instead of
         // vanishing -- the C# half of the funnel gap in section 11 item 13.

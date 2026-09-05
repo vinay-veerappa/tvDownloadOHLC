@@ -431,6 +431,40 @@ same shape as a config file that reads as protection which does not exist — do
 as evidence of what a run enforced, and if you wire it, name the reader here in the same
 edit.
 
+
+### 2.10 Report the criteria you evaluated 🟢 ENFORCED
+
+A `hunt()` that returns signals and nothing else cannot say **why** it took them or why it
+skipped the rest. Set `self.last_decisions` from a `GateRecorder`; the `hunt()` signature
+does not change and `HunterStrategyAdapter` forwards it.
+
+```python
+self.last_decisions = (
+    GateRecorder(data.index, run_id="", strategy="mean_reversion")
+    .trigger(long_mask, "long").trigger(short_mask, "short")
+    .measure("band_excursion_atr", (data['close'] - band).abs() / data['atr'])
+    .gate("first_signal_of_day", is_first)
+    .to_frame(signal_prefix="mr_"))
+```
+
+**It takes masks, not a loop** — a zero-loop hunter (§2.2) has no per-decision hook, and a
+row-wise API guarantees it goes uninstrumented. The verdict is *computed* from the gates,
+so a hunter cannot record one that disagrees with its own masks.
+
+The six rules, the `gate` / `measure` distinction and the roster diff are **§5.5**. Read
+them before writing the calls: `and` short-circuits, so the conditions must be lifted out
+of an existing `if` chain deliberately rather than copied.
+
+*Enforcer*: `tests/test_instrumentation.py` — behavioural, it calls `hunt()` and looks.
+The fourteen uninstrumented hunters are frozen in `tests/uninstrumented.py` and the list
+may only **shrink**, so a new strategy is instrumented from its first commit.
+
+**Instrumenting `mean_reversion` — the reference — immediately showed that
+`first_signal_of_day` blocks 99.2% of its setups**, and that its real trade cap is 1/day
+while `sessions.yaml` said 3 and its bot allowed 99. That is the class of thing this
+surfaces on the first run.
+
+
 ---
 
 ## 3. Step 2 — Write or update the C# bot
@@ -479,6 +513,121 @@ Hard line when this is built: the document expresses **composition, never comput
 Anything needing arbitrary computation becomes a new primitive written once in both
 languages. This is explicitly *not* a strategy DSL — that path dies by growing into a
 programming language.
+
+### 3.4 The governance base class — `GovernedStrategy` 🟢 ENFORCED
+
+**A new bot inherits `GovernedStrategy` and writes no logging code at all.** It gets
+the decision log, the frozen defaults and unique entry names by construction.
+
+```csharp
+public class MyBot : GovernedStrategy
+{
+    protected override void OnEvaluate(SetupEvaluation e)
+    {
+        e.Trigger(close < lower, "long");           // is there a setup at all?
+        e.Gate("adx", adx >= AdxThr, adx, AdxThr);  // a criterion that can BLOCK
+        e.Gate("not_lunch", !inLunch);
+        e.Measure("band_excursion_atr", dist / atr); // a magnitude, never blocks
+    }
+    protected override string GetStrategyName() { return "MyBot"; }
+    protected override void ConfigureStrategy() { /* indicators */ }
+}
+```
+
+That is the whole contract. No orders, no clock, no file handles, no `Print`.
+
+#### Why a base class and not a helper
+
+Ten of the fourteen bots **already** inherit `RiskManagerBase`, and tickets B1–B6
+exist because those same ten hardcoded their own flatten times and trade caps
+anyway. **A default a bot is free to restate is a default it will restate.** The
+distinction that matters:
+
+| | |
+|---|---|
+| a helper the bot **calls** | the bot can log one thing and do another, and nothing notices |
+| a base that **decides** | there is no code path by which an unlogged criterion reaches a trade |
+
+`RiskManagerBase` asks its subclass exactly one question — `CheckForSignal()`,
+returning 1 / −1 / 0. **`GovernedStrategy` seals it.** The return value is
+*computed* from the declared gates rather than supplied alongside them, so a gate
+that is not logged does not exist. `SetupEvaluation` deliberately exposes nothing
+that can enter, exit, move a stop or open a file — enforced by
+`test_the_mandated_structure_cannot_place_an_order`.
+
+#### Ownership — the parent is not ours
+
+ADR-025, one artifact one owner:
+
+| Class | Owner | Responsibility |
+|---|---|---|
+| `RiskManagerBase` | **nt8-riskguard** | the bar loop, brackets, stops, sizing, the risk gates |
+| `GovernedStrategy` | **this repo** (`scripts/ninjatrader/shared/`) | the workflow's rules |
+
+⚠️ There is a **second, tracked copy** of `RiskManagerBase.cs` in this repo under
+`docs/strategies/…/risk_manager_suite/`, carrying three unlanded improvements. It
+is a fork, it is invisible to `sync_nt8_strategies.py` (which allowlists the
+filename as external), and reconciling it is **ticket B9** — a decision, since all
+three change live bot behaviour.
+
+#### What it governs
+
+| # | Rule | How, and why it is not left to the bot |
+|---|---|---|
+| 1 | **ADR-020's 16:00 hard exit** | The frozen defaults are pushed in *before* the bot's `OnStrategyDefaults()`, and the hard-exit clamp is re-applied **after** — so a bot that sets a later flatten time is corrected, not trusted. `BBMRReversionBot` flattened at 16:15 for an unknown period |
+| 2 | **A null cap is `NoLimit` (−1)** | `RiskManagerBase` compares `todayTradeCount >= MaxTradesPerDay`, so `0` reads as *no trades allowed* and `int.MaxValue` vanishes into arithmetic. A null cap is simply **not assigned** |
+| 3 | **Unique entry signal names** | `RiskManagerBase.GetSignalName` returned `"<Strategy>_Long"` for *every* long entry ever taken — and that string is `Execution.Name` on the fill, the only join key back to the decision. Now overridden per entry; the base's `_Queen` / `_Runner` suffixes then give one bracket's legs a shared key, which is exactly what the leg convention needs (was ticket B7) |
+| 4 | **Its own refusals are gates** | Recorded under the frozen names in `trading_defaults.json → governance.gates`, generated into `TradingDefaults.Gate*`. Frozen because the Python reader groups on these strings: a rename on one side alone splits one gate into two rows that never compare |
+| 5 | **`CanEnterTrade`'s nine refusals** | gatekeeper · account blown · done for day · paused after consecutive losses · max trades · two time fences · two daily-loss limits. Each was computed and surfaced **only** under `DebugMode && CurrentBar % 100 == 0` — off by default, 1% of bars when on. So a bot that quietly stopped trading had nine possible causes and no record of which. `OnEntryBlocked` (added upstream, gated by `check_entry_refusals_reported.py` with five negative controls) turns each into a logged gate |
+
+Rule 5 is the C# half of the funnel gap §11 item 13 records for Python. **A refusal a
+consumer cannot read is indistinguishable from the strategy simply not having a
+setup.**
+
+#### Instrumentation is the default; the exceptions are a shrinking list 🟢 ENFORCED
+
+Fifteen strategies are registered and **one** is instrumented, so a blanket rule
+would fail fourteen times and be switched off within a day. Instead
+`tests/uninstrumented.py` freezes the population, and
+`tests/test_instrumentation.py` enforces:
+
+* a strategy **not** on the list that emits no decision log **fails**
+* one on the list that now emits one **must lose its line**
+* so a **new** strategy is instrumented from its first commit, because there is
+  nowhere to add it without saying so in the same edit
+
+The Python check is **behavioural** — it calls `hunt()` and looks at
+`last_decisions`, because an import of `GateRecorder` that is never called would
+pass a source scan. The C# check is a source scan for the *derivation*, and that
+is sound precisely because `CheckForSignal()` is sealed: deriving is the whole
+condition.
+
+### 3.5 How a bot is tested — and what cannot be tested here 🟡 CONVENTION
+
+**Nothing in this repo compiles NinjaScript.** Every bot names `NinjaTrader.*` types, so
+there is no unit test of a bot's logic and there will not be one without a harness that
+stubs the platform. That is the constraint every line below works around, and the reason
+the evidence is layered rather than direct.
+
+| Layer | What it proves | Enforcer |
+|---|---|---|
+| **Source gates** | the bot derives from `GovernedStrategy`; no bot exits past ADR-020's 16:00; no bot sets a flatten time outside the recorded inventory; the generated files match their source | `tests/test_instrumentation.py`, `test_bot_defaults.py`, `test_base_class_ownership.py` |
+| **Parse check** | the file is valid C# | `nt8-riskguard/tools/check_window_parses.py` pattern; ⚠️ **not a compile** — type errors are out of scope by design |
+| **Compile** | it builds | `nt_compile`. ⚠️ **Read the return.** Hundreds of errors can come back while `nt_health` reads healthy, because NT8 keeps serving the **last good assembly** — the only symptom is a deploy that appears to do nothing |
+| **Rule parity** | the bot's rules match Python's, per rule | §6.1. Built for `the_strat` only (2 of 7 families) |
+| **Gate roster diff** | both sides evaluate the same criteria | §5.5. Free, no NT8 needed, and **meaningless until a bot emits a log** (§11 item 16) |
+| **Trade-set parity** | the same trades exist | §6.3. Harness built, not yet a gate |
+| **Behaviour** | what it actually does | `nt_backtest` under the frozen profile (§5.0/§5.2), captured automatically |
+
+**The honest summary**: a bot's *structure* is gated mechanically, its *rules* are gated
+for one family, and its *behaviour* is only observable through NT8. So the presumption in
+§0 holds — **NT8 is authoritative for behaviour** — and a disagreement is investigated
+starting from the assumption that Python is wrong.
+
+⚠️ **A source gate needs a negative control.** A regex cannot see reachability: a call
+inside a comment or an `if (false)` has three times been reported as WIRED in this
+project's sibling repos. Every gate added here asserts the failing direction too.
+
 
 ---
 
@@ -788,93 +937,6 @@ Property names were confirmed by **reflecting on `NinjaTrader.Core.dll`**, not a
 `GetP` is reflection-based, so a wrong name returns `null` rather than failing to compile —
 it would have read as "this strategy has no MAE".
 
-### 5.7 The governance base class — `GovernedStrategy` 🟢 ENFORCED
-
-**A new bot inherits `GovernedStrategy` and writes no logging code at all.** It gets
-the decision log, the frozen defaults and unique entry names by construction.
-
-```csharp
-public class MyBot : GovernedStrategy
-{
-    protected override void OnEvaluate(SetupEvaluation e)
-    {
-        e.Trigger(close < lower, "long");           // is there a setup at all?
-        e.Gate("adx", adx >= AdxThr, adx, AdxThr);  // a criterion that can BLOCK
-        e.Gate("not_lunch", !inLunch);
-        e.Measure("band_excursion_atr", dist / atr); // a magnitude, never blocks
-    }
-    protected override string GetStrategyName() { return "MyBot"; }
-    protected override void ConfigureStrategy() { /* indicators */ }
-}
-```
-
-That is the whole contract. No orders, no clock, no file handles, no `Print`.
-
-#### Why a base class and not a helper
-
-Ten of the fourteen bots **already** inherit `RiskManagerBase`, and tickets B1–B6
-exist because those same ten hardcoded their own flatten times and trade caps
-anyway. **A default a bot is free to restate is a default it will restate.** The
-distinction that matters:
-
-| | |
-|---|---|
-| a helper the bot **calls** | the bot can log one thing and do another, and nothing notices |
-| a base that **decides** | there is no code path by which an unlogged criterion reaches a trade |
-
-`RiskManagerBase` asks its subclass exactly one question — `CheckForSignal()`,
-returning 1 / −1 / 0. **`GovernedStrategy` seals it.** The return value is
-*computed* from the declared gates rather than supplied alongside them, so a gate
-that is not logged does not exist. `SetupEvaluation` deliberately exposes nothing
-that can enter, exit, move a stop or open a file — enforced by
-`test_the_mandated_structure_cannot_place_an_order`.
-
-#### Ownership — the parent is not ours
-
-ADR-025, one artifact one owner:
-
-| Class | Owner | Responsibility |
-|---|---|---|
-| `RiskManagerBase` | **nt8-riskguard** | the bar loop, brackets, stops, sizing, the risk gates |
-| `GovernedStrategy` | **this repo** (`scripts/ninjatrader/shared/`) | the workflow's rules |
-
-⚠️ There is a **second, tracked copy** of `RiskManagerBase.cs` in this repo under
-`docs/strategies/…/risk_manager_suite/`, carrying three unlanded improvements. It
-is a fork, it is invisible to `sync_nt8_strategies.py` (which allowlists the
-filename as external), and reconciling it is **ticket B9** — a decision, since all
-three change live bot behaviour.
-
-#### What it governs
-
-| # | Rule | How, and why it is not left to the bot |
-|---|---|---|
-| 1 | **ADR-020's 16:00 hard exit** | The frozen defaults are pushed in *before* the bot's `OnStrategyDefaults()`, and the hard-exit clamp is re-applied **after** — so a bot that sets a later flatten time is corrected, not trusted. `BBMRReversionBot` flattened at 16:15 for an unknown period |
-| 2 | **A null cap is `NoLimit` (−1)** | `RiskManagerBase` compares `todayTradeCount >= MaxTradesPerDay`, so `0` reads as *no trades allowed* and `int.MaxValue` vanishes into arithmetic. A null cap is simply **not assigned** |
-| 3 | **Unique entry signal names** | `RiskManagerBase.GetSignalName` returned `"<Strategy>_Long"` for *every* long entry ever taken — and that string is `Execution.Name` on the fill, the only join key back to the decision. Now overridden per entry; the base's `_Queen` / `_Runner` suffixes then give one bracket's legs a shared key, which is exactly what the leg convention needs (was ticket B7) |
-| 4 | **Its own refusals are gates** | Recorded under the frozen names in `trading_defaults.json → governance.gates`, generated into `TradingDefaults.Gate*`. Frozen because the Python reader groups on these strings: a rename on one side alone splits one gate into two rows that never compare |
-| 5 | **`CanEnterTrade`'s nine refusals** | gatekeeper · account blown · done for day · paused after consecutive losses · max trades · two time fences · two daily-loss limits. Each was computed and surfaced **only** under `DebugMode && CurrentBar % 100 == 0` — off by default, 1% of bars when on. So a bot that quietly stopped trading had nine possible causes and no record of which. `OnEntryBlocked` (added upstream, gated by `check_entry_refusals_reported.py` with five negative controls) turns each into a logged gate |
-
-Rule 5 is the C# half of the funnel gap §11 item 13 records for Python. **A refusal a
-consumer cannot read is indistinguishable from the strategy simply not having a
-setup.**
-
-#### Instrumentation is the default; the exceptions are a shrinking list 🟢 ENFORCED
-
-Fifteen strategies are registered and **one** is instrumented, so a blanket rule
-would fail fourteen times and be switched off within a day. Instead
-`tests/uninstrumented.py` freezes the population, and
-`tests/test_instrumentation.py` enforces:
-
-* a strategy **not** on the list that emits no decision log **fails**
-* one on the list that now emits one **must lose its line**
-* so a **new** strategy is instrumented from its first commit, because there is
-  nowhere to add it without saying so in the same edit
-
-The Python check is **behavioural** — it calls `hunt()` and looks at
-`last_decisions`, because an import of `GateRecorder` that is never called would
-pass a source scan. The C# check is a source scan for the *derivation*, and that
-is sound precisely because `CheckForSignal()` is sealed: deriving is the whole
-condition.
 
 ---
 
@@ -1329,15 +1391,15 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | 7 | `box_reversion` raises `TypeError: Invalid comparison between dtype=datetime64[s] and Timestamp` when window-filtered | code |
 | 8 | **Migrate strategies off the legacy `session_block`** onto §1.3's `session_name`. The legacy labels are RTH-only and every existing strategy reads them, so this changes results and must land through a recorded run per strategy | code |
 | ~~9~~ | ~~Generate `TradingDefaults.cs`~~ — **DONE 2026-09-05.** `scripts/utils/generate_trading_defaults.py` emits it; `--check` fails a build when the JSON moves and the C# does not | done |
-| 10 | **Normalise the inventoried bot divergences** — tracked as tickets B1–B6 in [BOT_FIX_BACKLOG.md](BOT_FIX_BACKLOG.md), with a loop prompt. Deliberately a separate file: finalising the workflow must not be blocked on fixing twelve strategies | code |
+| 10 | **Normalise the inventoried bot divergences** — tracked as tickets B1–B9 in [BOT_FIX_BACKLOG.md](BOT_FIX_BACKLOG.md), with a loop prompt. Deliberately a separate file: finalising the workflow must not be blocked on fixing twelve strategies | code |
 | 11 | **Capture SA *executions*, not just trades** — 🟡 **mostly closed 2026-09-05.** `nt_backtest` still returns entry/exit PAIRS, but the fields that made a pair insufficient are now projected: `entryQuantity`, `exitQuantity`, `entryGroup`, `entryName`, MAE/MFE (§5.6). Per-leg size and the bracket key were the whole reason fills were needed. **Not deployed** — a recompile wipes every static singleton in a live instance. What genuinely still needs fills is a *partial* fill of one leg | **user** (deploy) |
 | ~~12~~ | ~~**Win/loss attribution report**~~ — **DONE 2026-09-05.** `reporting/win_loss_attribution.py`, three questions (§7.1a), works on either side, appended to every tearsheet. Three refusals rather than confident numbers over dead data | done |
 | 13 | **The engine's own gates are not instrumented.** The decision log records the **hunter's** criteria. `nt8_parity_backtester` applies its own — `earliest_entry_hhmm=945`, `latest_entry_hhmm=1530`, `max_trades_per_day`, a consecutive-loser pause, a daily loss limit — and none reaches the log. Measured: **3,188 hunter entries became 16 trades**, a 200:1 reduction the log cannot explain. The report *names* the gap (§7.1a) rather than hiding it, but until these emit `REJECTED` rows the funnel is only half explained. Same `GateRecorder`, applied in the engine loop | code |
 | 14 | **`mae_points` / `mfe_points` are identically zero** on every Python trade — present, dead, and previously reported as a measurement. The excursion stage is not populating the trade frame. Blocks question 2 of §7.1a on the Python side (the NT8 side is fixed by §5.6) | code |
-| 15 | **A bot's entry signal names must be unique per entry.** `entryName` is the join key from a fill to the decision log; a constant name makes every entry indistinguishable downstream. Not yet audited across the twelve bots — filed as **B7** in [BOT_FIX_BACKLOG.md](BOT_FIX_BACKLOG.md) | code |
-| 16 | **Migrate the fourteen C# bots onto `GovernedStrategy`** (§5.7). The base class, the mandated `SetupEvaluation`, the frozen governance gate names and the two upstream hooks all exist and are gated; **no bot derives from it yet**, so every roster diff is one-sided until one does. Filed as **B8**, and the population is frozen in `tests/uninstrumented.py` so it can only shrink. Needs a recompile | **user** (deploy) |
+| 15 | **Migrate the fourteen C# bots onto `GovernedStrategy`** (§3.4). The base class, the mandated `SetupEvaluation`, the frozen governance gate names and the two upstream hooks all exist and are gated; **no bot derives from it yet**, so every roster diff is one-sided until one does. Inheriting it also supplies the unique per-entry signal name — the join key from a fill back to its decision — which was a separate item until the base class made it one edit. Filed as **B7+B8**; the population is frozen in `tests/uninstrumented.py` and may only shrink. Needs a recompile | **user** (deploy) |
+| 16 | *(merged into 15 — it was the signal-name half of the same edit)* | — |
 | 17 | **A forked `RiskManagerBase`** with three unlanded improvements lives in `docs/strategies/…/risk_manager_suite/` while nt8-riskguard owns the canonical copy (ADR-025). All three change live bot behaviour, so which version wins is a decision. **B9**; `test_base_class_ownership.py` holds the fork shrink-only meanwhile | **user** |
-| 18 | **Instrument the fourteen uninstrumented hunters** (§5.7). `mean_reversion` is the reference; the rest are frozen in `tests/uninstrumented.py`. Each one is small, and each is where a strategy's real gate roster becomes visible for the first time | code |
+| 18 | **Instrument the fourteen uninstrumented hunters** (§3.4). `mean_reversion` is the reference; the rest are frozen in `tests/uninstrumented.py`. Each one is small, and each is where a strategy's real gate roster becomes visible for the first time | code |
 
 ### 11.1 The remaining build order
 

@@ -1,6 +1,6 @@
 // GovernedStrategy -- the governance layer every bot in this repo inherits.
 //
-// Spec: docs/architecture/STRATEGY_WORKFLOW.md section 5.7
+// Spec: docs/architecture/STRATEGY_WORKFLOW.md section 3.4
 //
 // WHY A BASE CLASS, AND WHY NOT `RiskManagerBase` ITSELF. Ten of the fourteen
 // bots here already inherit `RiskManagerBase`, and tickets B1-B6 exist because

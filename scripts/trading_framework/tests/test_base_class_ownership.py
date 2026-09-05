@@ -1,6 +1,6 @@
 """There must be ONE `RiskManagerBase`, and this repo does not own it.
 
-ADR-025, one artifact one owner. `GovernedStrategy` (section 5.7) derives from
+ADR-025, one artifact one owner. `GovernedStrategy` (section 3.4) derives from
 `RiskManagerBase`, which nt8-riskguard owns at `strategies/Vinay/`. It reaches NT8
 through the bridge's vendored-core sweep, and `sync_nt8_strategies.py` allowlists
 the filename as `EXTERNAL_FRAMEWORK_FILES` for exactly that reason.

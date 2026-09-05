@@ -26,7 +26,7 @@ that defines "validated".
     --nt8 --nt8-trades scripts/parity/fixtures/<capture>.csv
 ```
 
-`scripts/trading_framework/workflow.py` runs every stage under ONE run record and ends by printing the promotion checklist (§9) with each criterion PASS / FAIL / **NOT EVALUATED**. Exit 0 = all passed, 1 = a criterion failed, 2 = a required stage raised. It refuses to guess a price basis or a timezone, refuses `--optimize` without `--oos-start`, and records a skipped stage WITH ITS REASON rather than omitting it. **Do not assemble a pipeline by hand** — 35 bespoke `run_*` scripts already exist and are frozen.
+`scripts/trading_framework/workflow.py` runs every stage under ONE run record and ends by printing the promotion checklist (§9) with each criterion PASS / FAIL / **NOT EVALUATED**. Exit 0 = all passed, 1 = a criterion failed, 2 = a required stage raised. It refuses to guess a price basis or a timezone, refuses `--optimize` without `--oos-start`, and records a skipped stage WITH ITS REASON rather than omitting it. **Do not assemble a pipeline by hand** — **32** bespoke engine-drivers already exist and are frozen. (Only 6 are named `run_*`; the count and the naming are both measured in `tests/frozen_runners.py`, and §4.1 explains why matching on the filename would freeze 6 and let 26 keep breeding.)
 
 **A strategy must report the criteria it evaluated** (§5.5). A trade list says *what*
 happened; only the strategy can say *why*, and no MCP change can supply it. Python hunters
@@ -37,7 +37,7 @@ paired `BBMRReversionBot` has 20 parameters, so they are two strategies and no r
 between them means anything. Record *every* gate (not the first failure), record the *value*,
 and use `measure()` for a magnitude.
 
-**A new C# bot inherits `GovernedStrategy`** (§5.7), implements
+**A new C# bot inherits `GovernedStrategy`** (§3.4), implements
 `OnEvaluate(SetupEvaluation e)` and writes no logging code. `CheckForSignal()` is
 **sealed** and the verdict is computed from the declared gates, so an unlogged criterion
 cannot reach a trade — that is the difference from a helper the bot may ignore, which is
@@ -99,7 +99,7 @@ See `.agents/AGENTS.md` for fail-fast error handling, GPU/hardware awareness, an
 * **Write a SKILL.md**: `.\.venv\Scripts\python.exe scripts\skill_writer.py --name <name> --source <draft.md>`
 
 ## Workspace Context Anchors (Inspect ONLY when required)
-* **⭐ Strategy Workflow (CANONICAL — read before any strategy task)**: [STRATEGY_WORKFLOW.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/STRATEGY_WORKFLOW.md) (write → backtest → NT8 validate → compare → report → store → promote; enforced vs convention vs not-built markers). **It is the ONLY strategy document** — **ten documents** were subsumed into it and deleted, nine on 2026-09-04 and the engine code-generation spec on 2026-09-05 (procedure, reasoning, build order, metric spec, engine spec, package/CLI overviews); its §13 records what moved where. Two companions, neither a procedure: `scripts/trading_framework/README.md` (a package *map*) and [BOT_FIX_BACKLOG.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/BOT_FIX_BACKLOG.md) (a C# bot *worklist*, B1-B6, with a loop prompt). Plus [NT8_STRATEGY_OWNERSHIP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_STRATEGY_OWNERSHIP.md) (ADR-025, one-artifact-one-owner). If you find any other document describing how to build, run or judge a strategy here, it is stale.
+* **⭐ Strategy Workflow (CANONICAL — read before any strategy task)**: [STRATEGY_WORKFLOW.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/STRATEGY_WORKFLOW.md) (write → backtest → NT8 validate → compare → report → store → promote; enforced vs convention vs not-built markers). **It is the ONLY strategy document** — **ten documents** were subsumed into it and deleted, nine on 2026-09-04 and the engine code-generation spec on 2026-09-05 (procedure, reasoning, build order, metric spec, engine spec, package/CLI overviews); its §13 records what moved where. Two companions, neither a procedure: `scripts/trading_framework/README.md` (a package *map*) and [BOT_FIX_BACKLOG.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/BOT_FIX_BACKLOG.md) (a C# bot *worklist*, **B1–B9**, with a loop prompt whose step 0 is a first-principles read of which layer the change belongs in). Plus [NT8_STRATEGY_OWNERSHIP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_STRATEGY_OWNERSHIP.md) (ADR-025, one-artifact-one-owner). If you find any other document describing how to build, run or judge a strategy here, it is stale.
 * **Architectural Decisions**: [ADR.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ADR.md) (Timezones, normalization, vectorized models, prop-firm liquidation)
 * **Trading Domain Rules**: [SecondBrain_Trading.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/SecondBrain_Trading.md) (ALN sessions, NQ personalities, IB probabilities)
 * **Visual Compliance Standard**: [VISUAL_SYSTEM.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md) (Theme palette, scaling, label registry)

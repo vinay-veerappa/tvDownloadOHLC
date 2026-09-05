@@ -127,7 +127,7 @@ inherits Phases 4, 5, 10, 11 for free.
 - `docs/strategies/initial_balance_break/STRATEGY_COMPENDIUM.md` — all IF/THEN/ELSE rules
 - `docs/strategies/initial_balance_break/STATISTICAL_DISCOVERY_PLAN.md` — coverage status (19 of 22 done)
 - `scripts/ninjatrader/shared/GovernedStrategy.cs` — **the base class to extend**
-  (STRATEGY_WORKFLOW.md §5.7). It supplies the decision log, the frozen defaults and
+  (STRATEGY_WORKFLOW.md §3.4). It supplies the decision log, the frozen defaults and
   unique entry names, and it needs no change to inherit from.
   ⚠️ Do **not** extend `RiskManagerBase` directly and do not edit it: nt8-riskguard
   owns it (ADR-025), and the local copy this line used to name was a fork that had
