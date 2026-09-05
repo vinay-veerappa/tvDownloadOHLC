@@ -147,11 +147,41 @@ class NT8Trade:
     exit_reason: str
     queen_hit: bool
     runner_hit: bool
+    # The queen leg's OWN exit. NT8 reports each leg of the pack as a separate
+    # trade (decided 2026-09-04: Python follows NT8's leg convention), and a
+    # per-leg row needs a per-leg exit time. When the queen never filled both
+    # legs leave together and this equals `exit_time`.
+    queen_exit_time: object = None
     mfe_points: float = 0.0
     mae_points: float = 0.0
     mfe_bps: float = 0.0
     mae_bps: float = 0.0
     is_reentry: bool = False
+
+
+
+def _trades_to_frame(trades) -> pd.DataFrame:
+    """NT8Trade list -> the SAME column schema the Rust path returns.
+
+    The two paths are diffed against each other; a field that exists under one
+    name on one side and another name on the other is drift with a green test.
+    `queen_exit_time` is the dataclass field; `leg1_exit_time` is the column, and
+    `leg1_exit_price` is derived here exactly as the Rust path derives it.
+    """
+    if not trades:
+        return pd.DataFrame(columns=[
+            "entry_time", "exit_time", "direction", "entry_price", "exit_price",
+            "leg1_points", "leg2_points", "total_points", "total_pnl_usd",
+            "exit_reason", "queen_hit", "runner_hit", "leg1_exit_time",
+            "leg1_exit_price", "mfe_points", "mae_points", "mfe_bps", "mae_bps",
+            "is_reentry",
+        ])
+    df = pd.DataFrame([t.__dict__ for t in trades])
+    df["leg1_exit_time"] = df.pop("queen_exit_time")
+    sign = np.where(df["direction"].to_numpy() == "Long", 1.0, -1.0)
+    df["leg1_exit_price"] = (df["entry_price"].to_numpy(dtype="float64")
+                             + df["leg1_points"].to_numpy(dtype="float64") * sign)
+    return df
 
 
 class NT8ParityEngine:
@@ -287,12 +317,17 @@ class NT8ParityEngine:
             return pd.DataFrame(columns=[
                 "entry_time", "exit_time", "direction", "entry_price", "exit_price",
                 "leg1_points", "leg2_points", "total_points", "total_pnl_usd",
-                "exit_reason", "queen_hit", "runner_hit", "mfe_points", "mae_points",
+                "exit_reason", "queen_hit", "runner_hit", "leg1_exit_time", "leg1_exit_price",
+                "mfe_points", "mae_points",
                 "mfe_bps", "mae_bps", "is_reentry"
             ])
 
         entry_times = _restore_datetime_series(res["entry_time_ms"], df.index.tz)
         exit_times = _restore_datetime_series(res["exit_time_ms"], df.index.tz)
+        # The queen leg exits on its own clock. Same tz as the frame, so a
+        # per-leg row can be compared to an NT8 trade list without a shift.
+        queen_exit_times = _restore_datetime_series(
+            res["queen_exit_time_ms"], df.index.tz)
 
         total_pts = np.asarray(res["total_points"], dtype=np.float64)
         gross_usd = total_pts * self.point_value * self.contracts
@@ -314,6 +349,12 @@ class NT8ParityEngine:
             "total_pnl_usd": net_usd,
             "exit_reason": res["exit_reason"],
             "queen_hit": np.asarray(res["queen_hit"], dtype=bool),
+            "leg1_exit_time": queen_exit_times,
+            # Exact, not approximate: the queen exited at entry +/- its own
+            # points, so the price reconstructs from what is already recorded.
+            "leg1_exit_price": np.asarray(res["entry_price"], dtype=np.float64)
+                + np.asarray(res["leg1_points"], dtype=np.float64)
+                * np.where(np.asarray(res["dir"]) == 1, 1.0, -1.0),
             "runner_hit": np.asarray(res["runner_hit"], dtype=bool),
             "mfe_points": np.zeros(n_trades, dtype=np.float64),
             "mae_points": np.zeros(n_trades, dtype=np.float64),
@@ -363,6 +404,7 @@ class NT8ParityEngine:
         active_tp1 = 0.0
         active_tp2 = 0.0
         queen_filled = False
+        queen_exit_time = None
 
         # Daily State
         cur_day = None
@@ -421,6 +463,7 @@ class NT8ParityEngine:
                     # Check Queen Target (+10 bps) fill first
                     if not queen_filled and h0 >= active_tp1:
                         queen_filled = True
+                        queen_exit_time = t
                         active_sl = pos_entry_price  # BE Lock (+0 risk)
 
                     # EOD Session Flatten
@@ -451,6 +494,7 @@ class NT8ParityEngine:
                 elif pos_dir == -1 and not closed:
                     if not queen_filled and l0 <= active_tp1:
                         queen_filled = True
+                        queen_exit_time = t
                         active_sl = pos_entry_price
 
                     if int(hhmm) >= flatten_hhmm:
@@ -487,6 +531,8 @@ class NT8ParityEngine:
                         entry_price=pos_entry_price, exit_price=active_tp2 if r_hit else (active_sl if "Stop" in reason else c0),
                         leg1_points=q_pts, leg2_points=r_pts, total_points=pnl_pts,
                         total_pnl_usd=net_usd, exit_reason=reason, queen_hit=queen_filled, runner_hit=r_hit,
+                        # A queen that never filled left with the runner.
+                        queen_exit_time=(queen_exit_time if queen_filled else t),
                     ))
 
                     daily_pnl += net_usd
@@ -525,6 +571,7 @@ class NT8ParityEngine:
                             active_tp1 = self.round_tick(p_limit + (p_limit * (queen_bps / 10000.0)))
                             active_tp2 = self.round_tick(p_limit + (p_limit * (runner_bps / 10000.0)))
                             queen_filled = False
+                            queen_exit_time = None
                             daily_trades += 1
                             pending_order = None
 
@@ -537,6 +584,7 @@ class NT8ParityEngine:
                             active_tp1 = self.round_tick(p_limit - (p_limit * (queen_bps / 10000.0)))
                             active_tp2 = self.round_tick(p_limit - (p_limit * (runner_bps / 10000.0)))
                             queen_filled = False
+                            queen_exit_time = None
                             daily_trades += 1
                             pending_order = None
                 else:
@@ -550,7 +598,7 @@ class NT8ParityEngine:
                 sl = self.round_tick(sl_arr[i])
                 pending_order = {"dir": sig_arr[i], "limit": lmt, "sl": sl, "bar": i}
 
-        return pd.DataFrame([t.__dict__ for t in trades])
+        return _trades_to_frame(trades)
 
     def simulate_mtf(
         self,
@@ -666,12 +714,17 @@ class NT8ParityEngine:
             return pd.DataFrame(columns=[
                 "entry_time", "exit_time", "direction", "entry_price", "exit_price",
                 "leg1_points", "leg2_points", "total_points", "total_pnl_usd",
-                "exit_reason", "queen_hit", "runner_hit", "mfe_points", "mae_points",
+                "exit_reason", "queen_hit", "runner_hit", "leg1_exit_time", "leg1_exit_price",
+                "mfe_points", "mae_points",
                 "mfe_bps", "mae_bps", "is_reentry"
             ])
 
         entry_times = _restore_datetime_series(res["entry_time_ms"], df_1m.index.tz)
         exit_times = _restore_datetime_series(res["exit_time_ms"], df_1m.index.tz)
+        # The queen leg exits on its own clock. Same tz as the frame, so a
+        # per-leg row can be compared to an NT8 trade list without a shift.
+        queen_exit_times = _restore_datetime_series(
+            res["queen_exit_time_ms"], df_1m.index.tz)
 
         entry_px = np.asarray(res["entry_price"], dtype=np.float64)
         exit_px = np.asarray(res["exit_price"], dtype=np.float64)
@@ -702,6 +755,12 @@ class NT8ParityEngine:
             "total_pnl_usd": net_usd,
             "exit_reason": res["exit_reason"],
             "queen_hit": np.asarray(res["queen_hit"], dtype=bool),
+            "leg1_exit_time": queen_exit_times,
+            # Exact, not approximate: the queen exited at entry +/- its own
+            # points, so the price reconstructs from what is already recorded.
+            "leg1_exit_price": np.asarray(res["entry_price"], dtype=np.float64)
+                + np.asarray(res["leg1_points"], dtype=np.float64)
+                * np.where(np.asarray(res["dir"]) == 1, 1.0, -1.0),
             "runner_hit": np.asarray(res["runner_hit"], dtype=bool),
             "mfe_points": mfe_pts,
             "mae_points": mae_pts,
@@ -747,6 +806,7 @@ class NT8ParityEngine:
         active_tp1 = 0.0
         active_tp2 = 0.0
         queen_filled = False
+        queen_exit_time = None
         cur_mfe_pts = 0.0
         cur_mae_pts = 0.0
         is_cur_reentry = False
@@ -795,6 +855,7 @@ class NT8ParityEngine:
 
                     if not queen_filled and h0 >= active_tp1:
                         queen_filled = True
+                        queen_exit_time = t
                         active_sl = pos_entry_price
 
                     if int(hhmm) >= flatten_hhmm:
@@ -825,6 +886,7 @@ class NT8ParityEngine:
 
                     if not queen_filled and l0 <= active_tp1:
                         queen_filled = True
+                        queen_exit_time = t
                         active_sl = pos_entry_price
 
                     if int(hhmm) >= flatten_hhmm:
@@ -862,6 +924,8 @@ class NT8ParityEngine:
                         entry_price=pos_entry_price, exit_price=active_tp2 if r_hit else (active_sl if "Stop" in reason else c0),
                         leg1_points=q_pts, leg2_points=r_pts, total_points=pnl_pts,
                         total_pnl_usd=net_usd, exit_reason=reason, queen_hit=queen_filled, runner_hit=r_hit,
+                        # A queen that never filled left with the runner.
+                        queen_exit_time=(queen_exit_time if queen_filled else t),
                         mfe_points=cur_mfe_pts, mae_points=cur_mae_pts, mfe_bps=mfe_b, mae_bps=mae_b,
                         is_reentry=is_cur_reentry,
                     ))
@@ -909,6 +973,7 @@ class NT8ParityEngine:
                         pos_dir = 1
                         in_pos = True
                         queen_filled = False
+                        queen_exit_time = None
                         cur_mfe_pts = 0.0
                         cur_mae_pts = 0.0
                         is_cur_reentry = reentry_armed
@@ -925,6 +990,7 @@ class NT8ParityEngine:
                         pos_dir = -1
                         in_pos = True
                         queen_filled = False
+                        queen_exit_time = None
                         cur_mfe_pts = 0.0
                         cur_mae_pts = 0.0
                         is_cur_reentry = reentry_armed
@@ -935,5 +1001,5 @@ class NT8ParityEngine:
                     armed_dir = 0
                     reentry_armed = False
 
-        return pd.DataFrame([t.__dict__ for t in trades])
+        return _trades_to_frame(trades)
 

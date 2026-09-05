@@ -1,5 +1,22 @@
 # NT8 ↔ Python Backtest Parity Standard
 
+> ## ⚠️ THIS IS NO LONGER THE PROCEDURE — it is an APPENDIX OF TRAPS
+>
+> The canonical procedure is
+> **[STRATEGY_WORKFLOW.md](STRATEGY_WORKFLOW.md)**. Read that first. This document remains
+> valid and useful as the accumulated *list of observed traps* from six sessions of IB
+> debugging, and §12 of the workflow document explains how to read it. Two of its claims
+> are corrected there:
+>
+> * **Class E** frames contract month / price basis as a parity gate. It is not — signed
+>   points travelled is invariant to a constant price offset, so a constant offset *is* the
+>   adjustment basis. Contract month still changes *which trades exist*, so the trap is
+>   real; the framing is wrong.
+> * The "MANDATORY ... before being declared validated" status below was never enforced by
+>   anything. The replacement checklist is STRATEGY_WORKFLOW.md §9, where every item is
+>   marked by whether something actually checks it.
+
+
 > **Status**: MANDATORY — all new strategies MUST comply with this standard before being declared "validated."
 >
 > **Created**: 2026-07-28 (derived from 6 sessions of IB strategy parity debugging)

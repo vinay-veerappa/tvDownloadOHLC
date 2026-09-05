@@ -189,7 +189,7 @@ def run_optimization(args, config, df, engine=None):
                                "bestValue": float(study.best_value)}
 
 
-def run_research_pipeline(args):
+def run_research_pipeline(args, rec=None, output_dir=None):
     """Executes the 7-layer research pipeline under a run record.
 
     IN-SAMPLE REPORTING. This function used to optimise on `df` and then report
@@ -211,11 +211,21 @@ def run_research_pipeline(args):
     config = load_config(args.config)
     strategy = get_strategy(args.strategy, args.ticker)
 
-    RUN_ID = RunRecord.new_run_id(args.ticker, args.strategy)
-    output_dir = os.path.join("results", "RESEARCH", "_pipeline", args.ticker, RUN_ID)
+    # The caller may OWN the record: `workflow.py` runs NT8 validation and
+    # trade-set parity as further stages of the SAME run, and two records for one
+    # workflow fragments exactly the provenance the record exists to hold.
+    owns_record = rec is None
+    if owns_record:
+        RUN_ID = RunRecord.new_run_id(args.ticker, args.strategy)
+        output_dir = os.path.join("results", "RESEARCH", "_pipeline", args.ticker, RUN_ID)
+        rec = RunRecord.open(RUN_ID, strategy_key=args.strategy, ticker=args.ticker)
+    else:
+        RUN_ID = rec.run_id
+        if output_dir is None:
+            raise ValueError(
+                "a caller that supplies `rec` must supply `output_dir` too -- "
+                "otherwise the artifacts land somewhere the record does not name")
     os.makedirs(output_dir, exist_ok=True)
-
-    rec = RunRecord.open(RUN_ID, strategy_key=args.strategy, ticker=args.ticker)
     rec.declare_strategy(name=getattr(strategy, "strategy_name", args.strategy),
                          cls_name=type(strategy).__name__,
                          param_grid=strategy.get_param_grid())
@@ -360,6 +370,20 @@ def run_research_pipeline(args):
             rec.refuse("the reporting window produced ZERO trades; every "
                        "metric below is the null result, not a measurement")
 
+        # PERSIST THE TRADES. Trade-set parity compares trades, not metrics, and
+        # a pipeline that reports a win rate while keeping its trade list only in
+        # memory cannot be checked against NT8 at all. Written under the run id,
+        # so the trades and the record that describes them cannot be separated.
+        trades_df = result.get('trades_detailed')
+        if trades_df is not None and not getattr(trades_df, 'empty', True):
+            trades_path = os.path.join(output_dir, 'python_trades.csv')
+            trades_df.to_csv(trades_path, index=False)
+            rec.add_artifact('pythonTrades', trades_path)
+            print(f"* Python trades: {len(trades_df)} rows -> {trades_path}")
+        else:
+            rec.warn("no trades_detailed frame was produced, so this run cannot "
+                     "be compared to an NT8 trade list")
+
         print("* Computing MFE/MAE excursions...")
         mfe_mae_signals = _compute_mfe_mae_compat(signals, df_report, config.mfe_mae)
     
@@ -472,6 +496,15 @@ def run_research_pipeline(args):
         # RESULT rather than the file: a non-attributable run is marked as such
         # in the record and in the ledger, and `assert_attributable` will refuse
         # it to anything downstream that tries to read it.
+        # When the caller owns the record it finalizes AFTER its own stages;
+        # finalizing here would close the run before parity had been measured.
+        if not owns_record:
+            # The caller closes the run after ITS stages. `attribution()` is a
+            # non-mutating preview and carries only the attributability fields --
+            # printing the finalize summary from it raised KeyError('warnings')
+            # and turned a healthy pipeline into a failed run.
+            return rec.attribution()
+
         record = rec.finalize(output_dir)
         print(f"[*] attributable: {record['attributable']}  "
               f"warnings: {len(record['warnings'])}  refusals: {len(record['refusals'])}")
@@ -487,7 +520,8 @@ def run_research_pipeline(args):
         return record
 
     except BaseException as exc:
-        rec.fail(exc, output_dir)
+        if owns_record:
+            rec.fail(exc, output_dir)
         print(f"\n[!] Pipeline FAILED and was recorded: {type(exc).__name__}: {exc}")
         print(f"    Record: {os.path.join(output_dir, 'run_record.json')}")
         raise

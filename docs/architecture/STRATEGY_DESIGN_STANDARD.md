@@ -1,5 +1,16 @@
 # Strategy Design Standard (Layer 4 & 5)
 
+> ## ⚠️ READ [STRATEGY_WORKFLOW.md](STRATEGY_WORKFLOW.md) FIRST
+>
+> The `hunt(data)` interface defined below is still the standard — and as of 2026-09-04 it
+> is **mechanically enforced** for the first time, by `validate_signal_geometry` in
+> `scripts/trading_framework/core/backtest_engine.py`, which also refuses signals whose
+> stop/target geometry is impossible. The full workflow this interface sits inside
+> (backtesting, NT8 validation, parity comparison, reporting, storage, promotion) is in
+> **[STRATEGY_WORKFLOW.md](STRATEGY_WORKFLOW.md)**, which supersedes the workflow parts of
+> this document.
+
+
 This document defines the mandatory structural requirements for all trading strategies in the `tvDownloadOHLC` repository.
 
 ## Design Philosophy: "Hunters vs. Execution"

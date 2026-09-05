@@ -523,6 +523,33 @@ class RunRecord:
             st.stop()
             st.status = "ok"
 
+    def skip_stage(self, name: str, reason: str) -> None:
+        """Record a stage that did NOT run, and why.
+
+        A stage that is simply absent from the record is indistinguishable from
+        one that was never part of the pipeline, so an omission reads as "not
+        applicable" when it may mean "not measured". A skip is a fact about the
+        run and has to be stored as one -- the promotion checklist reports it as
+        NOT EVALUATED, which is neither a pass nor a failure.
+        """
+        if not reason:
+            raise ValueError(
+                "a skipped stage must carry a reason: an unexplained skip is the "
+                "omission this method exists to replace")
+        st = _Stage(name)
+        st.stop()
+        st.status = "skipped"
+        st.details["reason"] = reason
+        self._stages.append(st)
+
+    def note(self, key: str, value: Any) -> None:
+        """Attach a free-form fact to the record.
+
+        Deliberately separate from `set_metrics`: metrics are compared across
+        runs and must keep their types, notes are context.
+        """
+        self._doc.setdefault("notes", {})[key] = value
+
     # -- close ----------------------------------------------------------
     def _missing_required(self) -> List[str]:
         missing = []
@@ -641,7 +668,22 @@ class RunRecord:
     # -- read side ------------------------------------------------------
     @property
     def doc(self) -> Dict[str, Any]:
-        return dict(self._doc)
+        """The record as it stands, WITH the stages run so far.
+
+        `_doc["stages"]` is only populated by `finalize`, so a mid-run reader got
+        an empty list and could not tell a stage that had not run from one that
+        had. That is not a cosmetic difference: the promotion checklist reads
+        stage verdicts BEFORE the record is closed, and it reported a healthy
+        causality probe as "did not run".
+        """
+        out = dict(self._doc)
+        if not out.get("stages"):
+            out["stages"] = [s.to_dict() for s in self._stages]
+        return out
+
+    @property
+    def stages(self) -> List[Dict[str, Any]]:
+        return [s.to_dict() for s in self._stages]
 
 
 # The two engines disagree on what to call the trade count: VectorizedBacktester

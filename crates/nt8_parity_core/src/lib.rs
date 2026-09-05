@@ -92,6 +92,10 @@ fn simulate_bars_v1(
     let mut out: Vec<[f64; 8]> = Vec::new(); // entry_ms, exit_ms, dir, entry_px, exit_px, leg1, leg2, total_pts
     let mut out_reason: Vec<String> = Vec::new();
     let mut out_flags: Vec<[bool; 2]> = Vec::new(); // queen_hit, runner_hit
+    // The queen leg's own exit time. NT8 reports each leg of the pack as a
+    // separate trade; a per-leg row needs a per-leg exit. When the queen never
+    // filled, both legs leave together and this equals the trade exit.
+    let mut out_queen_ms: Vec<i64> = Vec::new();
 
     let mut in_pos = false;
     let mut pos_dir: i32 = 0;
@@ -101,6 +105,7 @@ fn simulate_bars_v1(
     let mut active_tp1: f64 = 0.0;
     let mut active_tp2: f64 = 0.0;
     let mut queen_filled = false;
+    let mut queen_exit_ms: i64 = 0;
 
     let mut cur_day: i64 = 0;
     let mut daily_trades: usize = 0;
@@ -158,6 +163,7 @@ fn simulate_bars_v1(
             if pos_dir == 1 && !closed {
                 if !queen_filled && h0 >= active_tp1 {
                     queen_filled = true;
+                    queen_exit_ms = t;
                     active_sl = pos_entry_price;
                 }
                 if hm >= flatten_hhmm {
@@ -183,6 +189,7 @@ fn simulate_bars_v1(
             } else if pos_dir == -1 && !closed {
                 if !queen_filled && l0 <= active_tp1 {
                     queen_filled = true;
+                    queen_exit_ms = t;
                     active_sl = pos_entry_price;
                 }
                 if hm >= flatten_hhmm {
@@ -222,10 +229,14 @@ fn simulate_bars_v1(
                     c0
                 };
 
+                // A queen that never filled left with the runner.
+                if !queen_filled { queen_exit_ms = t; }
+
                 out.push([pos_entry_time as f64, t as f64, pos_dir as f64,
                           pos_entry_price, exit_price, q_pts, r_pts, pnl_pts]);
                 out_reason.push(reason);
                 out_flags.push([queen_filled, r_hit]);
+                out_queen_ms.push(queen_exit_ms);
 
                 daily_pnl += net_usd;
                 if net_usd < 0.0 {
@@ -267,6 +278,7 @@ fn simulate_bars_v1(
                             active_tp1 = round_tick(p.limit + p.limit * (queen_bps / 10000.0));
                             active_tp2 = round_tick(p.limit + p.limit * (runner_bps / 10000.0));
                             queen_filled = false;
+                            queen_exit_ms = 0;
                             daily_trades += 1;
                             pending_order = None;
                         } else if p.dir == -1 && h0 >= p.limit {
@@ -278,6 +290,7 @@ fn simulate_bars_v1(
                             active_tp1 = round_tick(p.limit - p.limit * (queen_bps / 10000.0));
                             active_tp2 = round_tick(p.limit - p.limit * (runner_bps / 10000.0));
                             queen_filled = false;
+                            queen_exit_ms = 0;
                             daily_trades += 1;
                             pending_order = None;
                         }
@@ -307,6 +320,7 @@ fn simulate_bars_v1(
     dict.set_item("total_points", out.iter().map(|r| r[7]).collect::<Vec<_>>())?;
     dict.set_item("exit_reason", out_reason)?;
     dict.set_item("queen_hit", out_flags.iter().map(|f| f[0]).collect::<Vec<_>>())?;
+    dict.set_item("queen_exit_time_ms", out_queen_ms.clone())?;
     dict.set_item("runner_hit", out_flags.iter().map(|f| f[1]).collect::<Vec<_>>())?;
     Ok(dict.into())
 }
@@ -391,6 +405,7 @@ fn simulate_bars_v2(
         queen: bool,
         runner: bool,
         reentry: bool,
+        queen_exit_ms: i64,
     }
 
     let mut trades: Vec<TradeRow> = Vec::new();
@@ -403,6 +418,7 @@ fn simulate_bars_v2(
     let mut active_tp1: f64 = 0.0;
     let mut active_tp2: f64 = 0.0;
     let mut queen_filled = false;
+    let mut queen_exit_ms: i64 = 0;
     let mut cur_mfe_pts: f64 = 0.0;
     let mut cur_mae_pts: f64 = 0.0;
     let mut is_cur_reentry = false;
@@ -456,6 +472,7 @@ fn simulate_bars_v2(
 
                 if !queen_filled && h0 >= active_tp1 {
                     queen_filled = true;
+                    queen_exit_ms = t;
                     active_sl = pos_entry_price;
                 }
                 if hm >= flatten_hhmm {
@@ -486,6 +503,7 @@ fn simulate_bars_v2(
 
                 if !queen_filled && l0 <= active_tp1 {
                     queen_filled = true;
+                    queen_exit_ms = t;
                     active_sl = pos_entry_price;
                 }
                 if hm >= flatten_hhmm {
@@ -525,12 +543,16 @@ fn simulate_bars_v2(
                     c0
                 };
 
+                // A queen that never filled left with the runner.
+                if !queen_filled { queen_exit_ms = t; }
+
                 trades.push(TradeRow {
                     entry_ms: pos_entry_time, exit_ms: t, dir: pos_dir,
                     entry_px: pos_entry_price, exit_px: exit_price,
                     leg1: q_pts, leg2: r_pts, total_pts: pnl_pts,
                     mfe_pts: cur_mfe_pts, mae_pts: cur_mae_pts,
                     queen: queen_filled, runner: r_hit, reentry: is_cur_reentry,
+                    queen_exit_ms,
                 });
                 trade_reasons.push(reason.clone());
 
@@ -590,6 +612,7 @@ fn simulate_bars_v2(
                     pos_dir = 1;
                     in_pos = true;
                     queen_filled = false;
+                    queen_exit_ms = 0;
                     cur_mfe_pts = 0.0;
                     cur_mae_pts = 0.0;
                     is_cur_reentry = reentry_armed;
@@ -606,6 +629,7 @@ fn simulate_bars_v2(
                     pos_dir = -1;
                     in_pos = true;
                     queen_filled = false;
+                    queen_exit_ms = 0;
                     cur_mfe_pts = 0.0;
                     cur_mae_pts = 0.0;
                     is_cur_reentry = reentry_armed;
@@ -632,6 +656,7 @@ fn simulate_bars_v2(
     dict.set_item("mfe_points", trades.iter().map(|r| r.mfe_pts).collect::<Vec<_>>())?;
     dict.set_item("mae_points", trades.iter().map(|r| r.mae_pts).collect::<Vec<_>>())?;
     dict.set_item("queen_hit", trades.iter().map(|r| r.queen).collect::<Vec<_>>())?;
+    dict.set_item("queen_exit_time_ms", trades.iter().map(|r| r.queen_exit_ms).collect::<Vec<_>>())?;
     dict.set_item("runner_hit", trades.iter().map(|r| r.runner).collect::<Vec<_>>())?;
     dict.set_item("is_reentry", trades.iter().map(|r| r.reentry).collect::<Vec<_>>())?;
     dict.set_item("exit_reason", trade_reasons)?;
