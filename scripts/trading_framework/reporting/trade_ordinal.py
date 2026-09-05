@@ -99,18 +99,26 @@ def suggested_cap(stats: pd.DataFrame) -> dict:
     """Largest N with positive marginal EV_R, WITH the evidence for it."""
     if stats.empty:
         return {"cap": None, "reason": "no trades"}
+    # Largest cumulative ordinal, computed BEFORE branching so the
+    # no-positive-marginal branch carries it too -- the renderer reads this
+    # key whenever a cap number exists, and cap=0 is such a case. An
+    # all-NaN EV_R column (no losses, so no R denominator) has no argmax;
+    # None is that answer, not a crash.
+    finite = stats[np.isfinite(stats["EV_R_upto_n"])]
+    best_cum = int(finite.loc[finite["EV_R_upto_n"].idxmax(), "n"]) \
+        if not finite.empty else None
     positive = stats[stats["EV_R_at_n"] > 0]
     if positive.empty:
         return {"cap": 0, "reason": "no ordinal has positive marginal EV_R",
-                "sample": int(stats["trades_at_n"].sum())}
+                "sample": int(stats["trades_at_n"].sum()),
+                "best_cumulative_n": best_cum}
     cap = int(positive["n"].max())
     sample = int(stats.loc[stats["n"] == cap, "trades_at_n"].iloc[0])
-    best_cum = stats.loc[stats["EV_R_upto_n"].idxmax(), "n"]
     return {
         "cap": cap,
         "sample": sample,
         "trustworthy": sample >= MIN_SAMPLE_FOR_A_CAP,
-        "best_cumulative_n": int(best_cum),
+        "best_cumulative_n": best_cum,
         "reason": ("largest ordinal with positive marginal EV_R"
                    if sample >= MIN_SAMPLE_FOR_A_CAP else
                    "largest ordinal with positive marginal EV_R, but it rests on "
@@ -153,8 +161,11 @@ def render_trade_ordinal(trades: pd.DataFrame, *,
             verdict = ("**suggested cap {}**".format(cap["cap"])
                        if cap.get("trustworthy") else
                        "cap {} -- **do not act on this yet**".format(cap["cap"]))
-            L += ["", "{} ({}). Best cumulative EV_R is at N={}."
-                      .format(verdict, cap["reason"], cap["best_cumulative_n"])]
+            best = cap.get("best_cumulative_n")
+            L += ["", "{} ({}). Best cumulative EV_R is at {}."
+                      .format(verdict, cap["reason"],
+                              "N={}".format(best) if best is not None
+                              else "no ordinal (EV_R undefined)")]
     if not any_rows:
         return ("### Where to cap trades\n\n_Not available: the trade frame is "
                 "empty, or carries no `{}` / P&L column._\n".format(time_col))
