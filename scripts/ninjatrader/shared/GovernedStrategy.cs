@@ -170,6 +170,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// is open, so a subclass may Print alongside the banner.</summary>
         protected virtual void OnInitialize() { }
 
+        /// <summary>
+        /// The one abstract member of RiskManagerBase GovernedStrategy does not
+        /// otherwise touch. Implemented empty so a bot with nothing to configure
+        /// need not restate a `ConfigureStrategy() { }` stub per file; a subclass
+        /// that DOES add data series overrides it as before.
+        /// </summary>
+        protected override void ConfigureStrategy() { }
+
         /// <summary>A short stable tag for signal names. The class name is fine;
         /// override only to shorten it.</summary>
         protected virtual string SignalTag { get { return GetType().Name; } }
