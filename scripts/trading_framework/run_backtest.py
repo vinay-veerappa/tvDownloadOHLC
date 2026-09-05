@@ -47,7 +47,10 @@ from scripts.trading_framework.provenance.run_record import (
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.core.nt8_parity_backtester import NT8ParityBacktester
 from scripts.trading_framework.core.mfe_mae import compute_mfe_mae
-from scripts.trading_framework.reporting.tearsheet import generate_tearsheet
+from scripts.trading_framework.reporting.tearsheet import (
+    compute_institutional_metrics,
+    generate_tearsheet,
+)
 from scripts.trading_framework.reporting.mfe_mae_report import (
     generate_mfe_mae_summary,
     plot_mfe_mae_analysis,
@@ -199,7 +202,12 @@ def run_optimization(args, config, df, engine=None):
     print(f"[*] Estimated CV Sharpe: {study.best_value:.2f}")
     return study.best_params, {"gridProbe": probe, "folds": folds,
                                "studyName": study_name,
-                               "bestValue": float(study.best_value)}
+                               "bestValue": float(study.best_value),
+                               # The per-trial frame, for the optimisation report.
+                               # Kept OUT of the run record deliberately: a
+                               # DataFrame is not JSON-serialisable and the record
+                               # must stay writable.
+                               "_trialsDf": study.trials_dataframe()}
 
 
 def run_research_pipeline(args, rec=None, output_dir=None):
@@ -287,12 +295,16 @@ def run_research_pipeline(args, rec=None, output_dir=None):
                          "for a searched result.")
 
         best_params = {}
+        trials_df = None
         if args.optimize:
             with rec.stage("optimize") as st:
                 best_params, opt_meta = run_optimization(args, config, df_search)
+                trials_df = opt_meta.pop("_trialsDf", None)
                 st.detail(requestedTrials=int(args.trials),
                           studyName=opt_meta["studyName"],
-                          bestValue=opt_meta["bestValue"])
+                          bestValue=opt_meta["bestValue"],
+                          completedTrials=(int(len(trials_df))
+                                           if trials_df is not None else None))
             rec.declare_folds(opt_meta["folds"])
             rec._doc["gridProbe"] = opt_meta["gridProbe"]
         rec.declare_strategy(params=best_params)
@@ -505,6 +517,26 @@ def run_research_pipeline(args, rec=None, output_dir=None):
             # meaningless before.
             rec.warn(f"could not derive a ruin basis from the prop profile: {exc}")
         perf_result.ruin_basis = ruin_basis
+
+        # OPTIMISATION SUMMARY. Only meaningful when a search ran; it renders the
+        # per-trial table saying WHICH arms were tried -- the half of an
+        # optimisation result that a "best params" line throws away, and the half
+        # deflated statistics need (plan 2.5).
+        if trials_df is not None and not trials_df.empty:
+            from scripts.trading_framework.reporting.optimization_summary import (
+                OptimizationReporter)
+            _risk = (config.session_risk.daily_max_loss
+                     / config.session_risk.max_trades_per_day)
+            _risk_metrics = compute_institutional_metrics(
+                perf_result.combined_trades, perf_result.combined_equity_curve,
+                config.account_risk.starting_equity, _risk,
+                ruin_basis=ruin_basis)
+            _summary = OptimizationReporter(output_dir).generate_report(
+                run_id=RUN_ID, ticker=args.ticker, strategy_name=args.strategy,
+                best_params=best_params, risk_metrics=_risk_metrics,
+                trials_df=trials_df)
+            rec.add_artifact("optimizationSummary", str(_summary))
+            print(f"* Optimization summary: {_summary}")
 
         # Generate Tearsheet
         tearsheet = generate_tearsheet(perf_result)

@@ -31,10 +31,18 @@ scaffold_structure = {
     ],
     "scripts/trading_framework/reporting": [
         "tearsheet.py",
-        "conditional_tables.py",
         "mfe_mae_report.py",
         "chop_filter_report.py",
-        "export.py"
+        # `conditional_tables.py`, `export.py` and `dashboard.py` were deleted
+        # 2026-09-04 and must NOT be scaffolded back. The first two were 4-line
+        # stubs never implemented; `dashboard.py` indexed the fixed
+        # `reporting/outputs` directory that runs stopped writing to when
+        # artifacts moved under a run id. A scaffolder that recreates deleted
+        # files is how a dead module comes back.
+        "institutional_metrics.py",
+        "risk_profiler.py",
+        "monte_carlo.py",
+        "optimization_summary.py"
     ],
     "scripts/strategies": [
         "base.py"
