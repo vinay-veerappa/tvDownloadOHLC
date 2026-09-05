@@ -73,7 +73,6 @@ UNINSTRUMENTED_HUNTERS = {
 #: user's call -- so this list starts as the full population by design, and
 #: shrinking it is the work rather than a precondition for it.
 UNINSTRUMENTED_BOTS = {
-    "scripts/ninjatrader/strategies/bandits_8020/Bandits8020Bot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBBreakoutBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBFadeBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBRetestBot.cs",

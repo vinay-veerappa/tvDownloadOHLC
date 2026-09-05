@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Windows;
 using System.Windows.Media;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
@@ -26,17 +27,24 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
     /// <summary>
     /// Bandits8020Bot — High-Precision Level Sniping & Sub-Grid Reversion Bot for NinjaTrader 8.
-    /// 
-    /// Key Capabilities:
-    /// 1. Bulletproof OCO Brackets: Native tick-based Stop Loss and Profit Target brackets guaranteed to attach to every fill.
-    /// 2. Comprehensive On-Chart Visual UI: Live HUD, dynamic sub-grid rays, setup verification markers, and trade brackets.
-    /// 3. Automatic Instrument Profiling: Auto-detects NQ, MNQ, ES, MES, YM, MYM, CL, MCL, RTY, M2K.
-    /// 4. Multi-Contract Auto-Scaling: Target dollar risk per trade (e.g. $200) or Micro scaling (10x).
-    /// 5. Precision Limit Execution at exact sub-grid nodes (eliminating bar-close chasing).
-    /// 6. True 09:30 AM ET RTH Open Directional Dealing Bias Gate.
-    /// 7. Prop Firm ATM Brackets with 2R daily loss limits, consecutive loser cooldowns, and mandatory 15:55 EOD flatten.
+    ///
+    /// Migrated onto GovernedStrategy (STRATEGY_WORKFLOW.md 3.4; B7+B8). The three
+    /// setups (fork reversal, 'h' pattern, level sniping) are declared as triggers
+    /// and their criteria as gates; the verdict is computed by the sealed base.
+    ///
+    /// B6 SIZING DECISION (2026-09-05, user call): the old TargetRiskDollars /
+    /// AutoMicroScale sizing engine is DELETED. $200 risk over a 10-pt MNQ stop
+    /// computed 10 contracts per trade where the frozen document fixes
+    /// MaxContractsPerTrade = 1 and every other bot trades 1; the bot also entered
+    /// through its own ExecuteTrade, which bypassed RiskManagerBase.EnterTrade and
+    /// never incremented todayTradeCount (the HUD counter was frozen). Entries now
+    /// route through the base at 1 contract, entering on a LIMIT at the level via
+    /// GetCustomLimitPrice — the same fill price the old path used.
+    ///
+    /// The HUD, sub-grid rays, setup markers and trade brackets are chart visuals
+    /// and survive unchanged; the HUD's trade count now reads the live counter.
     /// </summary>
-    public class Bandits8020Bot : RiskManagerBase
+    public class Bandits8020Bot : GovernedStrategy
     {
         #region Parameters
 
@@ -45,16 +53,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "Auto-Calibrate by Instrument", Order = 1, GroupName = "1. Instrument & Auto-Calibration",
                  Description = "Automatically configures grid handle, stop loss, and targets based on detected ticker (NQ/ES/CL/YM/RTY)")]
         public bool AutoCalibrateInstrument { get; set; } = true;
-
-        [NinjaScriptProperty]
-        [Display(Name = "Position Sizing Mode", Order = 2, GroupName = "1. Instrument & Auto-Calibration",
-                 Description = "Choose between Fixed Quantity, Auto Micro Scaling (10x), or Fixed Dollar Risk Sizing")]
-        public BanditsSizingMode SizingMode { get; set; } = BanditsSizingMode.TargetRiskDollars;
-
-        [NinjaScriptProperty]
-        [Display(Name = "Target Risk Per Trade ($)", Order = 3, GroupName = "1. Instrument & Auto-Calibration",
-                 Description = "Fixed dollar risk per trade when Sizing Mode = TargetRiskDollars (e.g. $200)")]
-        public double TargetRiskDollars { get; set; } = 200.0;
         #endregion
 
         #region Grid Configuration
@@ -145,10 +143,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private int lastEntryBar;
         private double lastLevelTouched;
         private int touchesOnCurrentLevelToday;
-        private bool isMicroInstrument;
-        private int calculatedQuantity;
-        private string lastTriggeredSetup = "None";
-        private double lastTriggerPrice = 0;
+
+        // The setup the trigger declared, and the price the entry should fill at.
+        // GetCustomLimitPrice returns it after the base accepts the verdict.
+        private double pendingEntryPrice;
 
         #endregion
 
@@ -157,15 +155,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return "Bandits8020";
         }
 
-        protected override void SetStrategyDefaults()
+        protected override void OnStrategyDefaults()
         {
             Description                  = "Prop Firm Bandits 80/20 & Orderflow Sub-Grid Strategy with Bulletproof OCO Brackets";
             Name                         = "Bandits8020Bot";
-            Calculate                    = Calculate.OnBarClose;
             EntriesPerDirection          = 1;
-            EntryHandling                = EntryHandling.AllEntries;
-            IsExitOnSessionCloseStrategy = true;
-            ExitOnSessionCloseSeconds    = 60;
             IsFillLimitOnTouch           = true;
 
             StopAtrMult       = 1.0;
@@ -179,6 +173,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxConsecutiveLosers      = 2;
             PauseMinutes              = 45;
             HardStopConsecutiveLosers = 2;
+            // B6: MaxTradesPerDay = 3 KEPT — no trade-ordinal measurement exists
+            // (no registry key, no hunter; a research artifact per §1.2), so the
+            // recorded number stands. Unlike the old 99s, 3 matches the base's
+            // own registered-account default.
             MaxTradesPerDay           = 3;
             TrailingDrawdown          = 2000;
             StopOnAccountBlown        = false;
@@ -191,8 +189,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             DebugMode             = false;
 
             AutoCalibrateInstrument = true;
-            SizingMode              = BanditsSizingMode.TargetRiskDollars;
-            TargetRiskDollars       = 200.0;
 
             GridUnit           = 100.0;
             StopLossPoints     = 10.0;
@@ -211,11 +207,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             ShowTradeBrackets  = true;
         }
 
-        protected override void ConfigureStrategy()
-        {
-        }
-
-        protected override void InitializeStrategy()
+        protected override void OnInitialize()
         {
             lastEntryBar = -100;
             lastLevelTouched = 0;
@@ -223,8 +215,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             rthOpenPrice = 0;
             rthOpenCaptured = false;
             sessionDate = DateTime.MinValue;
-            lastTriggeredSetup = "None";
-            lastTriggerPrice = 0;
+            pendingEntryPrice = double.NaN;
 
             CalibrateInstrumentSettings();
 
@@ -242,7 +233,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 return;
 
             string name = Instrument.MasterInstrument.Name.ToUpper();
-            isMicroInstrument = name.StartsWith("M") && (name.Contains("NQ") || name.Contains("ES") || name.Contains("YM") || name.Contains("CL") || name.Contains("2K") || name.Contains("RTY"));
 
             if (AutoCalibrateInstrument)
             {
@@ -290,24 +280,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 }
             }
 
-            calculatedQuantity = Math.Max(1, DefaultQuantity);
-
-            if (SizingMode == BanditsSizingMode.AutoMicroScale)
-            {
-                calculatedQuantity = isMicroInstrument ? Math.Max(1, DefaultQuantity * 10) : Math.Max(1, DefaultQuantity);
-            }
-            else if (SizingMode == BanditsSizingMode.TargetRiskDollars && TargetRiskDollars > 0)
-            {
-                double pointValue = GetPointValue();
-                double dollarRiskPerContract = StopLossPoints * pointValue;
-                if (dollarRiskPerContract > 0)
-                {
-                    calculatedQuantity = Math.Max(1, (int)Math.Floor(TargetRiskDollars / dollarRiskPerContract));
-                }
-            }
-
-            Log(string.Format("[AUTO-CALIBRATION] Instrument: {0} | Micro: {1} | Grid: {2:F2} | SL: {3:F2} | TP: {4:F2} | Qty: {5} (Risk: ${6:F2})",
-                name, isMicroInstrument, GridUnit, StopLossPoints, ProfitTargetPoints, calculatedQuantity, calculatedQuantity * StopLossPoints * GetPointValue()), LogLevel.Information);
+            Log(string.Format("[AUTO-CALIBRATION] Instrument: {0} | Grid: {1:F2} | SL: {2:F2} | TP: {3:F2} | Qty: 1 (frozen MaxContractsPerTrade)",
+                name, GridUnit, StopLossPoints, ProfitTargetPoints), LogLevel.Information);
         }
 
         protected override double GetCurrentATR()
@@ -317,17 +291,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetPotentialLoss()
         {
-            return StopLossPoints * GetPointValue() * Math.Max(1, calculatedQuantity);
+            return StopLossPoints * GetPointValue();
         }
 
         // ──────────────────────────────────────────────────────────────
-        // CORE SIGNAL & EXECUTION ENGINE
+        // DECLARED CRITERIA — the sealed base computes the verdict
         // ──────────────────────────────────────────────────────────────
 
-        protected override int CheckForSignal()
+        protected override void OnEvaluate(SetupEvaluation e)
         {
-            if (CurrentBars[0] < 5)
-                return 0;
+            bool warmed = CurrentBars[0] >= 5;
+            e.Gate("warmup", warmed, CurrentBars[0], 5);
+            if (!warmed) return;
 
             DateTime now = Times[0][0];
             int timeHHMM = now.Hour * 100 + now.Minute;
@@ -366,89 +341,79 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 bias = (close0 >= rthOpenPrice) ? 1 : -1;
             }
 
-            // Render on-chart UI elements
+            // Render on-chart UI elements — side effects, not logic
             if (ShowSubGridLines)
                 RenderSubGridLines(baseHandle, level20, level50, level80);
 
             if (ShowDashboardHUD)
                 RenderDashboardHUD(bias, baseHandle, level20, level80);
 
-            // Position management & Flatten EOD protection
+            // No entries while a position is open (the original returned here too)
             if (Position.MarketPosition != MarketPosition.Flat)
-            {
-                if (timeHHMM >= FlattenBy)
-                {
-                    if (Position.MarketPosition == MarketPosition.Long)
-                        ExitLong("Flatten_EOD");
-                    else
-                        ExitShort("Flatten_EOD");
-                }
-                return 0;
-            }
+                return;
 
-            if (!IsAllowedTradingWindow(timeHHMM))
-                return 0;
+            // Trading-window gate — declared with its value so an out-of-window
+            // bar is attributable rather than silent
+            bool windowOk = IsAllowedTradingWindow(timeHHMM);
+            e.Gate("trading_window", windowOk, timeHHMM, 0);
+            if (!windowOk) return;
 
-            if (CurrentBars[0] - lastEntryBar < 5)
-                return 0;
+            // Cooldown between entries
+            int barsSinceEntry = CurrentBars[0] - lastEntryBar;
+            bool cooldownOk = barsSinceEntry >= 5;
+            e.Gate("entry_cooldown", cooldownOk, barsSinceEntry, 5);
+            if (!cooldownOk) return;
 
             // ──────────────────────────────────────────────────────────
             // SETUP 1: FORK REVERSAL
             // ──────────────────────────────────────────────────────────
-            if (EnableForkReversal && CurrentBars[0] >= 2)
+            double r0 = high0 - low0;
+            double b0 = Math.Abs(close0 - open0);
+            double w0_lo = Math.Min(open0, close0) - low0;
+            double w0_hi = high0 - Math.Max(open0, close0);
+
+            double high1 = Highs[0][1];
+            double low1  = Lows[0][1];
+            double open1 = Opens[0][1];
+            double close1= Closes[0][1];
+            double r1 = high1 - low1;
+            double b1 = Math.Abs(close1 - open1);
+            double w1_lo = Math.Min(open1, close1) - low1;
+            double w1_hi = high1 - Math.Max(open1, close1);
+
+            // Bullish Fork at xx20
+            if (EnableForkReversal && CurrentBars[0] >= 2 && r0 > 0 && r1 > 0 && (bias >= 0))
             {
-                double r0 = high0 - low0;
-                double b0 = Math.Abs(close0 - open0);
-                double w0_lo = Math.Min(open0, close0) - low0;
-                double w0_hi = high0 - Math.Max(open0, close0);
+                bool isBullFork = (w0_lo >= 0.38 * r0) && (w1_lo >= 0.38 * r1) &&
+                                  (b0 <= 0.52 * r0) && (b1 <= 0.52 * r1) &&
+                                  (Math.Abs(low0 - low1) <= tol) && (close0 > open0) &&
+                                  (Math.Abs(low0 - level20) <= StopLossPoints);
 
-                double high1 = Highs[0][1];
-                double low1  = Lows[0][1];
-                double open1 = Opens[0][1];
-                double close1= Closes[0][1];
-                double r1 = high1 - low1;
-                double b1 = Math.Abs(close1 - open1);
-                double w1_lo = Math.Min(open1, close1) - low1;
-                double w1_hi = high1 - Math.Max(open1, close1);
-
-                // Bullish Fork at xx20
-                if (r0 > 0 && r1 > 0 && (bias >= 0))
+                if (isBullFork)
                 {
-                    bool isBullFork = (w0_lo >= 0.38 * r0) && (w1_lo >= 0.38 * r1) &&
-                                      (b0 <= 0.52 * r0) && (b1 <= 0.52 * r1) &&
-                                      (Math.Abs(low0 - low1) <= tol) && (close0 > open0) &&
-                                      (Math.Abs(low0 - level20) <= StopLossPoints);
-
-                    if (isBullFork)
-                    {
-                        lastTriggeredSetup = "FORK BULL [20]";
-                        lastTriggerPrice = level20;
-                        if (ShowSignalMarkers)
-                            RenderSignalMarker("Long", "FORK BULL [20]", level20);
-                        ExecuteTrade("Long", level20, level20 - StopLossPoints, level20 + ProfitTargetPoints);
-                        lastEntryBar = CurrentBars[0];
-                        return 0;
-                    }
+                    e.Trigger("long");
+                    e.Measure("fork_lower_wick_ratio", w0_lo / r0);
+                    pendingEntryPrice = level20;
+                    lastEntryBar = CurrentBars[0];
+                    return;
                 }
+            }
 
-                // Bearish Fork at xx80
-                if (r0 > 0 && r1 > 0 && (bias <= 0))
+            // Bearish Fork at xx80
+            if (EnableForkReversal && CurrentBars[0] >= 2 && r0 > 0 && r1 > 0 && (bias <= 0))
+            {
+                bool isBearFork = (w0_hi >= 0.38 * r0) && (w1_hi >= 0.38 * r1) &&
+                                  (b0 <= 0.52 * r0) && (b1 <= 0.52 * r1) &&
+                                  (Math.Abs(high0 - high1) <= tol) && (close0 < open0) &&
+                                  (Math.Abs(high0 - level80) <= StopLossPoints);
+
+                if (isBearFork)
                 {
-                    bool isBearFork = (w0_hi >= 0.38 * r0) && (w1_hi >= 0.38 * r1) &&
-                                      (b0 <= 0.52 * r0) && (b1 <= 0.52 * r1) &&
-                                      (Math.Abs(high0 - high1) <= tol) && (close0 < open0) &&
-                                      (Math.Abs(high0 - level80) <= StopLossPoints);
-
-                    if (isBearFork)
-                    {
-                        lastTriggeredSetup = "FORK BEAR [80]";
-                        lastTriggerPrice = level80;
-                        if (ShowSignalMarkers)
-                            RenderSignalMarker("Short", "FORK BEAR [80]", level80);
-                        ExecuteTrade("Short", level80, level80 + StopLossPoints, level80 - ProfitTargetPoints);
-                        lastEntryBar = CurrentBars[0];
-                        return 0;
-                    }
+                    e.Trigger("short");
+                    e.Measure("fork_upper_wick_ratio", w0_hi / r0);
+                    pendingEntryPrice = level80;
+                    lastEntryBar = CurrentBars[0];
+                    return;
                 }
             }
 
@@ -471,13 +436,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                 if (archRejection >= 0.30 && nearMagnet && close0 < Math.Min(Opens[0][1], Closes[0][1]))
                 {
-                    lastTriggeredSetup = "'h' PATTERN [80]";
-                    lastTriggerPrice = archTop;
-                    if (ShowSignalMarkers)
-                        RenderSignalMarker("Short", "'h' PATTERN [80]", archTop);
-                    ExecuteTrade("Short", archTop, archTop + StopLossPoints, archTop - ProfitTargetPoints);
+                    e.Trigger("short");
+                    e.Measure("arch_rejection_ratio", archRejection);
+                    pendingEntryPrice = archTop;
                     lastEntryBar = CurrentBars[0];
-                    return 0;
+                    return;
                 }
             }
 
@@ -501,13 +464,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                     if (touchesOnCurrentLevelToday <= 2)
                     {
-                        lastTriggeredSetup = "SNIPER LONG [20]";
-                        lastTriggerPrice = level20;
-                        if (ShowSignalMarkers)
-                            RenderSignalMarker("Long", "SNIPER LONG [20]", level20);
-                        ExecuteTrade("Long", level20, level20 - StopLossPoints, level20 + ProfitTargetPoints);
+                        e.Trigger("long");
+                        e.Measure("touches_on_level", touchesOnCurrentLevelToday);
+                        pendingEntryPrice = level20;
                         lastEntryBar = CurrentBars[0];
-                        return 0;
+                        return;
                     }
                 }
 
@@ -526,39 +487,30 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
                     if (touchesOnCurrentLevelToday <= 2)
                     {
-                        lastTriggeredSetup = "SNIPER SHORT [80]";
-                        lastTriggerPrice = level80;
-                        if (ShowSignalMarkers)
-                            RenderSignalMarker("Short", "SNIPER SHORT [80]", level80);
-                        ExecuteTrade("Short", level80, level80 + StopLossPoints, level80 - ProfitTargetPoints);
+                        e.Trigger("short");
+                        e.Measure("touches_on_level", touchesOnCurrentLevelToday);
+                        pendingEntryPrice = level80;
                         lastEntryBar = CurrentBars[0];
-                        return 0;
+                        return;
                     }
                 }
             }
-
-            return 0;
         }
 
-        private void ExecuteTrade(string direction, double entry, double stop, double target)
+        /// <summary>
+        /// The entry fills at the level the trigger declared — the same limit
+        /// price the old ExecuteTrade submitted. Returns NaN (market at close)
+        /// when no trigger is pending, matching the base's fallback.
+        /// </summary>
+        protected override double GetCustomLimitPrice(int signal, double currentPrice)
         {
-            string signalName = string.Format("B8020_{0}_{1}", direction == "Long" ? "L" : "S", CurrentBars[0]);
-            int qty = Math.Max(1, calculatedQuantity);
-
-            if (direction == "Long")
+            if (!double.IsNaN(pendingEntryPrice))
             {
-                EnterLongLimit(qty, entry, signalName);
+                double p = pendingEntryPrice;
+                pendingEntryPrice = double.NaN;   // consumed by this one entry
+                return p;
             }
-            else
-            {
-                EnterShortLimit(qty, entry, signalName);
-            }
-
-            if (ShowTradeBrackets)
-                RenderTradeBrackets(entry, stop, target, direction);
-
-            Log(string.Format("[{0} LIMIT] {1:HH:mm:ss} | Qty: {2} | Entry: {3:F2} | Stop: {4:F2} | Target: {5:F2} | Total Risk: ${6:F2}",
-                direction.ToUpper(), Times[0][0], qty, entry, stop, target, qty * Math.Abs(entry - stop) * GetPointValue()), LogLevel.Information);
+            return double.NaN;
         }
 
         // ──────────────────────────────────────────────────────────────
@@ -569,26 +521,24 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         {
             string biasStr = bias > 0 ? "BULLISH ▲ (Price >= RTH Open)" : (bias < 0 ? "BEARISH ▼ (Price < RTH Open)" : "NEUTRAL ◄►");
             string instName = Instrument != null ? Instrument.MasterInstrument.Name : "FUTURES";
-            double dollarRisk = calculatedQuantity * StopLossPoints * GetPointValue();
+            double dollarRisk = StopLossPoints * GetPointValue();
             double pnl = SystemPerformance.AllTrades.TradesPerformance.NetProfit;
 
             string hud = string.Format(
                 "╔══════════════════════════════════════════════════╗\n" +
                 "║ 🏛️  BANDITS 80/20 SUB-GRID ENGINE                ║\n" +
                 "╠══════════════════════════════════════════════════╣\n" +
-                "║ Instrument : {0,-8} | Qty: {1} cnts (${2:F0} Risk)  ║\n" +
-                "║ Dealing Bias: {3,-33}║\n" +
-                "║ 09:30 Open  : {4,-10:F2} | Current: {5,-10:F2}      ║\n" +
-                "║ Active Grid : 20: {6:F2} ◄► 80: {7:F2}       ║\n" +
-                "║ Session PnL : ${8,-9:F2} | Today Trades: {9}/3       ║\n" +
-                "║ Last Trigger: {10,-33}║\n" +
+                "║ Instrument : {0,-8} | Qty: 1 cnts (${1:F0} Risk)     ║\n" +
+                "║ Dealing Bias: {2,-33}║\n" +
+                "║ 09:30 Open  : {3,-10:F2} | Current: {4,-10:F2}      ║\n" +
+                "║ Active Grid : 20: {5:F2} ◄► 80: {6:F2}       ║\n" +
+                "║ Session PnL : ${7,-9:F2} | Today Trades: {8}/{9}      ║\n" +
                 "╚══════════════════════════════════════════════════╝",
-                instName, calculatedQuantity, dollarRisk,
+                instName, dollarRisk,
                 biasStr,
                 rthOpenPrice, Closes[0][0],
                 level20, level80,
-                pnl, todayTradeCount,
-                string.Format("{0} @ {1:F2}", lastTriggeredSetup, lastTriggerPrice)
+                pnl, todayTradeCount, MaxTradesPerDay
             );
 
             Draw.TextFixed(this, "BanditsHUD", hud, TextPosition.TopRight,
@@ -603,33 +553,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             Draw.Ray(this, "MidPoint_50", false, 10, level50, 0, level50, Brushes.SlateGray, DashStyleHelper.Dash, 1);
             Draw.Ray(this, "SubGrid_80", false, 10, level80, 0, level80, Brushes.Crimson, DashStyleHelper.Solid, 2);
             Draw.Ray(this, "Handle_100", false, 10, baseHandle + GridUnit, 0, baseHandle + GridUnit, Brushes.DarkGoldenrod, DashStyleHelper.Solid, 1);
-        }
-
-        private void RenderSignalMarker(string direction, string setupName, double price)
-        {
-            string tag = string.Format("Sig_{0}_{1}", CurrentBars[0], direction);
-
-            if (direction == "Long")
-            {
-                Draw.ArrowUp(this, tag + "_arr", false, 0, price - 2 * TickSize, Brushes.LimeGreen);
-                Draw.Text(this, tag + "_lbl", false, string.Format("▲ {0}\n@{1:F2}", setupName, price),
-                    0, price - 6 * TickSize, -15, Brushes.LimeGreen, new SimpleFont("Arial", 9),
-                    System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-            }
-            else
-            {
-                Draw.ArrowDown(this, tag + "_arr", false, 0, price + 2 * TickSize, Brushes.Crimson);
-                Draw.Text(this, tag + "_lbl", false, string.Format("▼ {0}\n@{1:F2}", setupName, price),
-                    0, price + 6 * TickSize, 15, Brushes.Crimson, new SimpleFont("Arial", 9),
-                    System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-            }
-        }
-
-        private void RenderTradeBrackets(double entry, double stop, double target, string direction)
-        {
-            Draw.Line(this, "ActiveEntry", false, 5, entry, -10, entry, Brushes.DeepSkyBlue, DashStyleHelper.Solid, 2);
-            Draw.Line(this, "ActiveSL", false, 5, stop, -10, stop, Brushes.Crimson, DashStyleHelper.Dash, 2);
-            Draw.Line(this, "ActiveTP", false, 5, target, -10, target, Brushes.LimeGreen, DashStyleHelper.Dash, 2);
         }
 
         private bool IsAllowedTradingWindow(int timeHHMM)
