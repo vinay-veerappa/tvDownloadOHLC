@@ -69,9 +69,9 @@ current/live analysis read `data/live/live_storage_-{ticker}.parquet` directly.
 
 ## Metrics
 
-Defined by `docs/strategies/9_30_breakout/0930_AllDay/analysis/RISK_PROFILE_DEFINITIONS.md`
-("The Edge System") and implemented once in `reporting/institutional_metrics.py`,
-which is tested against that document's own ten worked systems. Two things worth
+Defined in [`STRATEGY_WORKFLOW.md` §7.2](../../docs/architecture/STRATEGY_WORKFLOW.md)
+and implemented once in `reporting/institutional_metrics.py`, which is tested against
+the ten worked systems carried into `tests/test_institutional_metrics.py`. Two things worth
 carrying:
 
 - **Combined Edge is scale-free** (`EV_R × PF`). The dollar reading grades the

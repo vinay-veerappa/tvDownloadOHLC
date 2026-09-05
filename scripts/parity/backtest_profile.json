@@ -1,7 +1,7 @@
 {
   "_comment": [
     "Frozen NT8 Strategy Analyzer configuration. See",
-    "docs/architecture/STRATEGY_EVALUATION_PIPELINE_PLAN.md phase 0.1.",
+    "docs/architecture/STRATEGY_WORKFLOW.md section 5.2 (the frozen profile).",
     "",
     "WHY THIS FILE EXISTS. The bridge configured five things on a REUSED, never-closed SA",
     "window and inherited everything else from whatever a human last clicked, echoing none",

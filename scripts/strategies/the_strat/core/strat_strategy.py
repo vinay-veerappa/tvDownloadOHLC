@@ -7,7 +7,7 @@ Thin adapter over the canonical library engine — all Strat logic lives in:
   scripts/strategies/the_strat/strat_config.json (single source of truth)
 
 This class only: loads config, runs the engine, returns the canonical
-Signal List DataFrame (HARMONISED_TRADING_ARCHITECTURE.md Pillar 2 contract).
+Signal List DataFrame (STRATEGY_WORKFLOW.md section 1.1, Pillar 2 contract).
 No PnL, no loops over exits — execution lives in Pillar 3.
 """
 

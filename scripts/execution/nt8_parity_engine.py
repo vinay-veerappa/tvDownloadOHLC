@@ -637,7 +637,7 @@ class NT8ParityEngine:
                 "must not be used for prop-firm feasibility or for ranking candidates. "
                 "Pass ambiguity_policy='favourable' to acknowledge the bias explicitly, "
                 "or use simulate() which honours both policies. See "
-                "docs/architecture/STRATEGY_EVALUATION_PIPELINE_PLAN.md phase 0.2."
+                "docs/architecture/STRATEGY_WORKFLOW.md section 6.5."
             )
         if use_rust:
             _require_rust_core()

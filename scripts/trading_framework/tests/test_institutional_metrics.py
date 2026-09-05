@@ -1,9 +1,10 @@
 """The Edge System metrics, checked against the SPEC'S OWN worked examples.
 
-Spec: docs/strategies/9_30_breakout/0930_AllDay/analysis/RISK_PROFILE_DEFINITIONS.md
-Its section 13 lists ten systems with stated win rate, EV, PF and grade. That is
-a ready-made corpus, and it is the only way to check a grader that would
-otherwise be checked against itself.
+Spec: docs/architecture/STRATEGY_WORKFLOW.md section 7.2 (subsumed from "The Edge
+System: Risk Profile Master Guide", deleted 2026-09-04). Its section 13 listed ten
+systems with stated win rate, EV, PF and grade; THIS FILE is now their only home,
+which is the point -- a corpus in prose cannot fail, and it is the only way to
+check a grader that would otherwise be checked against itself.
 
 Running the old implementation against it is what found the defects: all ten
 systems graded F on Combined Edge, including the spec's A+ exemplar, and Risk of

@@ -192,7 +192,7 @@ These files are the "source of truth" — do targeted, line-specific reads on de
 - `docs/SecondBrain_Trading.md` — Trading domain logic (ALN, IB, NQ personalities)
 - `docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md` — Visual compliance standard
 - `docs/library/ict/ICT_SPEC_V1.md` — ICT engine API reference
-- `docs/architecture/HARMONISED_TRADING_ARCHITECTURE.md` — 3-layer strategy pattern
+- `docs/architecture/STRATEGY_WORKFLOW.md` — THE strategy document: three pillars (§1.1), the `hunt()` contract, backtest → NT8 → parity → reports → promotion
 
 ## WHAT'S SHARED vs COPILOT-PRIVATE
 

@@ -1,6 +1,6 @@
 """The Strat trading library (Pillar 1 — stateless math + signal engine).
 
-Layers (HARMONISED_TRADING_ARCHITECTURE.md):
+Layers (STRATEGY_WORKFLOW.md section 1.1, the three pillars):
   - taxonomy / combos / ftfc : raw Strat primitives (bar types, patterns, continuity)
   - targets / session        : measured-move targets, ET session/killzone gates
   - signals                  : StratSignalEngine — THE single OHLC -> signals path

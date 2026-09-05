@@ -1,6 +1,6 @@
 r"""Load the frozen NT8 backtest profile, hash it, and build a bridge request.
 
-See docs/architecture/STRATEGY_EVALUATION_PIPELINE_PLAN.md phase 0.1.
+See docs/architecture/STRATEGY_WORKFLOW.md section 5.2 (the frozen profile).
 
 The contract with the bridge is declare -> echo -> refuse:
 

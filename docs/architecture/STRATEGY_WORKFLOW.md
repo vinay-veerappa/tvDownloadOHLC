@@ -3,14 +3,14 @@
 > **Status**: CANONICAL PROCEDURE. This is the one document to read before building,
 > running, or judging a strategy in this repository.
 >
-> **Created**: 2026-09-04 · **Owner**: this file **subsumed and replaced**
-> `NT8_PYTHON_PARITY_STANDARD.md` and `STRATEGY_DESIGN_STANDARD.md`, both deleted the same
-> day — see §12 for what moved where and what was dropped. There is no other procedure
-> document; if you find one, it is stale.
-> The *reasoning* behind these rules is in
-> [BACKTEST_PARITY_ARCHITECTURE.md](BACKTEST_PARITY_ARCHITECTURE.md); the *build order*
-> for what is still missing is in
-> [STRATEGY_EVALUATION_PIPELINE_PLAN.md](STRATEGY_EVALUATION_PIPELINE_PLAN.md).
+> **Created**: 2026-09-04 · **Owner**: this is the ONLY document for strategy work.
+> Eight others were subsumed into it and deleted the same day — the procedure, the
+> reasoning, the build order, the metric spec and three package/CLI overviews. §12 records
+> what moved where and what was dropped. **If you find another document describing how to
+> build, run or judge a strategy in this repo, it is stale — read this one.**
+>
+> The only companion is `scripts/trading_framework/README.md`, which is a *package map*
+> (what each module is), not a procedure.
 
 ---
 
@@ -81,7 +81,22 @@ Two standing facts follow from this and govern every judgement below:
 2. **Parity is defined on the trade set**, not on P&L. "Same trades" first; "same money"
    is a separate and weaker question (§6).
 
-### 1.1 The naming rule 🟡 CONVENTION
+### 1.1 Three pillars, strictly decoupled 🟡 CONVENTION
+
+Where code lives is not filing — each pillar has a rule about what it may *not* do, and
+every cross-pillar leak this repo has had became a defect.
+
+| Pillar | Contains | May NOT |
+|---|---|---|
+| **1 — libraries** `scripts/libs_py/` | stateless vectorized maths: ICT primitives, the Strat, VWAP, regime, IB stats | touch files, databases, or assume a timezone |
+| **2 — hunters** `scripts/strategies/` | chaining libraries into setups; exposes `hunt(data, params)` → Signal List | manage trades, track P&L, size positions |
+| **3 — engine** `scripts/trading_framework/` | loading, timezone localisation, execution modelling, costs, optimisation, reporting | contain strategy logic |
+
+Data flows one way: UTC parquet → loader (localises to `America/New_York`) → hunter →
+engine → reports. A hunter that loads its own data has broken pillar 2 and will not be
+comparable to anything else.
+
+### 1.2 The naming rule 🟡 CONVENTION
 
 Registry key is `snake_case`; the bot class is `PascalCaseBot`. One key ↔ one bot.
 
@@ -637,6 +652,44 @@ be checked against itself — and it is what found both defects below.
 > the account and ~20% against a trailing drawdown. The tearsheet now prints
 > `measured against: <profile> = N losing trades`.
 
+#### The metric definitions
+
+Formulas and thresholds, subsumed from "The Edge System" master guide. `risk_per_trade`
+(`$R`) is defined **first** — every other metric depends on it.
+
+| Metric | Formula | Grades |
+|---|---|---|
+| **EV** | `Win% × AvgWin − Loss% × AvgLoss` | A >$100 · B ≥$50 · C ≥$10 · D >0 · F ≤0 |
+| **PF** | `GrossWins / GrossLosses` | A ≥2.0 · B ≥1.4 · C ≥1.1 · D ≥1.0 · F <1.0 |
+| **EV_R** | `EV$ / $R` | — (the normalised expectancy) |
+| **Combined Edge** | `EV_R × PF` | A >0.667 · B ≥0.444 · C ≥0.222 · D ≥0.089 · F below |
+| **SQN** | `(mean(R) / stdev(R)) × √N` | A ≥3.0 · B ≥2.0 · C ≥1.6 · D ≥1.0 · F <1.0 |
+| **DRR** | `MaxDD% / RiskPerTrade%` | A <4 · B ≤7 · D ≤10 · F >10 |
+| **Risk of Ruin** | `((1−CE)/(1+CE)) ^ Units`, `Units = ruinDistance / $R` | Professional <1% · Acceptable ≤5% · Dangerous ≤20% · Lethal >20% |
+| **Max losing streak** | `ln(N) / ln(1/LossRate)` | the psychological load, not a grade |
+| **MAE / MFE** | worst/best excursion, in **%** (ADR-002) | low MAE ⇒ tighter stops; MFE ≫ AvgWin ⇒ exiting too early |
+
+**Position sizing follows the grade** — this is what makes the grades load-bearing rather
+than decorative: **A** 2–5% · **B** 1–2% · **C** 0.5–1% · **D** 0.25–0.5% · **F** do not
+trade.
+
+**When a metric fails, move the lever attached to it**, don't guess:
+
+| Failing | Fix 1 | Fix 2 | Fix 3 |
+|---|---|---|---|
+| EV | increase AvgWin | reduce AvgLoss | better entry filters |
+| PF | remove outlier losses (MAE control) | tighten the stop | capture more MFE |
+| Combined Edge | improve EV or PF | reduce AvgLoss | reduce risk per trade |
+| **RoR** | **reduce risk per trade** | improve PF | reduce drawdown |
+| Max drawdown | reduce risk per trade | increase AvgWin | improve Win% |
+| Losing streak | improve Win% | reduce risk | skip chop periods |
+
+> Each formula carries an assumption worth stating: **EV** assumes the win/loss profile is
+> stable; **PF** assumes losses stay consistent, and lies when there are outlier losses;
+> **RoR** assumes trades are independent, and real markets cluster losses; the **streak**
+> formula assumes no regime shift. A high win rate can hide a terrible EV, and a strong PF
+> can sit on top of an intolerable drawdown — read them together, never one alone.
+
 #### The metric table 🟡 CONVENTION
 
 | Metric | Definition here | Watch out |
@@ -786,30 +839,119 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | 6 | Freeze the 35 bespoke runners with a gate (§4.1); note an *absence* gate passes silently when code moves — give it a negative control | code |
 | 7 | `box_reversion` raises `TypeError: Invalid comparison between dtype=datetime64[s] and Timestamp` when window-filtered | code |
 
+### 11.1 The remaining build order
+
+Subsumed from the phased plan. Ordered by what unblocks what, not by size.
+
+| Phase | Item | State |
+|---|---|---|
+| **0.2/0.3** | adverse fills already default; **restate the existing prop-firm conclusions on them** — this is where optimism did the most damage, and published numbers may change | 🔴 |
+| **1.1** | rank-correlation calibration Python↔NT8 — tells you whether the screen has been lying, and by how much (§12.1: the ranking is what must be preserved) | 🔴 |
+| **2.4** | freeze the 35 bespoke runners with a CI check. ⚠️ an *absence* gate passes silently when code moves — give it a negative control | 🔴 |
+| **2.5** | arm ledger — log **every** arm ever tested, including abandoned ones. Deflated statistics need N, and the optimisation summary (§7.1) now emits the per-trial table | 🟡 partial |
+| **2.6** | reports generated from the run record only (§7.3) | 🔴 |
+| **3.1–3.3** | per-contract-month data on both sides; roll-warmup rule; bar-completeness precondition | 🔴 |
+| **3.4** | tick-on-demand resolution for finalists — the NT8 tick database is an unused asset | 🔴 |
+| **4.2** | committed NT8 ground-truth corpus **with bracket exits** (§5.4) | 🔴 |
+| **4.3** | trade-set parity as a CI gate (§6.3) | 🔴 |
+| **4.4** | detector golden corpus — `nt_indicator_values` per bar, asserted bar-for-bar, so a red names the first divergent bar (§6.2) | 🔴 |
+| **5.1** | parameter document for the non-ICT families (§3.3, §12.3) | 🔴 |
+| **5.3** | collapse the execution paths | 🔴 |
+| **6.1** | audit `ml/walk_forward.py` — `walk_forward_split` has **no purge and no embargo** and is deprecated; confirm nothing still calls it | 🔴 |
+| **6.2** | deflated metrics / probability of backtest overfitting | 🔴 |
+| **6.3** | survivor selection on low mutual correlation | 🔴 |
+| **7.1** | NT8 Optimizer support in the bridge (the bridge cannot drive it today) | 🔴 |
+
 ---
 
-## 12. What this document replaced
+## 12. Decisions that shape all of this
 
-Two documents used to state competing procedure. Both were **subsumed into this file and
-deleted** on 2026-09-04; `git log --follow` has them if a detail is ever wanted.
+Carried from the design record. These are settled; reopening one needs new evidence, not a
+new preference.
+
+### 12.1 The funnel
+
+Python is a **screen**, not a verdict. It sweeps ~200 variants; NT8 decides. What Python
+must preserve is therefore the **ranking**, not the absolute numbers — a screen that
+reorders candidates is broken even if every metric is close. Prop-firm feasibility has the
+*opposite* requirement: there, absolute drawdown matters and optimism is the failure mode,
+which is why the adverse intrabar path is the default.
+
+### 12.2 What is shared, and how
+
+Shared logic is written **once in C#** as a platform-free core (`ninjatrader/shared/`) and
+mirrored in Python, with a differential test holding the two together (§6.1). Not the
+reverse: NT8 is authoritative, so the C# side is the original.
+
+### 12.3 The port problem, and the deliberately limited answer
+
+**strategy = (C# bot class) + (parameter document).** One JSON read by both sides. The hard
+line: the document expresses **composition, never computation**. Anything needing arbitrary
+computation becomes a new primitive written once in both languages. This is explicitly
+**not** a strategy DSL — that path dies by growing into a programming language.
+
+### 12.4 Rejected, with reasons
+
+| Rejected | Why |
+|---|---|
+| A shared **Rust** core inside NT8 | silent marshalling errors in the very component built to end cross-checking, and no hot-swap. If one implementation is ever wanted it goes in **C#** |
+| `nautilus_trader` | a third opinion on execution; does not address Python↔C# signal drift |
+| A full strategy DSL | see §12.3 |
+| NT8 as the only simulator | kills vectorized research and sweeps (ADR-022); the Strategy Analyzer is slow and crash-prone |
+| Point-P&L parity with the Strategy Analyzer | SA does not reproduce live fills either. **Trade set → SA; economics → Sim101** |
+
+---
+
+## 13. What this document replaced
+
+**Eight documents, all deleted 2026-09-04.** `git log --follow` has every one of them.
 
 | Deleted | What moved here | What was dropped, and why |
 |---|---|---|
-| `NT8_PYTHON_PARITY_STANDARD.md` | the six-part parity checklist (§6.4), the NT8 silent-failure catalogue and debugging table (§10.1), the diagnosis rules (§10.2) | its sessions 8/9/10 logs — **duplicated** in `SESSION_9_HANDOVER.md` / `SESSION_10_HANDOVER.md`, which are dated records and the right home; its file-reference table — 2 of 4 sampled paths no longer existed after ADR-025 |
-| `STRATEGY_DESIGN_STANDARD.md` | the `hunt()` contract (§2.1), hunters-vs-execution (§2.3), the vectorization rules (§2.3), the engine contract and the `ticker` requirement (§2.7) | its ADR-017 verification gate, which named `lifecycle_runner` — **not** the sanctioned entry point (§0.1) |
+| `NT8_PYTHON_PARITY_STANDARD.md` (603 ln) | the six-part parity checklist (§6.4), the NT8 silent-failure catalogue (§10.1), the diagnosis rules (§10.2) | its sessions 8/9/10 logs — **duplicated** in `SESSION_9_HANDOVER.md` / `SESSION_10_HANDOVER.md`; its file-reference table — 2 of 4 sampled paths deleted by ADR-025 |
+| `STRATEGY_DESIGN_STANDARD.md` (88 ln) | the `hunt()` contract (§2.1), hunters-vs-execution and the vectorization rules (§2.3), the engine contract (§2.7) | its ADR-017 gate, which named `lifecycle_runner` — not the sanctioned entry point |
+| `BACKTEST_PARITY_ARCHITECTURE.md` (411 ln) | the decisions: the funnel, what is shared, the port problem, and what was rejected (§12) | its evidence section — a snapshot of defects now fixed, and its numbers were superseded within the same week |
+| `STRATEGY_EVALUATION_PIPELINE_PLAN.md` (463 ln) | the remaining build order (§11.1) | the closed phases. A plan that keeps its finished items becomes a place where status rots |
+| `RISK_PROFILE_DEFINITIONS.md` (302 ln) | every formula, threshold, the fix table and position-sizing-by-grade (§7.2) | its teaching narrative. **Its ten worked systems live in `tests/test_institutional_metrics.py`**, which is a stronger home — they now fail a build |
+| `REPORTING_METRICS.md` (55 ln) | nothing new — it was a lossy derivative | it propagated the Combined Edge formula/threshold contradiction that graded every system F |
+| `RESEARCH_FRAMEWORK.md` (54 ln) | nothing | described `FrameworkLoader` and a `data/loader.py` that **do not exist**, and a "7-layer protocol" no code implements |
+| `CLI_USER_GUIDE.md` (61 ln) | nothing | documented `run_backtest.py` as the CLI; superseded by §0.1 |
+| `HARMONISED_TRADING_ARCHITECTURE.md` (49 ln) | the three pillars and their prohibitions (§1.1) | its data-flow diagram, restated in one line |
 
-**Why they could not stay as appendices.** The parity standard opened with *"MANDATORY —
-all new strategies MUST comply with this standard before being declared validated"*, a
-claim nothing enforced, next to a checklist this file now supersedes. A reader arriving
-cold got the older answer because it was the one that said MANDATORY. Two of its framings
-were also wrong by the time it was deleted:
+### Why none of them could stay as appendices
 
-- **Class E** treated contract month and price basis as one thing. They are not. A constant
-  price offset *is* the adjustment basis and is invariant under the geometry test (§6.3);
-  a different **contract month** changes which trades exist. The trap is real, the framing
-  was not — both halves are stated correctly in §6.4.
-- Its "validated" checklist had no enforcement and no way to fail. §9 replaces it, and
-  `workflow.py` evaluates it on every run.
+`NT8_PYTHON_PARITY_STANDARD.md` was first tried as an "appendix of traps" with a redirect
+banner. It did not work: it still opened with *"MANDATORY — all new strategies MUST comply
+before being declared validated"*, so a reader arriving cold got **the older answer,
+because it was the one that said MANDATORY**. An appendix that contradicts the canonical
+document is not an appendix — it is a second source of truth with a lower profile, which is
+worse than an obvious one.
 
-An appendix that contradicts the canonical document is not an appendix. It is a second
-source of truth with a lower profile, which is worse than an obvious one.
+### Claims they made that were false
+
+Kept because the shapes recur, and every one of them survived by nobody re-deriving it.
+
+- **"Purged Walk-Forward Cross-Validation to prevent data leakage"** — while
+  `walk_forward_split` is marked `DEPRECATED — expanding-window split with NO purge and NO
+  embargo`. **A document claiming a safety property the code explicitly denies having.**
+  Worse than silence, because it stops the reader checking.
+- **`FrameworkLoader` / `trading_framework/data/loader.py`** — neither the class nor the
+  directory ever existed at that path.
+- **"fully interactive HTML tear sheets"**, `Lifecycle_Test_IS_tearsheet.html` — the
+  tearsheet is markdown, and no code has ever produced those filenames.
+- **"Layers 2 & 3 splice macro catalysts from SQLite/Prisma"** — no such code exists.
+- **Class E** conflated contract month with price basis. A constant price offset *is* the
+  adjustment basis and is invariant under the geometry test (§6.3); a different **contract
+  month** changes which trades exist. Both halves are stated correctly in §6.4.
+- **Combined Edge**: formula from one reading, thresholds from another — so the metric
+  graded the spec's own A+ exemplar F (§7.2).
+
+### What is deliberately NOT here
+
+- **`scripts/trading_framework/README.md`** — a package *map* (what each module is), not a
+  procedure. It defers here for anything procedural.
+- **`docs/trading_system/BACKTEST_ENGINE_ARCHITECTURE.md`** — a 2,553-line code-generation
+  spec for the `libs_py` layer, whose named paths **do** exist. It is a spec for a different
+  layer, not a competing workflow. Left standing pending a decision.
+- **Dated session handovers** (`SESSION_9`/`SESSION_10`) — records of what was true on a
+  date. Rewriting a record to match today is how a history stops being evidence.

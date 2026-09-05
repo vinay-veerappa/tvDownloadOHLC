@@ -648,7 +648,7 @@ This causes:
 
 The architecture is **well-structured** and follows the project's documented conventions:
 
-- **3-layer pattern** (per `HARMONISED_TRADING_ARCHITECTURE.md`): Core → Family Libraries → Indicator
+- **3-layer pattern** (per `docs/architecture/STRATEGY_WORKFLOW.md` §1.1): Core → Family Libraries → Indicator
 - **Registry-based label collision resolution** (`LabelRegistry` with merge/stagger/hide/off strategies)
 - **Vectorized single-pass DOW aggregation** (O(N) into 6 day-buckets)
 - **Module-scope color palette** resolved once per bar (per Visual System v3.1)

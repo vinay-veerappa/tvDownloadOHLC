@@ -1,8 +1,11 @@
 """The Edge System metrics -- ONE implementation of the spec.
 
-SPEC: docs/strategies/9_30_breakout/0930_AllDay/analysis/RISK_PROFILE_DEFINITIONS.md
-      ("The Edge System: Risk Profile Master Guide", user-provided source text).
-      docs/research/REPORTING_METRICS.md is a derivative of it.
+SPEC: docs/architecture/STRATEGY_WORKFLOW.md section 7.2.
+      Subsumed 2026-09-04 from "The Edge System: Risk Profile Master Guide"
+      (user-provided source text) and its lossy derivative REPORTING_METRICS.md,
+      both deleted. The guide's TEN WORKED SYSTEMS live in
+      tests/test_institutional_metrics.py, which is a stronger home than prose:
+      they now fail a build.
 
 There used to be TWO implementations of these formulas -- `tearsheet.py::
 compute_institutional_metrics` and `risk_profiler.py::RiskProfiler` -- with the
