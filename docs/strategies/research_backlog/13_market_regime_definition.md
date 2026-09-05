@@ -1,7 +1,8 @@
 # 13 — Market Regime: one definition, used everywhere
 
 **Family**: infrastructure research (not a strategy). **Item**: `REG-1`.
-**Status**: OPEN — nothing here is decided. **Raised**: 2026-09-05.
+**Status**: OPEN — first cheap step done 2026-09-05 (see below); nothing else
+is decided. **Raised**: 2026-09-05.
 **Blocks**: `statistically_sufficient` (STRATEGY_WORKFLOW.md §9) is currently
 using a *proxy* and says so on every run it prints.
 
@@ -152,7 +153,7 @@ currently either using a different definition or using none:
 | STRATEGY_WORKFLOW.md §8 / §9 `statistically_sufficient` | "3 regimes", undefined | the definition |
 | `research_backlog/README.md` learning protocol | "IB regime quint" (is a tercile) | the definition |
 | `reporting/session_breakdown.py`, `trade_ordinal.py` | session only | session × regime |
-| `edgeful/ib_breakout_filter.py` calibration cells | `range_bucket_full` (**lookahead**) | the causal one |
+| `edgeful/ib_breakout_filter.py` calibration cells | ~~`range_bucket_full` (lookahead)~~ → `range_bucket_trailing` **FIXED 2026-09-05** | the definition |
 | `edgeful/universal_signal_classifier_input.py` | both `_full` and `_trailing` | the causal one |
 | `libs_py/nqstats/ib.py` | its own copy of the bucketing | imports it |
 | `edgeful/ib_pipeline.py` | its own copy of the bucketing | imports it |
@@ -166,13 +167,58 @@ expanding quantile needs history the strategy does not carry; absolute bands
 on regime, that constraint should decide the shape now rather than after the
 research.
 
-## First cheap step
+## First cheap step — DONE 2026-09-05, both defects are real
 
-Before any of the arms: **measure the `_full`/`_trailing` disagreement on the
-actual IB aggregate**, not just on VIX closes, and find out whether
-`ib_breakout_filter.py`'s calibration numbers move when it is switched to the
-causal label. If they do, that is a live defect in a shipped filter and it is
-worth fixing ahead of the rest of this item.
+**1. `_full`/`_trailing` disagreement on the actual IB aggregate** (measured on
+`data/derived/ib_facts_NQ1.parquet`, 41,352 rows, 2006–2026, all six session
+slots; `range_bucket_full` vs `range_bucket_trailing`):
+
+| Session slot | n | whole-sample disagreement | earliest fifth |
+|---|---|---|---|
+| Globex IB | 5,158 | **17.1%** | 29.2% |
+| Tokyo IB | 10,253 | **17.1%** | 22.5% |
+| NY PM IB | 5,264 | **24.4%** | 54.1% |
+| NY AM IB | 5,262 | **36.0%** | 65.0% |
+| London IB | 10,280 | **38.5%** | 59.2% |
+| Midnight OR | 5,135 | **42.8%** | 73.0% |
+
+Larger than the VIX-only 13.6% estimate above — 1.3x to 3.1x per slot — and
+with the same earliest-heavy gradient. On the IB aggregate, a whole-sample
+"regime" label is wrong for **one day in three**, averaged over slots.
+
+**2. The shipped filter's calibration moves when switched to the causal
+label** (A/B on `ib_confluence_NQ1`, same rows, `_walk_forward_calibration`
+keyed `range_bucket_full` vs `range_bucket_trailing`):
+
+| | full (shipped) | trailing (causal) |
+|---|---|---|
+| `empirical_win_rate_strict` mean | 0.10604 | 0.10633 |
+| cell-level | corr 0.857 · mean abs diff 0.005 · **p95 abs diff 0.032** | · |
+| `expectation_bucket` changes | — | **10.5% of all rows, 21.6% of strict rows** |
+
+A cell-level ±0.03 p95 win-rate shift is a whole expectation-bucket boundary
+(0.18 / 0.25) wide, and the final recommendation flips on one strict row in
+five. **This is a live defect in a shipped filter and it is fixed** (2026-09-05):
+
+- `ib_breakout_filter.py` keys all calibration cells on
+  `range_bucket_trailing` (causal), with a fallback to `_full` only when the
+  column is absent.
+- `_compute_confluence_score` also read `range_bucket_full` through a
+  vocabulary (`"normal"/"compressed"/"wide"`) that **never occurs in the
+  pipeline output** (`Small/Medium/Large`) — that term scored exactly 0 for
+  every row since it was written. Fixed to the real vocabulary, causal column.
+- `data/derived/ib_breakout_filter_NQ1.parquet` regenerated under the fixed
+  code. The pre-fix parquet is not comparable.
+- Pinned by `tests/edgeful/test_ib_breakout_filter_causal.py` — including a
+  negative control that flips the full label everywhere and requires the
+  calibration to not move.
+
+Still open in this item: `universal_signal_classifier_input.py` still lists
+`range_bucket_full` / `vix_bucket_full` as classifier features (leakage into
+the model's feature set, not the calibration); the duplicated bucketing code in
+`nqstats/ib.py` and `edgeful/ib_pipeline.py` (§"two defects" above); and the
+candidate comparison arms below. The A/B harness for the calibration lives at
+`%TEMP%\opencode\reg1_ab_calibration.py` — inlined above, nothing depends on it.
 
 ---
 

@@ -1,6 +1,8 @@
 # Strategy Research Backlog — Master Index
 
 > **Goal**: test each strategy in isolation → extract a **learning** (a conditional edge statement like "fade edge survives only in NY AM on compressed IB days") → compose learnings into multi-signal strategies afterward. No composition before isolation.
+>
+> **Sourcing & Discovery SOP**: See [STRATEGY_MINING_SOP.md](../STRATEGY_MINING_SOP.md) for how external strategies (YouTube, TradingView, Quantpedia, GitHub, Prop Forums) are discovered, filtered, and admitted into this backlog.
 
 ## The learning protocol
 
@@ -27,6 +29,11 @@ Stratify every result by: **session bucket** (Asia/London/NY-AM/lunch/PM), **IB 
 | [06_quantifiedstrategies_100.md](06_quantifiedstrategies_100.md) | QuantifiedStrategies 100 (EOD-backed) | F6.1–F6.5 + catalog | F6.1 IBS fade · F6.3 inside-bar day-type prior · F6.4 session-extreme close-vs-wick handling rule |
 | [07_swing_options_investment.md](07_swing_options_investment.md) | Options / swing / investment | O-1..O-3, W-1..W-5, I-1..I-4 | O-1 0DTE credit structures (GEX/EM strikes) · W-1 PEAD event-window · W-2 Connors ETF reversion · I-1/I-2 as regime seats for everything else |
 | [08_freqtrade_library.md](08_freqtrade_library.md) | Freqtrade strategies (Python, crypto-native) | F10.1–F10.4 + mechanism borrowings | F10.1 volume-spike capitulation confirm · F10.2 graded σ-tier reversion ladder · F10.4 TD Sequential · time-decaying ROI exit module |
+| [09_gamma_exposure_gex.md](09_gamma_exposure_gex.md) | Gamma Exposure (GEX) & Dealer Positioning | GEX-1..GEX-3 | GEX-1 Zero Gamma Volatility Trigger · GEX-2 Call/Put Wall Fade · GEX-3 OPEX Pinning |
+| [10_options_books.md](10_options_books.md) | The Options Books (4 Disciplines) | OPT-0DTE-1, OPT-FLOW-1, OPT-VOL-1..2, OPT-INC-1 | OPT-0DTE-1 GEX Iron Condors · OPT-FLOW-1 Golden Sweeps · OPT-VOL-1 PEAD Drift · OPT-INC-1 45-DTE BWB |
+| [11_stock_scanners_vcp_volatility.md](11_stock_scanners_vcp_volatility.md) | Stock Scanners & Volatility Systems | SCAN-1..2, VCP-1..3 | SCAN-1 Stockbee Episodic Pivot · SCAN-2 Momentum Burst · VCP-1 Minervini VCP · VCP-2 Crabel NR7 · VCP-3 Raschke 80-20 |
+| [12_range_chop_congestion.md](12_range_chop_congestion.md) | Range, Chop Zones & Anti-Chop Defense | RANGE-80PCT, KER/ADX Gates | RANGE-80PCT Dalton 80% Rule · KER < 0.30 Chop Gate · 5 Anti-Chop Circuit Breakers |
+| [13_market_regime_definition.md](13_market_regime_definition.md) | **Infrastructure — not a strategy** | REG-1 | The regime axis every other item stratifies by. Three definitions exist here and disagree; one (`*_bucket_full`) has **lookahead** and is in live use — 13.6% of days are labelled differently from the causal version, rising to 39.4% in the earliest fifth of the sample. Do this before trusting any stratified result |
 
 ## Suggested first wave (cheap, high-information)
 
