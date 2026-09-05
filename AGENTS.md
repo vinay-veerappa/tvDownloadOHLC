@@ -63,6 +63,17 @@ measured · **2** = a required stage raised.
    green with no reachable red. **The gate roster is layer 0 of parity**: if the
    two sides evaluate different criteria they are different strategies and no
    recall number between them is interpretable.
+5b. **A new C# bot inherits `GovernedStrategy`** (§5.7) and writes NO logging
+   code. Implement `OnEvaluate(SetupEvaluation e)` — `Trigger` / `Gate` /
+   `Measure` — plus `ConfigureStrategy()` and `GetStrategyName()`. It contains
+   no orders, no clock reads and no `Print`. `CheckForSignal()` is **sealed**
+   and the verdict is computed from the declared gates, so an unlogged criterion
+   cannot reach a trade. The base also owns ADR-020's hard exit, the frozen
+   defaults, unique entry names, and logging its own refusals. Do NOT inherit
+   `RiskManagerBase` directly — nt8-riskguard owns it (ADR-025), and the ten
+   bots that do inherit it are exactly the ten that hardcoded their own flatten
+   times (tickets B1–B6). `tests/test_instrumentation.py` fails a new bot that
+   derives from anything else.
 6. **Never hardcode a point value, tick size, session window or risk default.**
    They are frozen in `scripts/trading_framework/config/trading_defaults.json` and
    read through `config/defaults.py`. There were three point-value tables and they

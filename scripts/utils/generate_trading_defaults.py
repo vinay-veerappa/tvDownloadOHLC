@@ -173,9 +173,37 @@ def render(raw: str) -> str:
             a('            if (hhmm >= {0} && hhmm < {1}) return "{2}";'.format(s_, e_, name))
     a('            throw new System.ArgumentException("no session for " + hhmm);')
     a("        }")
+    a("")
+    _emit_governance_gates(a, d.get("governance") or {})
     a("    }")
     a("}")
     return "\n".join(L) + "\n"
+
+
+def _emit_governance_gates(a, gov: dict) -> None:
+    """The names `GovernedStrategy` records its OWN refusals under.
+
+    Emitted rather than written as C# literals because the Python reader groups
+    the roster on these exact strings: a rename on one side alone splits one
+    gate into two rows that never compare, and nothing would fail.
+    """
+    gates = gov.get("gates") or {}
+    if not gates:
+        return
+    a("        // ---- governance gate names (section 5.7) --------------------------")
+    a("        // GovernedStrategy records its own refusals under these, so a bot")
+    a("        // blocked by a FRAMEWORK rule lands in the roster instead of")
+    a("        // vanishing -- the C# half of the funnel gap in section 11 item 13.")
+    for key, name in gates.items():
+        a('        public const string Gate{0} = "{1}";'.format(
+            key[0].upper() + key[1:], name))
+    a("")
+    a("        /// <summary>Every governance gate name, so a test can assert the")
+    a("        /// set rather than each member -- a new one added to the JSON and")
+    a("        /// never recorded would otherwise pass every existing check.</summary>")
+    a("        public static readonly string[] GovernanceGates = new string[] {")
+    a("            " + ", ".join(
+        "Gate{0}".format(k[0].upper() + k[1:]) for k in gates) + " };")
 
 
 def main() -> int:

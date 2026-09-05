@@ -83,6 +83,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public DecisionBuilder Note(string name, bool passed, string detail)
         { return Add(name, passed, 0, false, 0, false, detail, "note"); }
 
+        /// <summary>Append a gate built elsewhere. This is how GovernedStrategy
+        /// forwards what the subclass declared into the SAME decision the base
+        /// then adds its own governance gates to -- one decision, one row set,
+        /// so a framework refusal and a strategy refusal are comparable.</summary>
+        public DecisionBuilder Add(DecisionGate g)
+        {
+            if (string.IsNullOrWhiteSpace(g.Name)) g.Name = "unnamed";
+            if (string.IsNullOrWhiteSpace(g.Kind)) g.Kind = "gate";
+            gates.Add(g);
+            return this;
+        }
+
         private DecisionBuilder Add(string name, bool passed, double value, bool hasValue,
                                     double threshold, bool hasThreshold, string detail,
                                     string kind)

@@ -19,7 +19,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     /// </summary>
     public static class TradingDefaults
     {
-        public const string SourceHash = "9fcab64032ab42f6";
+        public const string SourceHash = "92c5427858251e03";
         public const string FrozenOn   = "2026-09-05";
 
         // ---- Instrument (ADR-009: micros are the traded class) ----------
@@ -106,5 +106,22 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             if (hhmm >= 1600 && hhmm < 1800) return "CLOSED";
             throw new System.ArgumentException("no session for " + hhmm);
         }
+
+        // ---- governance gate names (section 5.7) --------------------------
+        // GovernedStrategy records its own refusals under these, so a bot
+        // blocked by a FRAMEWORK rule lands in the roster instead of
+        // vanishing -- the C# half of the funnel gap in section 11 item 13.
+        public const string GateHardExit = "adr020_hard_exit";
+        public const string GateFlattenBy = "flatten_by";
+        public const string GateMaxPerDay = "max_trades_per_day";
+        public const string GateMaxPerSession = "max_trades_per_session";
+        public const string GateLastEntry = "last_entry_et";
+        public const string GateConcurrent = "max_concurrent_positions";
+
+        /// <summary>Every governance gate name, so a test can assert the
+        /// set rather than each member -- a new one added to the JSON and
+        /// never recorded would otherwise pass every existing check.</summary>
+        public static readonly string[] GovernanceGates = new string[] {
+            GateHardExit, GateFlattenBy, GateMaxPerDay, GateMaxPerSession, GateLastEntry, GateConcurrent };
     }
 }

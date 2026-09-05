@@ -203,5 +203,28 @@
     "calculate": "OnBarClose",
     "isExitOnSessionCloseStrategy": true,
     "exitOnSessionCloseSeconds": 30
+  },
+  "governance": {
+    "_doc": [
+      "THE GOVERNANCE GATE NAMES. The C# base class GovernedStrategy.cs records",
+      "its OWN refusals as gates in the decision log, using exactly these names,",
+      "so a bot blocked by a framework rule appears in the roster instead of",
+      "vanishing. Without this the C# side would repeat the defect that section 11",
+      "item 13 records on the Python side: the engine's gates cut 3,188 hunter",
+      "entries to 16 and none of them reached the log, so the funnel could not be",
+      "explained.",
+      "",
+      "Frozen HERE rather than as C# literals because the Python reader groups on",
+      "these strings. A rename on one side alone would silently split one gate",
+      "into two rows that never compare."
+    ],
+    "gates": {
+      "hardExit": "adr020_hard_exit",
+      "flattenBy": "flatten_by",
+      "maxPerDay": "max_trades_per_day",
+      "maxPerSession": "max_trades_per_session",
+      "lastEntry": "last_entry_et",
+      "concurrent": "max_concurrent_positions"
+    }
   }
 }

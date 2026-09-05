@@ -788,6 +788,94 @@ Property names were confirmed by **reflecting on `NinjaTrader.Core.dll`**, not a
 `GetP` is reflection-based, so a wrong name returns `null` rather than failing to compile —
 it would have read as "this strategy has no MAE".
 
+### 5.7 The governance base class — `GovernedStrategy` 🟢 ENFORCED
+
+**A new bot inherits `GovernedStrategy` and writes no logging code at all.** It gets
+the decision log, the frozen defaults and unique entry names by construction.
+
+```csharp
+public class MyBot : GovernedStrategy
+{
+    protected override void OnEvaluate(SetupEvaluation e)
+    {
+        e.Trigger(close < lower, "long");           // is there a setup at all?
+        e.Gate("adx", adx >= AdxThr, adx, AdxThr);  // a criterion that can BLOCK
+        e.Gate("not_lunch", !inLunch);
+        e.Measure("band_excursion_atr", dist / atr); // a magnitude, never blocks
+    }
+    protected override string GetStrategyName() { return "MyBot"; }
+    protected override void ConfigureStrategy() { /* indicators */ }
+}
+```
+
+That is the whole contract. No orders, no clock, no file handles, no `Print`.
+
+#### Why a base class and not a helper
+
+Ten of the fourteen bots **already** inherit `RiskManagerBase`, and tickets B1–B6
+exist because those same ten hardcoded their own flatten times and trade caps
+anyway. **A default a bot is free to restate is a default it will restate.** The
+distinction that matters:
+
+| | |
+|---|---|
+| a helper the bot **calls** | the bot can log one thing and do another, and nothing notices |
+| a base that **decides** | there is no code path by which an unlogged criterion reaches a trade |
+
+`RiskManagerBase` asks its subclass exactly one question — `CheckForSignal()`,
+returning 1 / −1 / 0. **`GovernedStrategy` seals it.** The return value is
+*computed* from the declared gates rather than supplied alongside them, so a gate
+that is not logged does not exist. `SetupEvaluation` deliberately exposes nothing
+that can enter, exit, move a stop or open a file — enforced by
+`test_the_mandated_structure_cannot_place_an_order`.
+
+#### Ownership — the parent is not ours
+
+ADR-025, one artifact one owner:
+
+| Class | Owner | Responsibility |
+|---|---|---|
+| `RiskManagerBase` | **nt8-riskguard** | the bar loop, brackets, stops, sizing, the risk gates |
+| `GovernedStrategy` | **this repo** (`scripts/ninjatrader/shared/`) | the workflow's rules |
+
+⚠️ There is a **second, tracked copy** of `RiskManagerBase.cs` in this repo under
+`docs/strategies/…/risk_manager_suite/`, carrying three unlanded improvements. It
+is a fork, it is invisible to `sync_nt8_strategies.py` (which allowlists the
+filename as external), and reconciling it is **ticket B9** — a decision, since all
+three change live bot behaviour.
+
+#### What it governs
+
+| # | Rule | How, and why it is not left to the bot |
+|---|---|---|
+| 1 | **ADR-020's 16:00 hard exit** | The frozen defaults are pushed in *before* the bot's `OnStrategyDefaults()`, and the hard-exit clamp is re-applied **after** — so a bot that sets a later flatten time is corrected, not trusted. `BBMRReversionBot` flattened at 16:15 for an unknown period |
+| 2 | **A null cap is `NoLimit` (−1)** | `RiskManagerBase` compares `todayTradeCount >= MaxTradesPerDay`, so `0` reads as *no trades allowed* and `int.MaxValue` vanishes into arithmetic. A null cap is simply **not assigned** |
+| 3 | **Unique entry signal names** | `RiskManagerBase.GetSignalName` returned `"<Strategy>_Long"` for *every* long entry ever taken — and that string is `Execution.Name` on the fill, the only join key back to the decision. Now overridden per entry; the base's `_Queen` / `_Runner` suffixes then give one bracket's legs a shared key, which is exactly what the leg convention needs (was ticket B7) |
+| 4 | **Its own refusals are gates** | Recorded under the frozen names in `trading_defaults.json → governance.gates`, generated into `TradingDefaults.Gate*`. Frozen because the Python reader groups on these strings: a rename on one side alone splits one gate into two rows that never compare |
+| 5 | **`CanEnterTrade`'s nine refusals** | gatekeeper · account blown · done for day · paused after consecutive losses · max trades · two time fences · two daily-loss limits. Each was computed and surfaced **only** under `DebugMode && CurrentBar % 100 == 0` — off by default, 1% of bars when on. So a bot that quietly stopped trading had nine possible causes and no record of which. `OnEntryBlocked` (added upstream, gated by `check_entry_refusals_reported.py` with five negative controls) turns each into a logged gate |
+
+Rule 5 is the C# half of the funnel gap §11 item 13 records for Python. **A refusal a
+consumer cannot read is indistinguishable from the strategy simply not having a
+setup.**
+
+#### Instrumentation is the default; the exceptions are a shrinking list 🟢 ENFORCED
+
+Fifteen strategies are registered and **one** is instrumented, so a blanket rule
+would fail fourteen times and be switched off within a day. Instead
+`tests/uninstrumented.py` freezes the population, and
+`tests/test_instrumentation.py` enforces:
+
+* a strategy **not** on the list that emits no decision log **fails**
+* one on the list that now emits one **must lose its line**
+* so a **new** strategy is instrumented from its first commit, because there is
+  nowhere to add it without saying so in the same edit
+
+The Python check is **behavioural** — it calls `hunt()` and looks at
+`last_decisions`, because an import of `GateRecorder` that is never called would
+pass a source scan. The C# check is a source scan for the *derivation*, and that
+is sound precisely because `CheckForSignal()` is sealed: deriving is the whole
+condition.
+
 ---
 
 ## 6. Step 5 — Compare
@@ -1247,7 +1335,9 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | 13 | **The engine's own gates are not instrumented.** The decision log records the **hunter's** criteria. `nt8_parity_backtester` applies its own — `earliest_entry_hhmm=945`, `latest_entry_hhmm=1530`, `max_trades_per_day`, a consecutive-loser pause, a daily loss limit — and none reaches the log. Measured: **3,188 hunter entries became 16 trades**, a 200:1 reduction the log cannot explain. The report *names* the gap (§7.1a) rather than hiding it, but until these emit `REJECTED` rows the funnel is only half explained. Same `GateRecorder`, applied in the engine loop | code |
 | 14 | **`mae_points` / `mfe_points` are identically zero** on every Python trade — present, dead, and previously reported as a measurement. The excursion stage is not populating the trade frame. Blocks question 2 of §7.1a on the Python side (the NT8 side is fixed by §5.6) | code |
 | 15 | **A bot's entry signal names must be unique per entry.** `entryName` is the join key from a fill to the decision log; a constant name makes every entry indistinguishable downstream. Not yet audited across the twelve bots — filed as **B7** in [BOT_FIX_BACKLOG.md](BOT_FIX_BACKLOG.md) | code |
-| 16 | **Instrument the twelve C# bots.** `DecisionLog.cs` is generated and committed but **no bot calls it yet**, so every roster diff is currently one-sided. Filed as **B8**; needs a recompile, which is the user's call | **user** (deploy) |
+| 16 | **Migrate the fourteen C# bots onto `GovernedStrategy`** (§5.7). The base class, the mandated `SetupEvaluation`, the frozen governance gate names and the two upstream hooks all exist and are gated; **no bot derives from it yet**, so every roster diff is one-sided until one does. Filed as **B8**, and the population is frozen in `tests/uninstrumented.py` so it can only shrink. Needs a recompile | **user** (deploy) |
+| 17 | **A forked `RiskManagerBase`** with three unlanded improvements lives in `docs/strategies/…/risk_manager_suite/` while nt8-riskguard owns the canonical copy (ADR-025). All three change live bot behaviour, so which version wins is a decision. **B9**; `test_base_class_ownership.py` holds the fork shrink-only meanwhile | **user** |
+| 18 | **Instrument the fourteen uninstrumented hunters** (§5.7). `mean_reversion` is the reference; the rest are frozen in `tests/uninstrumented.py`. Each one is small, and each is where a strategy's real gate roster becomes visible for the first time | code |
 
 ### 11.1 The remaining build order
 

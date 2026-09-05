@@ -191,6 +191,46 @@ the output window, which is data that exists and cannot be addressed.
 
 ---
 
+## B9 — a forked `RiskManagerBase` with unlanded work 🔴 **needs a decision, not a fix**
+
+| | |
+|---|---|
+| **Canonical** | `nt8-riskguard` → `strategies/Vinay/RiskManagerBase.cs` (ADR-025 owner) |
+| **Fork** | `docs/strategies/ninjatrader/risk_manager_suite/RiskManagerBase.cs` (this repo, tracked) |
+| **Found by** | tracing what `GovernedStrategy` inherits (§5.7) |
+| **Gate** | `tests/test_base_class_ownership.py` — shrink-only on fork-only lines |
+
+Two copies exist. **The canonical one and the DEPLOYED one are byte-identical**, so
+the live bots run canonical — and the fork carries **three improvements that have
+never shipped**:
+
+1. a configurable `SecondaryTimeframeMinutes` (default 15) replacing a hardcoded
+   `AddDataSeries(BarsPeriodType.Minute, 5)`
+2. `ConfigureStrategy()` called **before** `AddDataSeries` rather than after —
+   which is what lets a subclass influence which series is added, and is a
+   prerequisite for (1)
+3. a breakeven trigger that also fires on the bar's high/low (`Highs[0][0] >= …`)
+   and checks whether the queen leg actually filled, instead of testing the close
+   alone
+
+**This is a decision, not a defect.** All three change live bot behaviour, so
+whose version wins is not mine to choose. What is *not* in question is that two
+copies must not both exist: the fork sits outside all three directories
+`sync_nt8_strategies.py` scans, so `--verify` reports `0 orphan(s)` and never
+compares it to anything — a second source of truth with a lower profile.
+
+⚠️ **Do not "fix" this by syncing either direction blind.** A drift report does not
+say which side is stale, and here the answer differs per hunk: the fork is *ahead*
+on those three changes and *behind* on the two hooks added upstream 2026-09-05
+(nine `return false;` now routed through `Blocked`, `GetSignalName` now virtual).
+
+**Suggested resolution**: land (1)–(3) in `nt8-riskguard` through its own suite and
+mutation batteries, bump the bridge's pin, then delete the fork and let the
+allowlisted vendored copy be the only one. Each of the three wants its own commit —
+(3) changes when a stop moves on a live position.
+
+---
+
 ## Not a bot defect, recorded here so it is not re-filed
 
 - **`FailedAuctionBot` and `VWAPReclaimBot` already match** the frozen defaults

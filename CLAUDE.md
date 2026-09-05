@@ -37,6 +37,16 @@ paired `BBMRReversionBot` has 20 parameters, so they are two strategies and no r
 between them means anything. Record *every* gate (not the first failure), record the *value*,
 and use `measure()` for a magnitude.
 
+**A new C# bot inherits `GovernedStrategy`** (§5.7), implements
+`OnEvaluate(SetupEvaluation e)` and writes no logging code. `CheckForSignal()` is
+**sealed** and the verdict is computed from the declared gates, so an unlogged criterion
+cannot reach a trade — that is the difference from a helper the bot may ignore, which is
+what the ten bots inheriting `RiskManagerBase` directly demonstrate (B1–B6). The base also
+owns ADR-020's hard exit, the frozen defaults, unique entry names, and logging
+`CanEnterTrade`'s nine previously-invisible refusals. Instrumentation is enforced by a
+**shrink-only** inventory (`tests/uninstrumented.py`), so a new strategy is instrumented
+from its first commit.
+
 Three things to carry even if nothing else is read:
 * **NT8 is authoritative for behaviour.** When Python and NT8 disagree, presume Python is wrong.
 * **Parity is defined on the TRADE SET**, and judged on trade **geometry** (signed points travelled), not absolute price — a constant price offset *is* the adjustment basis, so back-adjustment is not a gate.
