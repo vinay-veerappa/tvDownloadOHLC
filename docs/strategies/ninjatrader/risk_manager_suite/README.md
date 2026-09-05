@@ -1,163 +1,58 @@
-# NinjaTrader 8 Risk Manager Strategy Suite
+# Risk Manager Suite — moved. This is a pointer, not an implementation.
 
-This folder implements the NinjaTrader plan with one abstract base class,
-three concrete strategies, a shared risk gatekeeper, and a monitoring AddOn.
+**Nothing in this folder is source any more.** The suite was split out on 2026-08-12
+and the last local copy of `RiskManagerBase.cs` was deleted on 2026-09-05. Where
+everything actually lives:
 
-## File Overview
+| Artifact | Owner | Path |
+|---|---|---|
+| `RiskManagerBase.cs` | **nt8-riskguard** | `strategies/Vinay/RiskManagerBase.cs` |
+| `RiskGatekeeper.cs` | **nt8-riskguard** | `strategies/Vinay/RiskGatekeeper.cs` |
+| `IntradayStrategyBase.cs` | **nt8-riskguard** | `strategies/Vinay/IntradayStrategyBase.cs` |
+| `RiskManagerAddOn.cs` | **nt8-riskguard** | `addons/RiskManagerAddOn.cs` |
+| `VWAPReclaimBot.cs` · `EMAPullbackBot.cs` · `FailedAuctionBot.cs` | **this repo** | `scripts/ninjatrader/strategies/<feature>/` |
 
-| File | Role |
-|------|------|
-| `RiskManagerBase.cs` | Abstract base — session/trade management, entry gates, stop logic |
-| `RiskGatekeeper.cs` | Static shared risk registry — per-account state, persistence, recovery |
-| `RiskManagerAddOn.cs` | NinjaTrader AddOn — account discovery, real equity, event wiring |
-| `VWAPReclaimBot.cs` | Concrete strategy — VWAP reclaim/rejection signal |
-| `EMAPullbackBot.cs` | Concrete strategy — EMA pullback continuation signal |
-| `FailedAuctionBot.cs` | Concrete strategy — failed auction single-print fill signal |
+ADR-025: one artifact, one owner. `sync_nt8_strategies.py` allowlists the three
+framework filenames as `EXTERNAL_FRAMEWORK_FILES` because they arrive in NT8
+through the bridge's vendored-core sweep, not from here.
 
----
+## Why the old copy had to go
 
-## Architecture
+It was a **fork**, and it had drifted *ahead* of the file that owns the behaviour —
+carrying three changes that had never shipped, while the canonical copy and the
+deployed copy were byte-identical. So the live bots ran the older logic and this
+one looked authoritative.
 
-```
-RiskManagerAddOn (AddOn)
-  │  Discovers all accounts → excludes configured ones
-  │  Subscribes to AccountItemUpdate (real equity)
-  │  Subscribes to ExecutionUpdate (fills)
-  │  Calls RiskGatekeeper.RegisterAccount / UpdateEquity / RecordTrade / ResetDay
-  │
-  ▼
-RiskGatekeeper (static, thread-safe)
-  │  Per-account: SessionPnL, TodayTradeCount, ConsecutiveLosers,
-  │               IsDoneForDay, IsPaused, AccountEquity, HighWaterMark
-  │  Persists state to JSON per account (MyDocuments/NinjaTrader 8/risk_gatekeeper/)
-  │  Runtime recovery: RecoverFromHistory() replays broker history on stale state
-  │
-  ▼
-RiskManagerBase (abstract Strategy)
-  │  CanEnterTrade() → RiskGatekeeper.CanTrade(Account.Name) first,
-  │                    local backtest flags as fallback when AddOn absent
-  │  OnExecutionUpdate() → RiskGatekeeper.RecordTrade() after closing fill
-  │  ManageOpenTrade()  → RiskGatekeeper.MarkDailyMaxLossBreached() when open PnL limit hit
-  │
-  ▼
-VWAPReclaimBot / EMAPullbackBot / FailedAuctionBot
-     Signal logic only (CheckForSignal returns 1 / -1 / 0)
-```
+It was invisible to every check: it sat outside all three directories
+`sync_nt8_strategies.py` scans, so `--verify` reported `0 orphan(s)` and never
+compared it to anything. And it was the copy a reader working in *this* repo would
+open — a second source of truth with a lower profile.
 
----
+Two live documents pointed at it as "the existing base class to extend", which is
+how it got there and how it stayed.
 
-## What Is Centralised in RiskManagerBase
+The three unlanded changes are recorded, with a recommendation for each, in
+[BOT_FIX_BACKLOG.md](../../../architecture/BOT_FIX_BACKLOG.md) **B9**. Nothing was
+lost; git history has the file.
 
-All non-signal concerns:
+## Do not add a `.cs` back here
 
-- **Session risk**: daily max loss, max trades/day, pause after consecutive losses,
-  hard-stop day lockout
-- **Account risk tracking**: trailing drawdown based on real account equity (via
-  RiskGatekeeper / AddOn)
-- **Trade management**: ATR stop placement, fixed target policy,
-  breakeven + ATR trail policy
-- **Session controls**: earliest/latest entry and flatten-by time fence
-- **Shared utilities**: 5-minute ATR, 5-minute OHLC accessors, time-window checks
+`scripts/trading_framework/tests/test_base_class_ownership.py` fails if a copy of
+`RiskManagerBase.cs` reappears anywhere in this repo, and it also checks that the
+members `GovernedStrategy` needs are still offered at the accessibility it needs
+them at — the only compile check available here, since nothing in this repo builds
+NinjaScript and a broken NT8 Custom assembly is invisible (NT8 keeps running the
+last good one).
 
----
+## What to read instead
 
-## Bug Fixes Applied (v2)
-
-### 1. Stale `tradeIsActive` Blocking Re-Entry
-`FlattenPosition()` now resets `tradeIsActive = false` immediately after issuing
-the exit order. Previously the flag was only cleared in `OnExecutionUpdate`, causing
-`ManageOpenTrade()` to be called on subsequent bars even when the position was flat,
-preventing re-entry for the rest of the bar.
-
-### 2. `OnBarUpdate` Early Return After Forced Flatten
-Previously `ManageOpenTrade()` was always followed by `return`, so if it flattened
-the position (e.g., daily max loss), the entry gate was never evaluated on that bar.
-Now we check `Position.MarketPosition` after `ManageOpenTrade()` and only return if
-still in a position.
-
-### 3. Complete Session State Reset
-`ResetSessionState()` now resets `tradeDirection`, `entryPrice`, `initialStopPrice`,
-`currentStopPrice`, and `riskPoints` in addition to the session counters. Stale values
-from the previous session can no longer bleed into the next entry.
-
-### 4. `OnExecutionUpdate` Entry Fill Guard
-Split the original single guard into two explicit checks: (1) bail if `tradeIsActive`
-is false; (2) bail if `Position.MarketPosition != Flat` (entry fill, position still
-open). This prevents PnL double-counting when entry and exit fills fire on the same bar.
-
----
-
-## Cross-Account Risk (RiskGatekeeper + AddOn)
-
-Previously each strategy instance tracked its own isolated risk state. This meant:
-- A loss on Account A had no effect on Account B
-- Restarting a strategy reset all counters regardless of trades already taken
-- Risk limits were measured against a hardcoded starting balance, not real equity
-
-Now:
-- The AddOn subscribes to **all accounts** by default
-- Accounts with their own strategy-level risk management can be **excluded** via the
-  `ExcludedAccounts` comma-separated parameter (e.g. `"Sim101,MyAlgoAccount"`)
-- Real account equity from the broker is the source of truth for drawdown
-- State is persisted to JSON and survives NinjaTrader restarts
-- On startup, if the persisted state is from a prior day, `RecoverFromHistory()`
-  replays today's broker fills to reconstruct where we stand
-
----
-
-## Strategy Defaults
-
-### VWAPReclaimBot
-- Policy: BreakevenTrail | Stop ATR: 2.0 | BE trigger: 2.0R | Trail ATR: 3.5
-
-### EMAPullbackBot
-- Policy: FixedTarget | Stop ATR: 1.25 | Target: 3.75R
-
-### FailedAuctionBot
-- Policy: BreakevenTrail | Stop ATR: 3.5 | BE trigger: 0.5R | Trail ATR: 1.0
-
----
-
-## Install into NinjaTrader
-
-### Strategies (all three bots + base)
-1. Copy `RiskGatekeeper.cs`, `RiskManagerBase.cs`, `VWAPReclaimBot.cs`,
-   `EMAPullbackBot.cs`, `FailedAuctionBot.cs` to:
-   `Documents\NinjaTrader 8\bin\Custom\Strategies\Vinay\`
-2. Open NinjaScript Editor → compile.
-3. Apply each strategy on a 1-minute chart.
-
-### AddOn
-1. Copy `RiskManagerAddOn.cs` to:
-   `Documents\NinjaTrader 8\bin\Custom\AddOns\`
-2. Compile (same NinjaScript Editor).
-3. Enable: Control Center → Tools → Options → AddOns → ✓ RiskManagerAddOn
-4. Configure `ExcludedAccounts` with any accounts you want to skip.
-
-### State Files
-Persisted JSON state files are stored at:
-`Documents\NinjaTrader 8\risk_gatekeeper\<AccountName>_risk_state.json`
-
-These are safe to delete to force a clean-slate reset for an account.
-
----
-
-## Validation Sequence
-
-1. Visual chart validation on Sim account.
-2. Strategy Analyzer backtests for 6 months (AddOn not active — local fallback gates apply).
-3. Compare trade count, win rate, and PF versus Python research outputs.
-4. Run paper trade burn-in with AddOn enabled before any live deployment.
-5. Verify `risk_gatekeeper/` state files update correctly after each trade.
-6. Kill and restart NinjaTrader mid-session — verify state recovers correctly.
-
----
-
-## Notes
-
-- The AddOn is optional. Without it, strategies fall back to their own local risk state
-  (backward-compatible with backtesting).
-- `AccountBlown` persists across sessions and is NOT reset daily. Delete the JSON state
-  file or manually edit it to clear an account-blown flag.
-- `RiskGatekeeper` is in the `Vinay` namespace alongside the strategies. Both the
-  AddOn (in `AddOns` namespace) and strategies reference it by full namespace.
+* **How to write a bot**: [STRATEGY_WORKFLOW.md §5.7](../../../architecture/STRATEGY_WORKFLOW.md) —
+  a new bot inherits `GovernedStrategy` (`scripts/ninjatrader/shared/`), which is
+  this repo's own layer over `RiskManagerBase` and needs no change to it.
+* **Deploying**: `python scripts/utils/sync_nt8_strategies.py --verify` then without
+  `--verify`. ⚠️ The old version of this README told you to hand-copy `.cs` into
+  `Documents/NinjaTrader 8/bin/Custom/`, which is explicitly prohibited — NT8
+  compiles `Indicators/` recursively and a stray second copy is a duplicate class
+  definition.
+* **The guard's own design**: `docs/RISKGUARD_HARDENING_HANDOVER.md` in
+  nt8-riskguard.

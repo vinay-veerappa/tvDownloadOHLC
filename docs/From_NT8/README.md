@@ -259,7 +259,8 @@ To turn these 34 legacy scripts into an optimized, high-performing trading syste
 
 > [!WARNING]
 > **Priority 3: Risk Management Integration**  
-> Ensure all NT8 strategies use the centralized `RiskManagerBase` pattern (from [`docs/strategies/ninjatrader/risk_manager_suite/`](file:///C:/Users/vinay/tvDownloadOHLC/docs/strategies/ninjatrader/risk_manager_suite/)) to enforce strict daily loss limits, consecutive loss pauses, and 15:45 EST mandatory session flattens.
+> Ensure all NT8 strategies inherit [`GovernedStrategy`](file:///C:/Users/vinay/tvDownloadOHLC/scripts/ninjatrader/shared/GovernedStrategy.cs) (STRATEGY_WORKFLOW.md §5.7), which layers the decision log, the frozen defaults and unique entry names over `RiskManagerBase` — the latter enforcing daily loss limits, consecutive-loss pauses and the mandatory session flatten.
+> ⚠️ `RiskManagerBase` is owned by **nt8-riskguard** (`strategies/Vinay/`), not by this repo (ADR-025). The local copy this line used to point at was a fork; it was deleted 2026-09-05 and the folder now holds only a pointer.
 
 ---
 

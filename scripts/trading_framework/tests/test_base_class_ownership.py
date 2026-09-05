@@ -1,36 +1,32 @@
 """There must be ONE `RiskManagerBase`, and this repo does not own it.
 
 ADR-025, one artifact one owner. `GovernedStrategy` (section 5.7) derives from
-`RiskManagerBase`, which nt8-riskguard owns at `strategies/Vinay/`. It reaches
-NT8 through the bridge's vendored-core sweep, and `sync_nt8_strategies.py`
-allowlists the filename as `EXTERNAL_FRAMEWORK_FILES` for exactly that reason.
+`RiskManagerBase`, which nt8-riskguard owns at `strategies/Vinay/`. It reaches NT8
+through the bridge's vendored-core sweep, and `sync_nt8_strategies.py` allowlists
+the filename as `EXTERNAL_FRAMEWORK_FILES` for exactly that reason.
 
-WHAT THESE TESTS EXIST TO CATCH, found 2026-09-05. A SECOND copy of
-`RiskManagerBase.cs` is tracked in this repo at
-`docs/strategies/ninjatrader/risk_manager_suite/`, and it is **33 diff-lines
-AHEAD of the canonical one**:
+WHAT HAPPENED, AND WHY THESE TESTS EXIST. A SECOND copy was tracked here at
+`docs/strategies/ninjatrader/risk_manager_suite/RiskManagerBase.cs`, and it had
+drifted AHEAD of the file that owns the behaviour -- carrying three changes that
+had never shipped, while the canonical copy and the DEPLOYED copy were
+byte-identical. So the live bots ran the older logic and the fork looked
+authoritative.
 
-  * a configurable `SecondaryTimeframeMinutes` (default 15) replacing a
-    hardcoded `AddDataSeries(Minute, 5)`
-  * `ConfigureStrategy()` called BEFORE `AddDataSeries` rather than after, which
-    is what lets a subclass influence which series gets added
-  * a breakeven trigger that also fires on the bar's high/low, and checks
-    whether the queen leg actually filled
+It was invisible to every check: outside all three directories
+`sync_nt8_strategies.py` scans, so `--verify` reported `0 orphan(s)` and never
+compared it to anything. Two live documents pointed at it as "the existing base
+class to extend", which is how it got there and how it stayed. Deleted 2026-09-05;
+its three changes are recorded with a recommendation each in BOT_FIX_BACKLOG.md B9.
 
-The canonical copy and the DEPLOYED copy are byte-identical, so the live bots run
-the older logic and these three improvements have never shipped. They are real
-work, they are not mine to land -- each changes live bot behaviour -- and the
-question of whose version wins is the user's.
+THE DEEPER FINDING, which reconciling the fork would not have touched:
+`AddSecondaryTimeframe` is a property of the RISK base, ten bots set it, and EIGHT
+set it to `false`. A feature most of its users must switch off is in the wrong
+layer -- and `GetCurrentATR()` reads that secondary series while ATR drives stop
+distance and position size, so a TIMEFRAME choice became load-bearing for a RISK
+calculation. Also B9.
 
-WHY THIS IS WORSE THAN A PLAIN DUPLICATE. The fork is invisible to every existing
-check: it sits outside all three directories `sync_nt8_strategies.py` scans, so
-`--verify` reports `0 orphan(s)` and never compares it to anything. It is also
-the copy a reader working in THIS repo will open, so it is a lower-profile second
-source of truth -- the same shape as an "appendix" that contradicts the canonical
-document.
-
-These tests do not delete it and do not reconcile it. They make it LOUD, and they
-fail if it drifts further.
+These tests hold the line: no copy comes back, and the members `GovernedStrategy`
+needs stay available at the accessibility it needs them at.
 """
 
 import pathlib
@@ -39,28 +35,8 @@ import re
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
-FORK = REPO / "docs" / "strategies" / "ninjatrader" / "risk_manager_suite" / "RiskManagerBase.cs"
 CANON = pathlib.Path.home() / "nt8-riskguard" / "strategies" / "Vinay" / "RiskManagerBase.cs"
 GOVERNED = REPO / "scripts" / "ninjatrader" / "shared" / "GovernedStrategy.cs"
-
-#: FORK-ONLY lines: content present in the fork and absent from canonical.
-#: Measured 2026-09-05 on LF-normalised text.
-#:
-#: DELIBERATELY NOT THE TOTAL DIFF. That was the first metric and it was wrong:
-#: it counted canonical-only lines too, so it ROSE from 33 to 75 the moment a
-#: legitimate upstream edit landed. A debt number that grows when you fix the
-#: right file trains you to ignore it.
-#:
-#: Composition of the 24, stated because the number alone is misleading:
-#:   * 14 are genuine unlanded work -- the configurable `SecondaryTimeframeMinutes`,
-#:     the `ConfigureStrategy()` reordering, and the breakeven improvement
-#:   * 10 are the fork being STALE against the hooks added upstream 2026-09-05
-#:     (nine `return false;` now routed through `Blocked`, and `GetSignalName`
-#:     still private there)
-#:
-#: Shrink-only either way: landing the fork's changes upstream reduces it, and so
-#: does refreshing the fork from canonical.
-KNOWN_FORK_ONLY_LINES = 24
 
 #: The members `GovernedStrategy` needs from its base, with the accessibility it
 #: needs them at. A private or non-virtual one is a compile error that cannot be
@@ -75,10 +51,6 @@ REQUIRED_BASE_MEMBERS = {
     "InitializeStrategy": r"protected\s+abstract\s+void\s+InitializeStrategy",
     "CheckForSignal": r"protected\s+abstract\s+int\s+CheckForSignal",
 }
-
-
-def _lf(p: pathlib.Path) -> list:
-    return p.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n").split("\n")
 
 
 def test_this_repo_does_not_own_the_base_class():
@@ -107,44 +79,70 @@ def test_the_governed_base_only_uses_members_the_canonical_base_offers():
         "nt8-riskguard, not here.".format(sorted(missing)))
 
 
-@pytest.mark.skipif(not CANON.exists(), reason="nt8-riskguard not checked out here")
-def test_the_docs_fork_has_not_drifted_further():
-    """Shrink-only. The fork is real unlanded work, so this does not demand it be
-    deleted -- it demands that nobody adds to it, because every line added is a
-    line that will have to be reconciled by someone who does not remember why.
-    """
-    if not FORK.exists():
-        return                      # reconciled: nothing left to guard
-    import difflib
-    diff = list(difflib.unified_diff(_lf(CANON), _lf(FORK), lineterm="", n=0))
-    # Only FORK-ONLY lines. Counting canonical-only lines as well made the number
-    # rise when the correct file was edited -- see the constant's comment.
-    fork_only = [l for l in diff if l.startswith("+") and not l.startswith("+++")]
-    assert len(fork_only) <= KNOWN_FORK_ONLY_LINES, (
-        "the docs fork of RiskManagerBase.cs now carries {} lines that canonical "
-        "does not (recorded: {}). Someone edited the FORK instead of the file "
-        "that owns the behaviour. Land it in nt8-riskguard and shrink this "
-        "number; see BOT_FIX_BACKLOG.md B9.\nNew fork-only content:\n{}".format(
-            len(fork_only), KNOWN_FORK_ONLY_LINES,
-            "\n".join("  " + l[1:].strip() for l in fork_only[:12])))
+def test_the_fork_stays_deleted():
+    """It was removed 2026-09-05. A `.cs` reappearing anywhere in this repo is a
+    second owner returning, and the last one took three unshipped changes and two
+    misleading doc pointers with it."""
+    copies = [p.relative_to(REPO).as_posix()
+              for p in REPO.rglob("RiskManagerBase.cs")
+              if ".git" not in p.parts]
+    assert not copies, (
+        "RiskManagerBase.cs is back in this repo at {}. nt8-riskguard owns it "
+        "(ADR-025). If a change is needed, make it THERE and bump the bridge "
+        "pin -- a copy here is invisible to sync_nt8_strategies.py, which "
+        "allowlists the filename as external and will report 0 orphans."
+        .format(copies))
 
 
-@pytest.mark.skipif(not CANON.exists(), reason="nt8-riskguard not checked out here")
-def test_the_fork_is_recorded_as_a_ticket_not_just_tolerated():
-    """An inventory with no ticket behind it is a permanent exemption. This is
-    how B1-B6 avoided becoming one."""
-    if not FORK.exists():
-        return
+def test_the_folder_that_held_it_points_somewhere_useful():
+    """A deleted file leaves readers who followed a link to it. Two live docs
+    named it as the base class to extend, so the folder keeps a pointer rather
+    than becoming a 404."""
+    readme = (REPO / "docs" / "strategies" / "ninjatrader" / "risk_manager_suite"
+              / "README.md")
+    assert readme.exists(), "the pointer README must survive the deletion"
+    text = readme.read_text(encoding="utf-8")
+    assert "nt8-riskguard" in text
+    assert "GovernedStrategy" in text, (
+        "the pointer must name what to inherit INSTEAD, or a reader arrives and "
+        "still does not know what to do")
+
+
+def test_nothing_live_still_points_at_the_deleted_fork():
+    """Dated handover records may keep their references -- they describe what was
+    true when written. A CURRENT document telling someone to extend a file that
+    no longer exists is a different thing."""
+    stale = []
+    for md in (REPO / "docs").rglob("*.md"):
+        if "HANDOVER" in md.name or "SESSION_" in md.name:
+            continue                      # dated records, deliberately intact
+        body = md.read_text(encoding="utf-8", errors="replace")
+        if "risk_manager_suite/RiskManagerBase.cs" in body:
+            stale.append(md.relative_to(REPO).as_posix())
+    assert not stale, (
+        "these current documents still point at the deleted fork: {}. Point them "
+        "at scripts/ninjatrader/shared/GovernedStrategy.cs instead.".format(stale))
+
+
+def test_the_three_deleted_changes_are_still_recorded():
+    """The fork is gone, so this ticket is the ONLY record of what it carried,
+    outside git history. Deleting the file without the record would lose a
+    breakeven fix that no test covers."""
     backlog = (REPO / "docs" / "architecture" / "BOT_FIX_BACKLOG.md").read_text(
         encoding="utf-8")
-    assert "RiskManagerBase" in backlog, (
-        "the forked base class must have a ticket in BOT_FIX_BACKLOG.md naming "
-        "the three unlanded changes, or nothing will ever reconcile it")
+    assert "## B9" in backlog
+    for change in ("SecondaryTimeframeMinutes", "ConfigureStrategy", "Breakeven"):
+        assert change in backlog, (
+            "B9 must still name the {!r} change the deleted fork carried, with a "
+            "recommendation -- it is the only record left".format(change))
+    assert "AddSecondaryTimeframe" in backlog, (
+        "B9 must record the LAYERING finding, not just the reconciliation: a "
+        "risk-base property that eight of its ten users switch off")
 
 
 def test_the_governed_base_declares_which_repo_owns_its_parent():
-    """A reader who does not know the parent lives elsewhere will edit the fork.
-    That is precisely how the fork got 33 lines ahead."""
+    """A reader who does not know the parent lives elsewhere will edit a local
+    copy. That is precisely how the deleted fork came to exist."""
     text = GOVERNED.read_text(encoding="utf-8")
     assert "nt8-riskguard" in text
     assert "ADR-025" in text

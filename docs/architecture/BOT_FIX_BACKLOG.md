@@ -140,94 +140,111 @@ mean deciding the convention on the cases that matter least.
 
 ---
 
-## B7 — no bot emits a unique entry signal name 🔴 blocks all attribution
+## B7+B8 — migrate every bot onto `GovernedStrategy` 🔴 one edit, not two
 
 | | |
 |---|---|
-| **Bots** | all twelve |
-| **Found by** | building the decision-log join (STRATEGY_WORKFLOW.md §5.5) |
+| **Bots** | all fourteen (frozen in `tests/uninstrumented.py`, shrink-only) |
+| **Base** | `scripts/ninjatrader/shared/GovernedStrategy.cs` (STRATEGY_WORKFLOW.md §5.7) |
 
-`entryName` — `Execution.Name` on the entry fill — is the **join key** from an NT8 fill to
-the strategy's own decision log. A bot that names every entry `"long"` makes all its entries
-indistinguishable downstream, and the reporting falls back to a nearest-entry-time join that
-is approximate **by construction**: a decision is a *bar* time and a fill can be the next
-bar's open.
+**These were two tickets and are now one, because one edit closes both.** B7 was
+"emit a unique entry signal name" and B8 was "call the decision log" — both were
+written as per-bot recipes before the base class existed, and both are now
+supplied by inheriting it. Keeping them separate would have had an agent
+hand-write machinery that already exists.
 
-Give each entry a unique name — `<tag>_<L|S>_<counter>` — and pass the same string to
-`DecisionBuilder.Entry(signalName)`. **Audit before editing**: some bots may already do this.
+Per bot the migration is: change the base to `GovernedStrategy`, move the signal
+logic from `CheckForSignal()` into `OnEvaluate(SetupEvaluation e)`, and move
+`SetStrategyDefaults()` overrides into `OnStrategyDefaults()`. Everything else
+follows — the log, the frozen defaults, the unique per-entry name, and the
+recording of the framework's own refusals.
 
-⚠️ The exit-reason tally depends on exit order names; do not rename exits while doing this,
-or `exitName` grouping changes silently and every historical comparison shifts.
+**Declare every gate the bot already has**, including the ones behind a `Use*Gate`
+bool: a disabled gate that is still *recorded* as passing is how you discover the
+flag was off. ⚠️ Read §5.5 rules 2 and 6 before writing the calls — `&&`
+short-circuits, so the conditions must be lifted out of the existing `if` chain
+deliberately rather than copied, and a magnitude belongs in `Measure` not `Gate`.
 
----
+**Start with `BBMRReversionBot`**: it is the bot in the pair that motivated all of
+this, and its existing per-bar dump (`%TEMP%/bbmr_diag_<guid>.csv`) already names
+most of its gates in 22 columns. **Delete that dump in the same edit** — a GUID
+path printed only to the NT8 output window is data that exists and cannot be
+addressed.
 
-## B8 — no bot writes a decision log 🔴 every roster diff is one-sided
-
-| | |
-|---|---|
-| **Bots** | all twelve |
-| **Shared class** | `scripts/ninjatrader/shared/DecisionLog.cs` — **generated and committed, called by nothing** |
-
-Until a bot calls it, `compare_rosters` has a Python roster and an empty NT8 one, so the
-cheapest parity check in the workflow (§5.5) cannot run in the direction that matters —
-*which criteria does the bot evaluate that the hunter does not*.
-
-Per bot: construct in `State.DataLoaded`, `Print(log.Banner())` once, `Skip()` on a bar with
-no setup, `Decision(...).Gate(...).Entry(name)` / `.Reject()` at the decision, `Dispose()` in
-`OnTermination`. **Add every gate the bot already has**, including the ones behind a
-`Use*Gate` bool — a disabled gate that still gets recorded as passing is how you find out the
-flag was off.
-
-⚠️ **Read rules 2 and 6 in §5.5 before writing the calls.** `&&` short-circuits, so the gates
-must be evaluated deliberately rather than lifted out of the existing `if`; and a magnitude
-recorded as a `Gate` instead of a `Measure` has a structural 0% failure rate.
-
-**Start with `BBMRReversionBot`** — it is the bot in the pair that motivated all of this, and
-it already writes a per-bar dump (`%TEMP%/bbmr_diag_<guid>.csv`) whose 22 columns name most
-of the gates. **Delete that dump in the same edit**: it goes to a GUID path printed only to
-the output window, which is data that exists and cannot be addressed.
+⚠️ Do not rename **exit** order names while doing this. The exit-reason tally
+groups on them, and a rename shifts every historical comparison silently.
 
 ⚠️ Needs a recompile. **Do not deploy** — say so and stop.
 
 ---
 
-## B9 — a forked `RiskManagerBase` with unlanded work 🔴 **needs a decision, not a fix**
+## B9 — a strategy concern living in the risk manager 🔴 **architecture, not a bug**
 
 | | |
 |---|---|
-| **Canonical** | `nt8-riskguard` → `strategies/Vinay/RiskManagerBase.cs` (ADR-025 owner) |
-| **Fork** | `docs/strategies/ninjatrader/risk_manager_suite/RiskManagerBase.cs` (this repo, tracked) |
-| **Found by** | tracing what `GovernedStrategy` inherits (§5.7) |
-| **Gate** | `tests/test_base_class_ownership.py` — shrink-only on fork-only lines |
+| **Owner** | `nt8-riskguard` → `strategies/Vinay/RiskManagerBase.cs` (ADR-025) |
+| **Found by** | tracing what `GovernedStrategy` inherits, then counting who uses it |
+| **Fork** | **deleted from this repo 2026-09-05**; the folder now holds a pointer |
 
-Two copies exist. **The canonical one and the DEPLOYED one are byte-identical**, so
-the live bots run canonical — and the fork carries **three improvements that have
-never shipped**:
+### The measurement that settles it
 
-1. a configurable `SecondaryTimeframeMinutes` (default 15) replacing a hardcoded
-   `AddDataSeries(BarsPeriodType.Minute, 5)`
-2. `ConfigureStrategy()` called **before** `AddDataSeries` rather than after —
-   which is what lets a subclass influence which series is added, and is a
-   prerequisite for (1)
-3. a breakeven trigger that also fires on the bar's high/low (`Highs[0][0] >= …`)
-   and checks whether the queen leg actually filled, instead of testing the close
-   alone
+`AddSecondaryTimeframe` is a property of `RiskManagerBase`. **Ten bots set it and
+eight of them set it to `false`:**
 
-**This is a decision, not a defect.** All three change live bot behaviour, so
-whose version wins is not mine to choose. What is *not* in question is that two
-copies must not both exist: the fork sits outside all three directories
-`sync_nt8_strategies.py` scans, so `--verify` reports `0 orphan(s)` and never
-compares it to anything — a second source of truth with a lower profile.
+| Sets it `true` | Sets it `false` |
+|---|---|
+| `BBMRReversionBot`, `ICTFVGCISDBot` | `Bandits8020Bot`, `EMAPullbackBot`, `FailedAuctionBot`, `IBFadeBot`, `IBStrategyBase`, `STTrendBot`, `Strat212ContinuationBot`, `Strat22RevStratBot` |
 
-⚠️ **Do not "fix" this by syncing either direction blind.** A drift report does not
-say which side is stale, and here the answer differs per hunk: the fork is *ahead*
-on those three changes and *behind* on the two hooks added upstream 2026-09-05
-(nine `return false;` now routed through `Blocked`, `GetSignalName` now virtual).
+A feature in a base class that **most of its users must switch off** is in the
+wrong layer. And it is not one property — it leaks into the base in seven places:
+the `AddDataSeries` call, `atrIndicator` construction, the `BarsInProgress` guard,
+the `CurrentBars[1]` warm-up check, `GetCurrentATR()`, and the three
+`Close5m`/`High5m`/`Low5m` helpers that **throw** when the flag is false.
 
-**Suggested resolution**: land (1)–(3) in `nt8-riskguard` through its own suite and
-mutation batteries, bump the bridge's pin, then delete the fork and let the
-allowlisted vendored copy be the only one. Each of the three wants its own commit —
-(3) changes when a stop moves on a live position.
+### Why it ended up there
+
+`AddDataSeries` may only be called during `State.Configure`, and
+`RiskManagerBase` owns `OnStateChange`. So the base owned the only place a data
+series could be added, and the answer was to put the knob in the base rather than
+to give the strategy a hook that runs at the right moment.
+
+**The real coupling is worse than the knob.** `GetCurrentATR()` lives in the base
+and reads the *secondary* series, and ATR drives stop distance and position size.
+So a **timeframe** choice became load-bearing for a **risk** calculation: turning
+the flag off changes risk behaviour, and the base's own doc comment says
+"subclasses MUST override" `GetCurrentATR()` when it is false. That is the
+dependency to break, and it runs risk → ATR → data series.
+
+### The fix
+
+`ConfigureStrategy()` is **already** called during `State.Configure`, so a
+strategy can call `AddDataSeries` itself today. The knob is pure redundancy.
+
+1. Delete `AddSecondaryTimeframe`, `SecondaryTimeframeMinutes`, the
+   `AddDataSeries` call, and the `Close5m`/`High5m`/`Low5m` helpers from the base.
+2. Move `AddDataSeries` into each strategy's own `ConfigureStrategy()` — two
+   strategies need it.
+3. Make ATR a **strategy-supplied input** to the risk layer rather than something
+   the risk layer computes from a series it chose. That removes the last reason
+   the base needs to know about bars at all.
+
+⚠️ Step 3 changes stop distances and position sizes, so it changes live behaviour.
+One commit each, through nt8-riskguard's own suite and mutation batteries.
+
+### The three changes the deleted fork carried
+
+Recorded so nothing is lost (git history has the file). Each needs a decision,
+and they are **not** all improvements:
+
+| # | Change | Recommendation |
+|---|---|---|
+| 1 | `SecondaryTimeframeMinutes` (int, default 15) replacing the hardcoded `AddDataSeries(Minute, 5)` | **Do not land.** It widens the layering violation above. Fix by moving the call to the strategy instead |
+| 2 | `ConfigureStrategy()` moved **before** the `AddDataSeries` block | **Land it** — a prerequisite for the fix, and it is what lets a subclass add its own series |
+| 3 | Breakeven fires on `queenFilled` (position reduced to 1) **or** the bar's high/low touching `entry ± queenPts`, instead of the close alone | **Land it, on its own, with a test.** The close-only check misses an intrabar touch, so the runner's stop stays at risk through a bar that reached the target. It moves a stop on a live position — the most consequential change of the three |
+
+Everything else in that fork's diff was it being **stale**, not ahead: nine
+`return false;` that upstream now routes through `Blocked`, and a `GetSignalName`
+still `private` there.
 
 ---
 
@@ -244,16 +261,49 @@ allowlisted vendored copy be the only one. Each of the three wants its own commi
 
 ## The loop prompt
 
-Paste this with `<TICKET>` replaced by one ID above. It deliberately asks for the
-measurement *before* the edit, because the decision of what the value should be
-is not obvious from the bot alone.
+Paste this with `<TICKET>` replaced by one ID above. Two things it deliberately
+asks for before any edit:
+
+* **the measurement**, because what a value *should* be is not obvious from the bot
+  alone; and
+* **a first-principles read of the layer the change belongs in**, because this code
+  evolved and the ticket text may name the wrong fix. B9 is the worked example: it
+  was filed as "reconcile a forked base class" and the real finding was a strategy
+  concern living in the risk manager, which no amount of reconciling addresses.
+  B7 and B8 are the other kind — two tickets that collapsed into one edit once the
+  base class existed, and working them separately would have hand-written
+  machinery that was already there.
+
+**Redundancy is in scope. Say so and remove it rather than working around it.**
 
 ```text
 Work ticket <TICKET> from docs/architecture/BOT_FIX_BACKLOG.md.
 
 Read docs/architecture/STRATEGY_WORKFLOW.md first -- it is the canonical
-procedure and section 1.3 defines which execution defaults are frozen,
-overridable, or analysis-derived.
+procedure. Section 1.3 defines which execution defaults are frozen,
+overridable or analysis-derived; section 5.5 defines the decision log and its
+six rules; section 5.7 defines GovernedStrategy and what it already supplies.
+
+0. FIRST PRINCIPLES, BEFORE ANYTHING ELSE. Do not start from the ticket's
+   proposed fix. Answer these and say so in your reply:
+     * WHICH LAYER does this concern belong in? A strategy concern in the risk
+       base, or a risk concern in a strategy, is the defect -- not the symptom
+       the ticket describes. Ownership: nt8-riskguard owns RiskManagerBase,
+       RiskGatekeeper and IntradayStrategyBase; this repo owns GovernedStrategy
+       and the bots. ADR-025 is one artifact, one owner.
+     * IS IT ALREADY SUPPLIED? GovernedStrategy already gives every bot the
+       decision log, the frozen defaults, ADR-020's hard exit, unique entry
+       names and the logging of framework refusals. If the ticket asks you to
+       write any of those per bot, the ticket is stale -- say so and inherit
+       instead.
+     * WHAT IS REDUNDANT HERE? Count the readers of the value you are about to
+       change. A knob most callers must switch off, a default restated in ten
+       bots, or two tickets that are one edit, are all signals the design is
+       wrong rather than the value.
+     * WOULD THIS NEED A CHANGE TO RiskManagerBase? If yes, stop and justify
+       it. Needing a base-class change per strategy means the extension point
+       is missing or in the wrong place -- propose the extension point, do not
+       add a strategy-specific branch to a shared class.
 
 1. MEASURE BEFORE EDITING. Run the Python side and read the trade-ordinal
    report, which is what decides a trade cap:
@@ -261,6 +311,8 @@ overridable, or analysis-derived.
         --strategy <key> --ticker NQ1 --price-adjustment unadjusted
    Record the run id, the promotion checklist, and the suggested cap WITH its
    sample size. If the sample is below 20, say so and do not set a cap from it.
+   Read the gate roster and the win/loss sections too: they say which criterion
+   is actually costing money, which the ticket text cannot.
 
 2. STATE what the value should be and why, before changing anything. If the bot
    and the Python side disagree, name which one you are changing and what
@@ -268,19 +320,29 @@ overridable, or analysis-derived.
    presumption is that Python is wrong -- but a bot that structurally cannot be
    predicted is a bot defect.
 
-3. EDIT the bot. Prefer TradingDefaults.<Field> over a literal. Never exceed
-   TradingDefaults.RthHardExit; that one is a safety limit (ADR-020).
+3. EDIT. Prefer inheriting GovernedStrategy over writing machinery, and
+   TradingDefaults.<Field> over a literal. Never exceed
+   TradingDefaults.RthHardExit; that one is a safety limit (ADR-020) and the
+   base re-clamps it after your defaults run.
 
-4. REMOVE the bot's line from
-   scripts/trading_framework/tests/known_bot_divergences.py if it now matches,
-   or update the recorded tuple if it moved but still differs. The test refuses
-   a stale entry, so this is not optional.
+4. UPDATE THE INVENTORIES. They are shrink-only and the tests refuse a stale
+   entry, so this is not optional:
+     * scripts/trading_framework/tests/known_bot_divergences.py -- remove the
+       bot's line if it now matches, or update the tuple if it moved.
+     * scripts/trading_framework/tests/uninstrumented.py -- remove the bot from
+       UNINSTRUMENTED_BOTS once it derives from GovernedStrategy.
 
 5. RE-RUN the workflow and diff the two promotion checklists. Report what
    changed and why. A changed backtest is expected; an UNEXPLAINED change is the
    failure.
 
 6. Run .\.venv\Scripts\python.exe tools\ci_local.py and paste the summary.
+
+If the work belongs in nt8-riskguard, do it THERE, run its suite the way CI does
+(`dotnet build tests/RiskGuardTests.csproj` then
+`dotnet run --project tests/RiskGuardTests.csproj --no-build`), and say that the
+bridge pin needs bumping. Do not add a second copy of a file this repo does not
+own -- that is exactly how B9 happened.
 
 Do not deploy to NT8 and do not recompile: a recompile wipes every static
 singleton in a live instance, and whether that is acceptable is the user's call.

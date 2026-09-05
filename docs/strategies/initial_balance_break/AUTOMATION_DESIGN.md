@@ -126,7 +126,12 @@ inherits Phases 4, 5, 10, 11 for free.
 - `docs/strategies/initial_balance_break/EDGE_VALIDATION_REPORT.md` — all validated metrics
 - `docs/strategies/initial_balance_break/STRATEGY_COMPENDIUM.md` — all IF/THEN/ELSE rules
 - `docs/strategies/initial_balance_break/STATISTICAL_DISCOVERY_PLAN.md` — coverage status (19 of 22 done)
-- `docs/strategies/ninjatrader/risk_manager_suite/RiskManagerBase.cs` — the existing base class to extend
+- `scripts/ninjatrader/shared/GovernedStrategy.cs` — **the base class to extend**
+  (STRATEGY_WORKFLOW.md §5.7). It supplies the decision log, the frozen defaults and
+  unique entry names, and it needs no change to inherit from.
+  ⚠️ Do **not** extend `RiskManagerBase` directly and do not edit it: nt8-riskguard
+  owns it (ADR-025), and the local copy this line used to name was a fork that had
+  drifted ahead of the deployed one. It was deleted 2026-09-05.
 - `scripts/edgeful/ib_pilot_stats.py` — the Python reference implementation (all derived fields)
 - `scripts/edgeful/ib_pilot_durations.py` — the multi-duration comparison logic
 
