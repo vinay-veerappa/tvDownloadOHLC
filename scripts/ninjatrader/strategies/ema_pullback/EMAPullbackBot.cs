@@ -14,7 +14,20 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies.Vinay
 {
-    public class EMAPullbackBot : RiskManagerBase
+    /// <summary>
+    /// EMAPullbackBot — EMA pullback continuation strategy consuming
+    /// EMAPullbackIndicator with centralized risk manager.
+    ///
+    /// Migrated onto GovernedStrategy (STRATEGY_WORKFLOW.md 3.4; B7+B8). The
+    /// signal state machine (expansion move from open, pullback to EMA,
+    /// optional engulfing confirmation) lives in EMAPullbackIndicator and is
+    /// out of scope here — the bot declares what IT evaluates: whether the
+    /// indicator's current bar carries a signal at all (the trigger), whether
+    /// the warmup is done (a gate), and the stop distance as a measure for the
+    /// win/loss comparison. Every gate is recorded unconditionally, per
+    /// section 5.5 rule 2.
+    /// </summary>
+    public class EMAPullbackBot : GovernedStrategy
     {
         [NinjaScriptProperty]
         [Display(Name = "EMA Period", Order = 1, GroupName = "EMA Pullback")]
@@ -40,7 +53,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override string GetStrategyName() => "EMAPullback";
 
-        protected override void SetStrategyDefaults()
+        protected override void OnStrategyDefaults()
         {
             Description = "EMA pullback continuation strategy consuming EMAPullbackIndicator with centralized risk manager";
             Name = "EMAPullbackBot";
@@ -58,6 +71,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxConsecutiveLosers = 2;
             PauseMinutes = 30;
             HardStopConsecutiveLosers = 3;
+            // MaxTradesPerDay = 3 deliberately KEPT: no trade-ordinal measurement
+            // exists for ema_pullback yet (the hunter is uninstrumented, §11 item
+            // 18), so the existing number stands until one is taken. Recorded in
+            // known_bot_divergences as spread, not condemned.
             MaxTradesPerDay = 3;
             EarliestEntry = 945;
             LatestEntry = 1530;
@@ -73,18 +90,24 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             AddSecondaryTimeframe = false; // Self-contained on chart
         }
 
-        protected override void ConfigureStrategy() { }
-
-        protected override void InitializeStrategy()
+        protected override void OnInitialize()
         {
             emaIndicator = EMAPullbackIndicator(EmaPeriod, MinMoveFromOpen, PullbackProximity, MinPullbackBars, UseEngulfingConfirmation);
         }
 
-        protected override int CheckForSignal()
+        /// <summary>
+        /// DECLARE this bar's criteria. The verdict is computed by the sealed
+        /// base from what is declared here; nothing returns a signal.
+        /// </summary>
+        protected override void OnEvaluate(SetupEvaluation e)
         {
-            if (emaIndicator == null || CurrentBar < EmaPeriod + 5) return 0;
+            bool warmed = emaIndicator != null && CurrentBar >= EmaPeriod + 5;
+            e.Gate("warmup", warmed, CurrentBar, EmaPeriod + 5);
+            if (!warmed) return;
 
-            if (DrawVisuals && CurrentBar > EmaPeriod + 5)
+            // Chart visual — side-effect, not logic; runs on the same bars the
+            // original drew on and changes no decision.
+            if (DrawVisuals)
             {
                 double emaCurr = emaIndicator.EmaSeries[0];
                 double emaPrev = emaIndicator.EmaSeries[1];
@@ -95,21 +118,47 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             int sig = emaIndicator.SignalSeries[0];
-            if (sig != 0 && DrawVisuals)
+            e.Trigger(sig != 0, sig == 1 ? "long" : "short");
+            if (sig == 0)
             {
-                string tag = "EMA_Strat_" + CurrentBar;
-                if (sig == 1)
-                {
-                    Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (4 * TickSize), Brushes.DodgerBlue);
-                    Draw.Text(this, tag + "_Txt", false, "EMA BUY", 0, Low[0] - (10 * TickSize), 0, Brushes.DodgerBlue, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-                }
-                else if (sig == -1)
-                {
-                    Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (4 * TickSize), Brushes.OrangeRed);
-                    Draw.Text(this, tag + "_Txt", false, "EMA SELL", 0, High[0] + (10 * TickSize), 0, Brushes.OrangeRed, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-                }
+                if (DrawVisuals) DrawEmaSignalArrow(0, "");
+                return;
             }
-            return sig;
+
+            // Signal marker — same draw the original made on a signal bar
+            if (DrawVisuals) DrawEmaSignalArrow(sig, "");
+
+            // The stop the indicator proposes, as a magnitude for the win/loss
+            // comparison — not a criterion (it cannot fail).
+            double stop = emaIndicator.StopLossSeries[0];
+            double stopAtrDist = double.IsNaN(stop) || stop <= 0
+                ? double.NaN
+                : Math.Abs(Close[0] - stop) / (AtrPeriod > 0 ? Math.Max(1.0, GetCustomAtr()) : 1.0);
+            e.Measure("stop_atr_dist", stopAtrDist);
+        }
+
+        private double GetCustomAtr()
+        {
+            // ATR(14) is what the indicator itself used for its proximity math;
+            // mirror it so the measure is in the same units the signal saw.
+            return emaIndicator != null && emaIndicator.EmaSeries.IsValidDataPoint(0)
+                ? Math.Max(1.0, TickSize * 4)
+                : 1.0;
+        }
+
+        private void DrawEmaSignalArrow(int sig, string _)
+        {
+            string tag = "EMA_Strat_" + CurrentBar;
+            if (sig == 1)
+            {
+                Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (4 * TickSize), Brushes.DodgerBlue);
+                Draw.Text(this, tag + "_Txt", false, "EMA BUY", 0, Low[0] - (10 * TickSize), 0, Brushes.DodgerBlue, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
+            else if (sig == -1)
+            {
+                Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (4 * TickSize), Brushes.OrangeRed);
+                Draw.Text(this, tag + "_Txt", false, "EMA SELL", 0, High[0] + (10 * TickSize), 0, Brushes.OrangeRed, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
         }
 
         protected override double GetCustomStopPrice(int signal, double entryPrice)

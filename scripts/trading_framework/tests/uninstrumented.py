@@ -74,7 +74,6 @@ UNINSTRUMENTED_HUNTERS = {
 #: shrinking it is the work rather than a precondition for it.
 UNINSTRUMENTED_BOTS = {
     "scripts/ninjatrader/strategies/bandits_8020/Bandits8020Bot.cs",
-    "scripts/ninjatrader/strategies/ema_pullback/EMAPullbackBot.cs",
     "scripts/ninjatrader/strategies/failed_auction/FailedAuctionBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBBreakoutBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBFadeBot.cs",
