@@ -96,9 +96,22 @@ def generate_mfe_mae_report(
     mfe_mae_df: pd.DataFrame,
     mfe_mae_config,
     ticker: str,
-    output_dir: str = "scripts/trading_framework/reporting/outputs",
+    output_dir: str,
 ) -> None:
-    """Backward-compatible report writer for MFE/MAE analysis."""
+    """MFE/MAE report writer. `output_dir` is REQUIRED and is the run directory.
+
+    It used to default to `scripts/trading_framework/reporting/outputs`, a fixed
+    TRACKED path shared by every run of every strategy. So each run silently
+    overwrote the previous one's numbers in a committed file that names no
+    strategy, no date range, no parameters and no data -- and a `git diff` after a
+    backtest showed a tracked report changing for reasons nobody could attribute.
+    Measured on this very file: two workflow runs moved the 5-bar efficiency ratio
+    from 0.82 to 1.27 with no record of which run produced either.
+
+    Same defect as the fixed-path tearsheet (STRATEGY_WORKFLOW.md section 7.3).
+    Removing the default rather than changing it: a default is what made this
+    reachable without anybody choosing it.
+    """
     if mfe_mae_df is None or mfe_mae_df.empty:
         return
 
@@ -484,7 +497,8 @@ def run_research_pipeline(args, rec=None, output_dir=None):
             f.write(tearsheet)
         
         # Generate Plots
-        generate_mfe_mae_report(mfe_mae_signals, config.mfe_mae, args.ticker)
+        generate_mfe_mae_report(mfe_mae_signals, config.mfe_mae,
+                                args.ticker, output_dir)
         # generate_chop_report(df, signals, args.ticker) # Needs specific internal data
     
         print(f"\n* Research Pipeline Complete!")
