@@ -14,7 +14,17 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies.Vinay
 {
-    public class VWAPReclaimBot : RiskManagerBase
+    /// <summary>
+    /// VWAPReclaimBot — VWAP Reclaim/Rejection strategy consuming
+    /// VWAPReclaimIndicator with centralized risk manager.
+    ///
+    /// Migrated onto GovernedStrategy (STRATEGY_WORKFLOW.md 3.4; B7+B8). The
+    /// reclaim/rejection detection (confirmation bars, prior distance,
+    /// cooldown) lives in VWAPReclaimIndicator; the bot declares what IT
+    /// evaluates: the warmup gate and the indicator's signal as the trigger.
+    /// Matches the frozen defaults exactly, so no value changes here.
+    /// </summary>
+    public class VWAPReclaimBot : GovernedStrategy
     {
         [NinjaScriptProperty]
         [Display(Name = "Confirmation Bars", Order = 1, GroupName = "VWAP Reclaim")]
@@ -32,7 +42,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override string GetStrategyName() => "VWAPReclaim";
 
-        protected override void SetStrategyDefaults()
+        protected override void OnStrategyDefaults()
         {
             Description = "VWAP Reclaim/Rejection strategy consuming VWAPReclaimIndicator with centralized risk manager";
             Name = "VWAPReclaimBot";
@@ -47,6 +57,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxConsecutiveLosers = 2;
             PauseMinutes = 30;
             HardStopConsecutiveLosers = 3;
+            // MaxTradesPerDay = 3 deliberately KEPT: no trade-ordinal measurement
+            // exists for vwap_reclaim yet (hunter uninstrumented, §11 item 18),
+            // so the existing number stands until one is taken.
             MaxTradesPerDay = 3;
             EarliestEntry = 930;
             LatestEntry = 1430;
@@ -59,18 +72,23 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             AddSecondaryTimeframe = false;
         }
 
-        protected override void ConfigureStrategy() { }
-
-        protected override void InitializeStrategy()
+        protected override void OnInitialize()
         {
             vwapIndicator = VWAPReclaimIndicator(ConfirmationBars, MinPriorBars, CooldownBars);
         }
 
-        protected override int CheckForSignal()
+        /// <summary>
+        /// DECLARE this bar's criteria. The verdict is computed by the sealed
+        /// base from what is declared here; nothing returns a signal.
+        /// </summary>
+        protected override void OnEvaluate(SetupEvaluation e)
         {
-            if (vwapIndicator == null || CurrentBar < 10) return 0;
+            bool warmed = vwapIndicator != null && CurrentBar >= 10;
+            e.Gate("warmup", warmed, CurrentBar, 10);
+            if (!warmed) return;
 
-            if (DrawVisuals && CurrentBar > 10)
+            // Chart visual — side-effect, not logic; unchanged from the original
+            if (DrawVisuals)
             {
                 double vwapCurr = vwapIndicator.VwapSeries[0];
                 double vwapPrev = vwapIndicator.VwapSeries[1];
@@ -81,21 +99,21 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             int sig = vwapIndicator.SignalSeries[0];
-            if (sig != 0 && DrawVisuals)
+            e.Trigger(sig != 0, sig == 1 ? "long" : "short");
+
+            if (sig == 0 || !DrawVisuals) return;
+
+            string tag = "VWAP_Strat_" + CurrentBar;
+            if (sig == 1)
             {
-                string tag = "VWAP_Strat_" + CurrentBar;
-                if (sig == 1)
-                {
-                    Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (4 * TickSize), Brushes.DarkOrange);
-                    Draw.Text(this, tag + "_Txt", false, "VWAP BUY", 0, Low[0] - (10 * TickSize), 0, Brushes.DarkOrange, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-                }
-                else if (sig == -1)
-                {
-                    Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (4 * TickSize), Brushes.DarkOrange);
-                    Draw.Text(this, tag + "_Txt", false, "VWAP SELL", 0, High[0] + (10 * TickSize), 0, Brushes.DarkOrange, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-                }
+                Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (4 * TickSize), Brushes.DarkOrange);
+                Draw.Text(this, tag + "_Txt", false, "VWAP BUY", 0, Low[0] - (10 * TickSize), 0, Brushes.DarkOrange, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
             }
-            return sig;
+            else
+            {
+                Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (4 * TickSize), Brushes.OrangeRed);
+                Draw.Text(this, tag + "_Txt", false, "VWAP SELL", 0, High[0] + (10 * TickSize), 0, Brushes.DarkOrange, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
+            }
         }
 
         protected override double GetCustomStopPrice(int signal, double entryPrice)

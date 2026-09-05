@@ -74,7 +74,6 @@ UNINSTRUMENTED_HUNTERS = {
 #: shrinking it is the work rather than a precondition for it.
 UNINSTRUMENTED_BOTS = {
     "scripts/ninjatrader/strategies/bandits_8020/Bandits8020Bot.cs",
-    "scripts/ninjatrader/strategies/failed_auction/FailedAuctionBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBBreakoutBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBFadeBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBRetestBot.cs",
@@ -84,7 +83,6 @@ UNINSTRUMENTED_BOTS = {
     "scripts/ninjatrader/strategies/supertrend/STTrendBot.cs",
     "scripts/ninjatrader/strategies/the_strat/Strat212ContinuationBot.cs",
     "scripts/ninjatrader/strategies/the_strat/Strat22RevStratBot.cs",
-    "scripts/ninjatrader/strategies/vwap_reclaim/VWAPReclaimBot.cs",
 }
 
 #: The base classes a bot may derive from while still counting as uninstrumented.
