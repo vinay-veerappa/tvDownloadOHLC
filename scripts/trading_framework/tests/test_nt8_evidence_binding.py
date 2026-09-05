@@ -133,3 +133,88 @@ def test_the_real_frozen_profile_hashes_to_something():
     value, described = wf._frozen_profile_hash()
     assert value, "the frozen profile did not hash: {}".format(described)
     assert value.startswith("sha256:"), value
+
+
+# --------------------------------------------------------------------------- #
+# Is the bot that exists the bot NT8 would compile?
+#
+# `has_bot` passed on a matching `.cs` FILENAME alone, while section 9 calls the
+# criterion "a C# bot exists, DEPLOYED by the sanctioned path, and COMPILES".
+# Two of those three were never measured, so an NT8 comparison could run against
+# a bot whose source had moved on since it was deployed -- which, the first time
+# this was run for real, is exactly what it found: the deployed
+# BBMRReversionBot still carried `FlattenBy = 1615`, past ADR-020's 16:00 hard
+# exit, while the repo source had been corrected to 1600.
+#
+# It returns a NOTE, not a verdict. NT8 keeps running the LAST GOOD assembly, so
+# a build with hundreds of errors reads healthy; matching files do not prove a
+# live assembly and a gate here would be claiming what it cannot check.
+# --------------------------------------------------------------------------- #
+def _repo_bot(tmp_path, text="class X {}"):
+    p = tmp_path / "MyBot.cs"
+    # BYTES, not write_text: on Windows, text mode translates a bare newline to
+    # CRLF, so the line-ending fixture below would not test what it says.
+    p.write_bytes(text.encode("utf-8"))
+    return str(p)
+
+
+def _deployed(monkeypatch, tmp_path, text, sub="Vinay"):
+    custom = tmp_path / "Custom"
+    d = custom / "Strategies" / sub
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "MyBot.cs").write_bytes(text.encode("utf-8"))
+    monkeypatch.setattr(wf, "NT8_CUSTOM", str(custom))
+    return custom
+
+
+def test_a_matching_deployment_says_so_and_does_not_claim_it_compiles(
+        monkeypatch, tmp_path):
+    src = _repo_bot(tmp_path, "class X {}")
+    _deployed(monkeypatch, tmp_path, "class X {}")
+    state = wf._deployment_state(src)
+    assert "matches the deployed copy" in state
+    assert "does NOT prove the assembly compiled" in state
+
+
+def test_line_endings_alone_are_not_a_divergence(monkeypatch, tmp_path):
+    """A worktree is not a fresh checkout; CRLF-vs-LF would make every bot on
+    this box read as drifted and the note would be ignored within a day."""
+    src = _repo_bot(tmp_path, "class X {\n}\n")
+    _deployed(monkeypatch, tmp_path, "class X {\r\n}\r\n")
+    assert "matches the deployed copy" in wf._deployment_state(src)
+
+
+def test_a_drifted_deployment_is_named_and_does_not_say_which_side_is_stale(
+        monkeypatch, tmp_path):
+    """A drift report does not say which side is newer, and the NT8 side has
+    been the newer one before -- syncing on reflex reverted a live fix."""
+    src = _repo_bot(tmp_path, "class X { int a; }")
+    _deployed(monkeypatch, tmp_path, "class X { int b; }")
+    state = wf._deployment_state(src)
+    assert "DIFFERS" in state
+    assert "DIRECTION" in state
+
+
+def test_a_bot_that_was_never_deployed_is_named_as_such(monkeypatch, tmp_path):
+    src = _repo_bot(tmp_path)
+    custom = tmp_path / "Custom"
+    (custom / "Strategies").mkdir(parents=True)
+    monkeypatch.setattr(wf, "NT8_CUSTOM", str(custom))
+    assert "NOT deployed" in wf._deployment_state(src)
+
+
+def test_two_copies_in_two_subfolders_are_reported_as_a_duplicate(
+        monkeypatch, tmp_path):
+    """NT8 compiles Strategies/ RECURSIVELY, so a second copy in a different
+    subfolder is a second class definition and the assembly will not build."""
+    src = _repo_bot(tmp_path)
+    _deployed(monkeypatch, tmp_path, "class X {}", sub="Vinay")
+    _deployed(monkeypatch, tmp_path, "class X {}", sub="RedTail")
+    state = wf._deployment_state(src)
+    assert "DUPLICATED" in state and "2 folders" in state
+
+
+def test_no_nt8_on_this_machine_is_unknown_not_undeployed(monkeypatch, tmp_path):
+    """An inapplicable state is not a failing one."""
+    monkeypatch.setattr(wf, "NT8_CUSTOM", str(tmp_path / "nope"))
+    assert "deployment unknown" in wf._deployment_state(_repo_bot(tmp_path))

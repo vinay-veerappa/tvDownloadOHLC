@@ -162,6 +162,62 @@ class Ctx:
     notes: Dict[str, Any] = field(default_factory=dict)
 
 
+#: Where the sanctioned sync writes strategies. Same constant as
+#: `scripts/utils/sync_nt8_strategies.py::NT8_HOME`; read-only here.
+NT8_CUSTOM = os.path.join(os.environ.get("USERPROFILE", ""), "Documents",
+                          "NinjaTrader 8", "bin", "Custom")
+
+
+def _deployment_state(bot_path: str) -> str:
+    """Does the repo source match the copy NT8 would compile? A STRING, not a gate.
+
+    `has_bot` passed on a matching `.cs` FILENAME alone, while section 9 called
+    the criterion "a C# bot exists, DEPLOYED by the sanctioned path, and
+    COMPILES". Two of those three were never measured, so an NT8 comparison
+    could be run against a bot whose source had moved on since it was deployed.
+
+    What this can honestly say is whether the two files are identical. It
+    deliberately does NOT claim the deployed copy compiles: NT8 keeps running
+    the LAST GOOD assembly, so a build with hundreds of errors reads healthy and
+    the only symptom is a deploy having no effect. `--verify` proves the FILES
+    match; nothing on this side proves the assembly is live. That is why this
+    returns a note rather than a PASS/FAIL -- a gate here would be claiming the
+    thing it cannot check.
+    """
+    import hashlib
+    if not NT8_CUSTOM or not os.path.isdir(NT8_CUSTOM):
+        return "NT8 not installed on this machine; deployment unknown"
+    name = os.path.basename(bot_path)
+    hits = []
+    for root, _dirs, files in os.walk(os.path.join(NT8_CUSTOM, "Strategies")):
+        if name in files:
+            hits.append(os.path.join(root, name))
+    if not hits:
+        return "NOT deployed: no {} under bin/Custom/Strategies".format(name)
+    if len(hits) > 1:
+        # NT8 compiles Strategies/ recursively, so two copies in two subfolders
+        # are two class definitions and the assembly will not build.
+        return "DUPLICATED across {} folders: {}".format(
+            len(hits), ", ".join(os.path.relpath(h, NT8_CUSTOM) for h in hits))
+
+    def _h(p):
+        with open(p, "rb") as fh:
+            # ALL carriage returns, not just CRLF pairs. A worktree is not a
+            # fresh checkout: line-ending drift alone would report every bot on
+            # this box as diverged, and a note that is wrong every time is a
+            # note nobody reads by the end of the week.
+            return hashlib.sha256(fh.read().replace(b"\r", b"")).hexdigest()
+
+    try:
+        same = _h(bot_path) == _h(hits[0])
+    except OSError as exc:
+        return "deployed copy unreadable: {}".format(exc)
+    return ("source matches the deployed copy (which does NOT prove the "
+            "assembly compiled)" if same else
+            "DEPLOYED COPY DIFFERS from the repo source -- read the diff and "
+            "its DIRECTION before syncing; the NT8 side has been the newer one")
+
+
 def stage_resolve(ctx: Ctx) -> None:
     """Registry lookup + locate the paired C# bot.
 
@@ -182,7 +238,9 @@ def stage_resolve(ctx: Ctx) -> None:
     bot = _find_bot(key, ctx.args.bot)
     ctx.bot_path = bot
     if bot:
-        ctx.check.set("has_bot", PASS, os.path.relpath(bot, PROJECT_ROOT))
+        ctx.check.set("has_bot", PASS, "{} ({})".format(
+            os.path.relpath(bot, PROJECT_ROOT), _deployment_state(bot)))
+        ctx.rec.note("botDeployment", _deployment_state(bot))
     else:
         ctx.check.set("has_bot", FAIL,
                       "no C# bot found for '{}' under scripts/ninjatrader/strategies/. "
