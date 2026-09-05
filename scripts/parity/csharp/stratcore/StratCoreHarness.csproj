@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <LangVersion>9.0</LangVersion>
+    <!--
+      STRAT SHARED-CORE PARITY HARNESS.
+
+      `scripts/ninjatrader/shared/StratCore.cs` states its own contract:
+
+          "PURE Strat math, zero NT8 dependencies (no Series, no Draw).
+           This is the C# mirror of scripts/libs_py/the_strat/ ...
+           Rule changes go here AND in Python together, never in only one side."
+
+      That last sentence is a COMMENT, and a comment cannot fail. This project is
+      what turns it into something that can. It compiles StratCore.cs and nothing
+      else (if a NinjaScript type ever leaks into that file the build breaks here,
+      which is itself the contract being enforced) and exposes the five pure
+      functions over a CSV, so `scripts/parity/strat_core_parity.py` can run the
+      SAME inputs through both languages and diff the outputs.
+
+      This is drift detection at the RULE level, where drift originates. A
+      trade-set comparison tells you two implementations diverged; this tells you
+      WHICH rule diverged and on WHICH input, with no NT8 in the loop at all.
+
+      net8.0 rather than net8.0-windows: nothing here touches Windows, and the
+      narrower target is a second, weaker check that no platform dependency has
+      crept into a file whose whole value is being platform-free.
+    -->
+    <RootNamespace>Vinay.Strat.Parity</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>StratCoreHarness</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="StratCoreHarness.cs" />
+    <Compile Include="../../../ninjatrader/shared/StratCore.cs" />
+  </ItemGroup>
+</Project>

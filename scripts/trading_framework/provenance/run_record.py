@@ -363,11 +363,18 @@ class RunRecord:
         Milliseconds alone are not enough either: a tight loop can issue two ids
         inside one millisecond, so a random suffix carries the guarantee and the
         timestamp is there to keep directory listings sortable and readable.
+
+        FOUR random bytes, not two. Two (65536 values) made the uniqueness test
+        FLAKY at roughly 2% per run: a sweep issuing ~50 ids inside a single
+        millisecond has a birthday collision probability of about n^2/2^17. A test
+        that is usually green is worse than one that is red, and the entropy was
+        the actual defect -- the id scheme has to survive the tight loop it exists
+        for. 2^32 puts the same collision probability below 1e-7.
         """
         now = datetime.now()
         return "RUN_{}_{:03d}_{}_{}_{}".format(
             now.strftime("%Y%m%d_%H%M%S"), now.microsecond // 1000,
-            ticker, strategy_key.upper(), os.urandom(2).hex())
+            ticker, strategy_key.upper(), os.urandom(4).hex())
 
     # -- declarations ---------------------------------------------------
     def declare_strategy(self, *, name: Optional[str] = None,
