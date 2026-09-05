@@ -160,6 +160,36 @@ class NT8Trade:
 
 
 
+def _excursion(res, key: str, n_trades: int) -> np.ndarray:
+    """MFE/MAE from the kernel, or NaN when this build does not report it.
+
+    NaN AND NOT ZERO IS THE WHOLE POINT. A stale wheel -- one built before v1
+    learned to track excursions -- must degrade to "not measured", because that
+    is what the reports distinguish. Returning zeros would re-introduce exactly
+    the defect this replaced: a fabricated measurement that reads as a finding
+    about the strategy. An old wheel is a real possibility; the compiled module
+    lives in the venv and nothing pins it to this source tree.
+    """
+    vals = res.get(key) if hasattr(res, "get") else None
+    if vals is None:
+        return np.full(n_trades, np.nan, dtype=np.float64)
+    arr = np.asarray(vals, dtype=np.float64)
+    return arr if arr.size == n_trades else np.full(n_trades, np.nan, dtype=np.float64)
+
+
+def _excursion_bps(res, key: str, n_trades: int) -> np.ndarray:
+    """The same excursion normalised by entry price (ADR-002 percentage basis).
+
+    An entry price of zero yields NaN rather than zero: the ratio is undefined,
+    and zero would claim the trade never moved.
+    """
+    pts = _excursion(res, key, n_trades)
+    entry = np.asarray(res["entry_price"], dtype=np.float64) if "entry_price" in res \
+        else np.full(n_trades, np.nan)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(entry > 0, (pts / entry) * 10000.0, np.nan)
+
+
 def _trades_to_frame(trades) -> pd.DataFrame:
     """NT8Trade list -> the SAME column schema the Rust path returns.
 
@@ -356,10 +386,22 @@ class NT8ParityEngine:
                 + np.asarray(res["leg1_points"], dtype=np.float64)
                 * np.where(np.asarray(res["dir"]) == 1, 1.0, -1.0),
             "runner_hit": np.asarray(res["runner_hit"], dtype=bool),
-            "mfe_points": np.zeros(n_trades, dtype=np.float64),
-            "mae_points": np.zeros(n_trades, dtype=np.float64),
-            "mfe_bps": np.zeros(n_trades, dtype=np.float64),
-            "mae_bps": np.zeros(n_trades, dtype=np.float64),
+            # READ FROM THE KERNEL. These four were `np.zeros(n_trades)`, which
+            # FABRICATED A MEASUREMENT `simulate_bars_v1` did not make -- and it
+            # reached a live report as "median MAE 0.0 for both winners and
+            # losers" across 16 trades, eleven of which exited on a stop, where
+            # a zero MAE is impossible. It read as a finding about the strategy
+            # and was one about the pipeline.
+            #
+            # `_simulate_mtf_rust` had always read `res["mae_points"]` because
+            # v2 returned them; v1 did not, so one of two readers of the same
+            # kernel silently invented its answer. v1 now tracks and returns the
+            # excursions (crates/nt8_parity_core/src/lib.rs, ported from v2) and
+            # this reads them. Section 11 item 14.
+            "mfe_points": _excursion(res, "mfe_points", n_trades),
+            "mae_points": _excursion(res, "mae_points", n_trades),
+            "mfe_bps": _excursion_bps(res, "mfe_points", n_trades),
+            "mae_bps": _excursion_bps(res, "mae_points", n_trades),
             "is_reentry": np.zeros(n_trades, dtype=bool),
         })
 

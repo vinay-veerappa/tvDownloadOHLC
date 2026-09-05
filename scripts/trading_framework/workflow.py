@@ -247,15 +247,26 @@ def stage_python_research(ctx: Ctx) -> None:
     _out_of_sample(ctx)
     _prop_viability(ctx, stages)
 
-    # §7.3 IS NOT BUILT, AND THAT IS WHAT THIS REPORTS.
-    # The reporters are handed live objects and write whatever they are given;
-    # nothing makes a report state which run record, price basis or date range
-    # produced it. Until that is wired this criterion can only be NOT
-    # EVALUATED -- which blocks `validated`, correctly, and is why §9 says no
-    # strategy in this repository is validated today.
-    ctx.check.set("reports_attributed", NOT_EVALUATED,
-                  "section 7.3 not built: reports are generated from live objects, "
-                  "not from the run record, so none of them names its inputs")
+    _reports_attributed(ctx, doc)
+
+
+def _reports_attributed(ctx: "Ctx", doc: Dict[str, Any]) -> None:
+    """Section 7.3. Does every report this run wrote name its inputs?
+
+    THIS CRITERION USED TO BE A CONSTANT. It set NOT EVALUATED with a fixed
+    string on every run, so `validated` -- which is `all(status == PASS)` -- was
+    unreachable for every strategy however good it was. A criterion that cannot
+    change its answer is the exact shape section 0 exists to forbid, and it sat
+    in the module written to enforce that.
+
+    It reads the RECORDED artifacts and checks the files on disk, so it cannot
+    pass by inspecting nothing: `audit_reports` returns `ok` only when at least
+    one report was checked AND none had a problem. Zero reports is NOT a pass --
+    it means the run produced none, which is a different statement.
+    """
+    from scripts.trading_framework.reporting.provenance import audit_reports
+    v = audit_reports(doc)
+    ctx.check.set("reports_attributed", PASS if v["ok"] else FAIL, v["reason"])
 
 
 def _signal_geometry(ctx: "Ctx", doc: Dict[str, Any]) -> None:

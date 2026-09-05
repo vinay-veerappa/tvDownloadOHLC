@@ -96,8 +96,15 @@ fn simulate_bars_v1(
     // separate trade; a per-leg row needs a per-leg exit. When the queen never
     // filled, both legs leave together and this equals the trade exit.
     let mut out_queen_ms: Vec<i64> = Vec::new();
+    // Excursions. v2 has tracked these since it was written and v1 never did,
+    // so the Python adapter filled the columns with zeros -- which claims a
+    // measurement this kernel did not make. It reached a live report as
+    // "median MAE 0.0" on eleven trades that exited on a stop.
+    let mut out_exc: Vec<[f64; 2]> = Vec::new();   // mfe_pts, mae_pts
 
     let mut in_pos = false;
+    let mut cur_mfe_pts: f64 = 0.0;
+    let mut cur_mae_pts: f64 = 0.0;
     let mut pos_dir: i32 = 0;
     let mut pos_entry_price: f64 = 0.0;
     let mut pos_entry_time: i64 = 0;
@@ -158,6 +165,22 @@ fn simulate_bars_v1(
                 pnl_pts = (q_pts + r_pts) / 2.0;
                 reason = "Stop Loss".to_string();
                 closed = true;
+            }
+
+            // Track the excursion BEFORE the exit tests, so a bar that both
+            // reaches the target and closes the trade still contributes its
+            // favourable move. Ported from v2 (which has always done this);
+            // v1 tracked nothing and the adapter fabricated zeros.
+            if pos_dir == 1 {
+                let fav = h0 - pos_entry_price;
+                let adv = pos_entry_price - l0;
+                if fav > cur_mfe_pts { cur_mfe_pts = fav; }
+                if adv > cur_mae_pts { cur_mae_pts = adv; }
+            } else if pos_dir == -1 {
+                let fav = pos_entry_price - l0;
+                let adv = h0 - pos_entry_price;
+                if fav > cur_mfe_pts { cur_mfe_pts = fav; }
+                if adv > cur_mae_pts { cur_mae_pts = adv; }
             }
 
             if pos_dir == 1 && !closed {
@@ -237,6 +260,12 @@ fn simulate_bars_v1(
                 out_reason.push(reason);
                 out_flags.push([queen_filled, r_hit]);
                 out_queen_ms.push(queen_exit_ms);
+                out_exc.push([cur_mfe_pts, cur_mae_pts]);
+                // Reset with the position, not with the day: an excursion that
+                // carried over would attribute one trade's adverse move to the
+                // next one.
+                cur_mfe_pts = 0.0;
+                cur_mae_pts = 0.0;
 
                 daily_pnl += net_usd;
                 if net_usd < 0.0 {
@@ -322,6 +351,12 @@ fn simulate_bars_v1(
     dict.set_item("queen_hit", out_flags.iter().map(|f| f[0]).collect::<Vec<_>>())?;
     dict.set_item("queen_exit_time_ms", out_queen_ms.clone())?;
     dict.set_item("runner_hit", out_flags.iter().map(|f| f[1]).collect::<Vec<_>>())?;
+    // v1 returned twelve keys and no excursion among them, so the Python
+    // adapter invented zeros. These two are what separate a bad ENTRY (the
+    // loser never went your way) from a bad EXIT (it did, and was given back)
+    // -- a distinction no P&L column can make.
+    dict.set_item("mfe_points", out_exc.iter().map(|e| e[0]).collect::<Vec<_>>())?;
+    dict.set_item("mae_points", out_exc.iter().map(|e| e[1]).collect::<Vec<_>>())?;
     Ok(dict.into())
 }
 

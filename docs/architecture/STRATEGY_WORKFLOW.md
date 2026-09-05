@@ -1242,22 +1242,57 @@ trade.
 | R multiple | points / initial risk | requires §2.2 geometry to be valid at all |
 | MFE / MAE | excursions, in **%** | ADR-002: report as price percentage, not absolute points |
 
-### 7.3 Two rules for every report 🔴 NOT BUILT — this is the highest-value gap
+### 7.3 Two rules for every report 🟢 ENFORCED
 
-1. **A report must name its inputs**: strategy, ticker, date range, parameter set, data
-   hash, run id, price basis. One that cannot is not evidence.
-2. **A report must refuse to exist when it has nothing to say.**
+1. **A report names its inputs**: strategy, ticker, date range, parameter hash,
+   data hash, run id, price basis, commit. One that cannot is not evidence.
+2. **A report refuses to exist when it has nothing to say** — and says so with a
+   reason.
 
-> Both are violated today, and the committed outputs prove it.
-> `reporting/outputs/tearsheet_NQ1_box_reversion.md` is **2 bytes** and contains the word
-> `ok` — a strategy that emits no signals produced a file that reads as a report.
-> `tearsheet_NQ1_ict_displacement.md` reports **Net P&L $178,574.47** beside **Final
-> Balance $750.80** and a **74,980% total return** beside a peak equity of $795, because
-> the prop-firm balance and the equity-curve return are two different accounts rendered as
-> one. It names no strategy, no date range, no parameters, and no data.
+*Enforcers*: `reporting/provenance.py` (`write_report` prepends the header, so a
+report **cannot be written without one**) and the `reports_attributed` criterion,
+which reads the recorded artifacts off disk.
 
-Plan §2.6 wires the reporters to consume the run record. Until then, **treat every file in
-`reporting/outputs/` as undated and unattributed**.
+⚠️ **THIS CRITERION USED TO BE A CONSTANT.** It set NOT EVALUATED with a fixed
+string on every run, so `validated` — which is `all(status == PASS)` — was
+unreachable for **every** strategy however good it was. A criterion that cannot
+change its answer is the exact shape §0 exists to forbid, and it sat in the
+module written to enforce that. Four reds are now reachable: no header, a
+recorded file absent from disk, a stub, and **zero reports checked** — because
+`not problems` over an empty set is `True`, and a run that produced no reports
+would otherwise pass by not being looked at.
+
+#### Why the header is derived, never passed
+
+`render_provenance` takes the run-record **document** and nothing else. A
+reporter handed a `ticker=` argument can be handed the wrong one, and the report
+is then confidently mislabelled — worse than unlabelled, because it looks
+attributed. Anything absent from the record renders as `(not recorded)` rather
+than being invented.
+
+Two things the header surfaces that a reader would otherwise assume away:
+
+* **an undeclared price basis** — every P&L figure below it is unattributable by
+  construction, and `--price-adjustment` defaults to `undeclared` (§0.1);
+* **a dirty working tree** — `code.dirty` was `True` on every run measured while
+  this was written, and a report produced from uncommitted code does **not**
+  reproduce from the commit hash it prints.
+
+> **The evidence that motivated these rules is gone, and the rules stand.**
+> §7.3 used to cite `reporting/outputs/tearsheet_NQ1_box_reversion.md` — 2 bytes
+> containing the word `ok` — and a tearsheet reporting $178,574 net P&L beside a
+> $750 final balance. That whole directory was deleted when reports moved under
+> the run id, so those files no longer exist. Citing them as current was the same
+> defect as an open item describing a state that had changed.
+
+#### Rule 2 measures the BODY, not the file
+
+The first version compared the whole file against 200 bytes — and the provenance
+header alone is ~600, so the refusal **could never fire**: a green with no
+reachable red, inside the module written to remove one. The stub test caught it.
+The floor is now 40 characters of stripped body, chosen against both ends: the
+motivating stub was 2, and the smallest *legitimate* body is a named refusal,
+which `refuse_empty` renders at ~65.
 
 ---
 
@@ -1386,7 +1421,7 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | 2 | **`WickType` range guard** — adopt C# (suppress sub-tick bars) and change Python, or the reverse. Recommendation: adopt C#; the wick ratio of a one-tick bar is a quantization artifact, always 0 or 1. **Changes existing `the_strat` results**, so it should land through a recorded run. | **user** |
 | 3 | **No hosted CI in this repo** — no `.github/workflows`. `tools/ci_local.py` (4 checks) and `.githooks/pre-commit` DO exist and are the authoritative gate; what is missing is the fresh-clone case, which is the one thing a local run cannot cover. ⚠️ This row read "no CI at all, no `tools/ci_local.py`" until 2026-09-05, after both had shipped — a gap that had been closed still being advertised as open | code |
 | 4 | Parameter document for the non-ICT families (§3.3) | code |
-| 5 | Reports from the run record (§7.3) | code |
+| ~~5~~ | ~~**Reports from the run record**~~ — **DONE 2026-09-05.** `reporting/provenance.py`; `write_report` prepends a header derived from the run record, and `reports_attributed` now MEASURES instead of returning a constant. It was the last criterion that could never pass, so it was the last thing blocking the word "validated" | done |
 | ~~6~~ | ~~Freeze the bespoke runners with a gate~~ — **DONE 2026-09-05.** `tests/test_no_new_runners.py` + `frozen_runners.txt`, matched on behaviour with three negative controls (§4.1) | done |
 | 7 | `box_reversion` raises `TypeError: Invalid comparison between dtype=datetime64[s] and Timestamp` when window-filtered | code |
 | 8 | **Migrate strategies off the legacy `session_block`** onto §1.3's `session_name`. The legacy labels are RTH-only and every existing strategy reads them, so this changes results and must land through a recorded run per strategy | code |
@@ -1395,7 +1430,7 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | 11 | **Capture SA *executions*, not just trades** — 🟡 **mostly closed 2026-09-05.** `nt_backtest` still returns entry/exit PAIRS, but the fields that made a pair insufficient are now projected: `entryQuantity`, `exitQuantity`, `entryGroup`, `entryName`, MAE/MFE (§5.6). Per-leg size and the bracket key were the whole reason fills were needed. **Not deployed** — a recompile wipes every static singleton in a live instance. What genuinely still needs fills is a *partial* fill of one leg | **user** (deploy) |
 | ~~12~~ | ~~**Win/loss attribution report**~~ — **DONE 2026-09-05.** `reporting/win_loss_attribution.py`, three questions (§7.1a), works on either side, appended to every tearsheet. Three refusals rather than confident numbers over dead data | done |
 | 13 | **The engine's own gates are not instrumented.** The decision log records the **hunter's** criteria. `nt8_parity_backtester` applies its own — `earliest_entry_hhmm=945`, `latest_entry_hhmm=1530`, `max_trades_per_day`, a consecutive-loser pause, a daily loss limit — and none reaches the log. Measured: **3,188 hunter entries became 16 trades**, a 200:1 reduction the log cannot explain. The report *names* the gap (§7.1a) rather than hiding it, but until these emit `REJECTED` rows the funnel is only half explained. Same `GateRecorder`, applied in the engine loop | code |
-| 14 | **`mae_points` / `mfe_points` are identically zero** on every Python trade — present, dead, and previously reported as a measurement. The excursion stage is not populating the trade frame. Blocks question 2 of §7.1a on the Python side (the NT8 side is fixed by §5.6) | code |
+| ~~14~~ | ~~**`mae_points` / `mfe_points` identically zero**~~ — **DONE 2026-09-05.** My first diagnosis ("the excursion stage is not populating them") was WRONG. Measured by calling the kernel: `simulate_bars_v1` returned twelve keys and no excursion among them, while `_simulate_mtf_rust` had always read `res["mae_points"]` because v2 returned them — one of two readers of the same kernel invented its answer with `np.zeros`. v1 now tracks and returns them (ported from v2, `crates/nt8_parity_core`), the adapter reads them, and a STALE wheel degrades to NaN rather than back to zero. P&L element-wise unchanged; question 2 of §7.1a is live and says losers' median MAE is 9.5pts against winners' 1.0 | done |
 | 15 | **Migrate the fourteen C# bots onto `GovernedStrategy`** (§3.4). The base class, the mandated `SetupEvaluation`, the frozen governance gate names and the two upstream hooks all exist and are gated; **no bot derives from it yet**, so every roster diff is one-sided until one does. Inheriting it also supplies the unique per-entry signal name — the join key from a fill back to its decision — which was a separate item until the base class made it one edit. Filed as **B7+B8**; the population is frozen in `tests/uninstrumented.py` and may only shrink. Needs a recompile | **user** (deploy) |
 | 16 | *(merged into 15 — it was the signal-name half of the same edit)* | — |
 | 17 | **Three unlanded `RiskManagerBase` changes, and a layering fix.** The fork is DELETED (2026-09-05) and `test_base_class_ownership.py` keeps it gone. What remains is a decision: which of its three changes to land upstream, and whether to move `AddSecondaryTimeframe` out of the risk base — eight of its ten users switch it off, and `GetCurrentATR()` reads that series while ATR drives stop distance and position size. **B9** | **user** |

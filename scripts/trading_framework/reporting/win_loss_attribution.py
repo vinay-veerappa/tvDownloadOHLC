@@ -78,9 +78,15 @@ def _prep(trades: pd.DataFrame, time_col: str) -> Optional[pd.DataFrame]:
     df["_session"] = label_trades_by_session(df, time_col)
     exit_col = _first(df, _EXIT_COLS)
     df["_exit_reason"] = (df[exit_col].astype(str) if exit_col else "(not recorded)")
+    # WHICH COLUMN WAS FOUND DETERMINES THE UNIT, so record it. `mae_usd` is
+    # dollars and `mae_points` is points, and the two differ by the point value
+    # -- 2 for MNQ, 20 for NQ. A table headed "Median MAE" with no unit invites
+    # exactly the 10x confusion that put $20/pt P&L beside a $2/pt prop sim in
+    # one run (section 1.3).
     for tag, names in (("_mae", _MAE_COLS), ("_mfe", _MFE_COLS)):
         c = _first(df, names)
         df[tag] = pd.to_numeric(df[c], errors="coerce") if c else np.nan
+        df.attrs["{}_col".format(tag)] = c or ""
     if "exit_time" in df.columns:
         xt = pd.to_datetime(df["exit_time"], errors="coerce")
         if getattr(xt.dt, "tz", None) is not None:
@@ -130,11 +136,14 @@ def excursion_profile(trades: pd.DataFrame, *,
         return {"available": False, "reason": "no trades, or no P&L column"}
     if df["_mae"].isna().all() and df["_mfe"].isna().all():
         return {"available": False,
-                "reason": ("the trade list carries no MAE/MFE column. On the NT8 "
-                           "side these exist on Trade and are not yet projected "
-                           "by nt_backtest (section 5.2); an absent MAE and a "
-                           "zero MAE are opposite findings, so nothing is "
-                           "inferred here.")}
+                "reason": ("no MAE/MFE was measured for these trades. On the "
+                           "PYTHON side, `simulate_bars_v1` does not return "
+                           "excursions at all -- the adapter used to fabricate "
+                           "zeros, which read as a measurement; it now emits NaN "
+                           "(section 11 item 14). On the NT8 side they exist on "
+                           "`Trade` and the bridge fields are added but not "
+                           "deployed (section 5.6). An absent MAE and a zero MAE "
+                           "are opposite findings, so nothing is inferred here.")}
     # A DEAD COLUMN IS NOT A MEASUREMENT. Measured 2026-09-05 on the live
     # `mean_reversion` run: `mae_points` and `mfe_points` are present and 0.0 on
     # all 16 trades, including 11 that exited on a stop. Reporting "median MAE
@@ -150,6 +159,9 @@ def excursion_profile(trades: pd.DataFrame, *,
                            "measurement.".format(len(df)))}
     win, loss = df[df["_won"]], df[~df["_won"]]
     avg_win = win["_pnl"].mean() if len(win) else np.nan
+    mae_col = df.attrs.get("_mae_col", "")
+    unit = ("$" if mae_col.endswith(("usd", "Currency"))
+            else "pts" if mae_col.endswith(("points", "Points")) else "?")
     ran = (int((loss["_mfe"].abs() > abs(avg_win)).sum())
            if len(loss) and np.isfinite(avg_win) else 0)
     return {
@@ -161,6 +173,8 @@ def excursion_profile(trades: pd.DataFrame, *,
         "median_mae_losers": loss["_mae"].median(),
         "median_mfe_losers": loss["_mfe"].median(),
         "losers_that_ran": ran,
+        "mae_column": mae_col,
+        "mae_unit": unit,
         "median_minutes_winners": win["_minutes"].median(),
         "median_minutes_losers": loss["_minutes"].median(),
     }
@@ -320,8 +334,9 @@ def render_win_loss(trades: pd.DataFrame, decisions: Optional[pd.DataFrame] = No
             return "--" if v is None or not np.isfinite(v) else spec.format(v)
         L += ["| | Winners | Losers |", "|---|---:|---:|",
               "| Trades | {} | {} |".format(ex["winners"], ex["losers"]),
-              "| Median MAE | {} | {} |".format(f(ex["median_mae_winners"]),
-                                                f(ex["median_mae_losers"])),
+              "| Median MAE ({}) | {} | {} |".format(
+                  ex.get("mae_unit", "?"), f(ex["median_mae_winners"]),
+                  f(ex["median_mae_losers"])),
               "| Median minutes held | {} | {} |".format(
                   f(ex["median_minutes_winners"]), f(ex["median_minutes_losers"])),
               "",

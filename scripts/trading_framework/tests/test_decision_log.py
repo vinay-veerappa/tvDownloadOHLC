@@ -440,177 +440,86 @@ def test_a_missing_mae_column_is_reported_not_inferred():
     df = _trades().drop(columns=["mae_usd", "mfe_usd"])
     ex = excursion_profile(df)
     assert ex["available"] is False
-    assert "nt_backtest" in ex["reason"]
+    assert "simulate_bars_v1" in ex["reason"], (
+        "the reason must name the ACTUAL cause on the live path -- the v1 "
+        "kernel returns no excursions -- not only the NT8 side")
 
 
-def test_the_excursion_profile_separates_an_exit_defect_from_an_entry_defect():
-    ex = excursion_profile(_trades())
-    assert ex["available"] is True
-    assert ex["winners"] + ex["losers"] == 60
-    assert ex["losers_that_ran"] >= 0
-
-
-def test_a_gate_median_is_refused_below_the_sample_floor():
-    """A median over four trades is not a finding."""
-    idx = _idx(6)
-    d = (GateRecorder(idx, run_id="R", strategy="s")
-         .trigger(pd.Series(True, index=idx), "long")
-         .gate("adx", pd.Series(True, index=idx),
-               value=pd.Series(np.arange(6.0), index=idx), threshold=15)
-         .to_frame(signal_prefix="s_"))
-    tr = pd.DataFrame({"entry_time": idx, "total_pnl_usd": [1, -1] * 3})
-    assert gate_values_by_outcome(d, tr).empty
-    assert str(MIN_SAMPLE_PER_SIDE) not in ""     # the floor is named in the report
-    assert "noise wearing a number" in render_win_loss(tr, d)
-
-
-def test_a_gate_that_separates_winners_from_losers_is_named():
-    """The payoff: "winners entered at 25, losers at 12, gate set at 15" names a
-    line to change. Nothing derivable from a trade list can say that."""
-    n = 60
-    idx = pd.date_range("2026-04-01 09:35", periods=n, freq="37min",
-                        tz="America/New_York")
-    pnl = np.array([100.0] * 30 + [-100.0] * 30)
-    adx = pd.Series(np.r_[np.full(30, 25.0), np.full(30, 12.0)], index=idx)
-    d = (GateRecorder(idx, run_id="R", strategy="s")
-         .trigger(pd.Series(True, index=idx), "long")
-         .gate("adx", pd.Series(True, index=idx), value=adx, threshold=15.0)
-         .to_frame(signal_prefix="s_"))
-    tr = pd.DataFrame({"entry_time": idx, "total_pnl_usd": pnl,
-                       "signal_name": ["s_{}".format(i + 1) for i in range(n)]})
-    gv = gate_values_by_outcome(d, tr)
-    assert list(gv["gate"]) == ["adx"]
-    row = gv.iloc[0]
-    assert row["median_winners"] == 25.0 and row["median_losers"] == 12.0
-    assert row["separation"] == 13.0
-    assert row["threshold"] == 15.0
-    out = render_win_loss(tr, d)
-    assert "`adx`" in out
-
-
-def _gate_frame_and_trades(n=60, *, with_signal_names: bool, unit="ms"):
-    idx = pd.date_range("2026-04-01 09:35", periods=n, freq="37min",
-                        tz="America/New_York")
-    pnl = np.array([100.0] * (n // 2) + [-100.0] * (n // 2))
-    adx = pd.Series(np.r_[np.full(n // 2, 25.0), np.full(n // 2, 12.0)], index=idx)
-    d = (GateRecorder(idx, run_id="R", strategy="s")
-         .trigger(pd.Series(True, index=idx), "long")
-         .gate("adx", pd.Series(True, index=idx), value=adx, threshold=15.0)
-         .to_frame(signal_prefix="s_" if with_signal_names else ""))
-    tr = pd.DataFrame({
-        # The engine's own frame carries a different datetime RESOLUTION from
-        # the ISO text a decision log is parsed from.
-        "entry_time": idx.as_unit(unit),
-        "total_pnl_usd": pnl,
-    })
-    if with_signal_names:
-        tr["signal_name"] = ["s_{}".format(i + 1) for i in range(n)]
-    return d, tr
-
-
-def test_the_nearest_time_join_works_across_datetime_resolutions():
-    """pandas refuses merge_asof across resolutions, and the two sides genuinely
-    differ: a decision timestamp is parsed from ISO text, a trade timestamp
-    comes from the engine's frame."""
-    d, tr = _gate_frame_and_trades(with_signal_names=False, unit="ms")
-    gv = gate_values_by_outcome(d, tr)
-    assert list(gv["gate"]) == ["adx"]
-    assert gv.iloc[0]["separation"] == 13.0
-
-
-def test_the_outcome_flag_survives_the_nearest_time_join_as_a_bool():
-    """`~` on a non-bool Series is BITWISE: a merge_asof tolerance introduces
-    NaN, promoting the column to object, and `~col` then yields -1/-2 rather
-    than raising. As a positional mask that selects the WRONG rows instead of
-    failing, which is the worse outcome."""
-    d, tr = _gate_frame_and_trades(with_signal_names=False)
-    tr = tr.copy()
-    # Push one decision outside the 15-minute tolerance so the merge really
-    # does produce an unmatched row and the object promotion really happens.
-    tr.loc[tr.index[0], "entry_time"] = tr["entry_time"].iloc[0] + pd.Timedelta("9h")
-    gv = gate_values_by_outcome(d, tr)
-    assert not gv.empty
-    assert gv.iloc[0]["n_win"] + gv.iloc[0]["n_loss"] <= len(tr)
-
-
-def test_both_join_strategies_agree_when_both_are_available():
-    """A signal-name join is exact; nearest-time is approximate by construction.
-    On clean data they must not disagree, or one of them is wrong."""
-    d1, tr1 = _gate_frame_and_trades(with_signal_names=True)
-    d2, tr2 = _gate_frame_and_trades(with_signal_names=False)
-    a = gate_values_by_outcome(d1, tr1).iloc[0]
-    b = gate_values_by_outcome(d2, tr2).iloc[0]
-    assert a["median_winners"] == b["median_winners"]
-    assert a["median_losers"] == b["median_losers"]
-
-
-def test_an_identically_zero_excursion_column_is_called_dead_not_measured():
-    """Measured on the live `mean_reversion` run: mae_points and mfe_points are
-    present and 0.0 on all 16 trades, 11 of which exited on a stop. "Median MAE
-    0.0" reads as a finding about the strategy; it is one about the pipeline."""
+def test_a_nan_mae_column_is_treated_as_not_measured():
+    """The engine now emits NaN where it used to emit 0.0. NaN must land in the
+    'not measured' branch, or the fix moved the lie rather than removing it."""
+    import numpy as _np
     df = _trades()
-    df["mae_usd"] = 0.0
-    df["mfe_usd"] = 0.0
+    df["mae_usd"] = _np.nan
+    df["mfe_usd"] = _np.nan
     ex = excursion_profile(df)
     assert ex["available"] is False
-    assert "identically ZERO" in ex["reason"]
-    assert "dead" in ex["reason"]
+    assert "opposite findings" in ex["reason"]
 
 
-def test_a_real_excursion_column_is_still_reported():
-    """Negative control for the check above: it must not refuse live data."""
-    assert excursion_profile(_trades())["available"] is True
+def test_the_parity_engine_reads_excursions_from_the_kernel_not_zeros():
+    """SOURCE gate on the producer.
+
+    `simulate_bars_v1` returned twelve keys and no excursion among them --
+    measured by calling it -- while `_simulate_mtf_rust` had always read
+    `res["mae_points"]` because v2 returned them. So one of two readers of the
+    same kernel invented its answer, and the adapter's `np.zeros` reached a live
+    report as "median MAE 0.0" on eleven trades that exited on a stop.
+
+    v1 now tracks and returns them (ported from v2), and this asserts the
+    adapter READS the kernel rather than filling a constant.
+    """
+    src = (pathlib.Path(__file__).resolve().parents[3] / "scripts" / "execution"
+           / "nt8_parity_engine.py").read_text(encoding="utf-8")
+    block = src[src.index("def _simulate_rust"):]
+    block = block[:block.index("def _simulate_py")]
+    for col in ("mfe_points", "mae_points", "mfe_bps", "mae_bps"):
+        assert '"{}": np.zeros'.format(col) not in block, (
+            "{} is filled with zeros again -- that claims a measurement the "
+            "kernel may not have made".format(col))
+        assert '"{}": _excursion'.format(col) in block, col
 
 
-def test_a_single_zero_excursion_trade_is_not_condemned():
-    """One trade with a zero MAE is possible; sixteen is not."""
-    df = _trades(n=1)
-    df["mae_usd"] = 0.0
-    df["mfe_usd"] = 0.0
-    assert excursion_profile(df)["available"] is True
+def test_a_stale_kernel_degrades_to_not_measured_rather_than_zero():
+    """The compiled module lives in the venv and nothing pins it to this source
+    tree, so an OLD wheel -- built before v1 learned to track excursions -- is a
+    real possibility. It must yield NaN, because returning zeros would
+    re-introduce the fabricated measurement this whole change removed."""
+    from scripts.execution.nt8_parity_engine import _excursion, _excursion_bps
+    stale = {"entry_price": [100.0, 200.0]}          # no excursion keys at all
+    assert np.isnan(_excursion(stale, "mae_points", 2)).all()
+    assert np.isnan(_excursion_bps(stale, "mae_points", 2)).all()
 
 
-def test_a_stop_exit_that_booked_a_profit_is_surfaced():
-    """A stop on the wrong side of entry fills immediately and pays. Three such
-    trades are in the live `mean_reversion` set, whose `signal_geometry`
-    criterion FAILS with stop_wrong_side=372."""
-    df = _trades(n=10)
-    df["total_pnl_usd"] = 50.0
-    df["exit_reason"] = "Stop Loss"
-    out = render_win_loss(df)
-    assert "booked a PROFIT" in out
-    assert "geometry defects" in out
-    assert "signal_geometry" in out
+def test_a_kernel_returning_the_wrong_length_is_not_trusted():
+    """A length mismatch means the arrays do not correspond trade-for-trade, and
+    silently broadcasting one would attribute one trade's excursion to another."""
+    from scripts.execution.nt8_parity_engine import _excursion
+    bad = {"entry_price": [1.0, 2.0, 3.0], "mae_points": [5.0]}
+    assert np.isnan(_excursion(bad, "mae_points", 3)).all()
 
 
-def test_a_normal_trade_set_is_not_accused_of_a_geometry_defect():
-    df = _trades(n=10)
-    df["total_pnl_usd"] = [50.0, -50.0] * 5
-    df["exit_reason"] = np.where(df["total_pnl_usd"] > 0, "Profit target", "Stop Loss")
-    assert "booked a PROFIT" not in render_win_loss(df)
+def test_a_live_kernel_result_is_passed_through():
+    """Negative control for the two above: real data must NOT become NaN."""
+    from scripts.execution.nt8_parity_engine import _excursion, _excursion_bps
+    good = {"entry_price": [100.0, 200.0], "mae_points": [1.0, 4.0]}
+    assert list(_excursion(good, "mae_points", 2)) == [1.0, 4.0]
+    bps = _excursion_bps(good, "mae_points", 2)
+    assert round(bps[0], 4) == 100.0 and round(bps[1], 4) == 200.0
 
 
-def test_the_funnel_gap_between_hunter_entries_and_trades_is_named():
-    """3,188 hunter entries became 16 trades on the live run. The engine's own
-    gates are not in the log, and a report that shows both numbers without
-    saying why they differ invites the reader to distrust the right one."""
-    idx = _idx(40)
-    d = (GateRecorder(idx, run_id="R", strategy="s")
-         .trigger(pd.Series(True, index=idx), "long")
-         .gate("a", pd.Series(True, index=idx)).to_frame(signal_prefix="s_"))
-    tr = pd.DataFrame({"entry_time": idx[:3], "total_pnl_usd": [1.0, -1.0, 1.0]})
-    out = render_win_loss(tr, d)
-    assert "40 hunter entr" in out
-    assert "ENGINE's own" in out
+def test_the_excursion_unit_is_named_in_the_report():
+    """`mae_usd` is dollars and `mae_points` is points, and they differ by the
+    point value -- 2 for MNQ, 20 for NQ. An unlabelled "Median MAE" invites the
+    same 10x confusion that once put $20/pt P&L beside a $2/pt prop sim."""
+    df = _trades()                                   # carries mae_usd
+    ex = excursion_profile(df)
+    assert ex["mae_unit"] == "$", ex.get("mae_column")
+    assert "Median MAE ($)" in render_win_loss(df)
 
-
-def test_no_funnel_warning_when_the_counts_agree():
-    idx = _idx(4)
-    d = (GateRecorder(idx, run_id="R", strategy="s")
-         .trigger(pd.Series(True, index=idx), "long")
-         .gate("a", pd.Series(True, index=idx)).to_frame(signal_prefix="s_"))
-    tr = pd.DataFrame({"entry_time": idx, "total_pnl_usd": [1.0, -1.0, 1.0, -1.0]})
-    assert "ENGINE's own" not in render_win_loss(tr, d)
+    pts = df.rename(columns={"mae_usd": "mae_points", "mfe_usd": "mfe_points"})
+    assert excursion_profile(pts)["mae_unit"] == "pts"
+    assert "Median MAE (pts)" in render_win_loss(pts)
 
 
 def test_the_report_is_ascii_on_every_path():

@@ -8,7 +8,7 @@ import re
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Ensure project root is in path
 PROJECT_ROOT = os.getcwd()
@@ -101,6 +101,7 @@ def generate_mfe_mae_report(
     mfe_mae_config,
     ticker: str,
     output_dir: str,
+    rec_doc: Optional[dict] = None,
 ) -> None:
     """MFE/MAE report writer. `output_dir` is REQUIRED and is the run directory.
 
@@ -127,8 +128,17 @@ def generate_mfe_mae_report(
 
     summary = generate_mfe_mae_summary(mfe_mae_df, horizons)
     summary_path = os.path.join(output_dir, f"mfe_mae_summary_{ticker}.md")
-    with open(summary_path, "w", encoding="utf-8") as f:
-        f.write(summary)
+    # Section 7.3 rule 1. `rec_doc` is optional ONLY so the two frozen callers
+    # in scripts/analysis keep working; when it is absent the file is written
+    # unattributed and the criterion FAILS the run, which is the correct
+    # outcome rather than a silent pass.
+    if rec_doc:
+        from scripts.trading_framework.reporting.provenance import write_report
+        write_report(summary_path, summary, rec_doc,
+                     title=f"MFE/MAE excursions — {ticker}")
+    else:
+        with open(summary_path, "w", encoding="utf-8") as f:
+            f.write(summary)
 
     for horizon in horizons:
         if f"mfe_{horizon}" in mfe_mae_df.columns and f"mae_{horizon}" in mfe_mae_df.columns:
@@ -601,19 +611,27 @@ def run_research_pipeline(args, rec=None, output_dir=None):
         # overwrote the previous run on every invocation.
         os.makedirs(output_dir, exist_ok=True)
     
+        # SECTION 7.3 RULE 1. Written through `write_report`, which prepends the
+        # provenance header derived FROM THE RUN RECORD -- so a report cannot be
+        # written without naming its inputs, and the header cannot disagree with
+        # the run it came from. It also refuses a stub (rule 2).
+        from scripts.trading_framework.reporting.provenance import write_report
         ts_path = f"{output_dir}/tearsheet_{args.ticker}_{args.strategy}.md"
-        with open(ts_path, "w", encoding="utf-8") as f:
-            f.write(tearsheet)
+        write_report(ts_path, tearsheet, rec.doc,
+                     title=f"Tearsheet — {args.strategy} on {args.ticker}")
         
         # Generate Plots
         generate_mfe_mae_report(mfe_mae_signals, config.mfe_mae,
-                                args.ticker, output_dir)
+                                args.ticker, output_dir, rec.doc)
         # generate_chop_report(df, signals, args.ticker) # Needs specific internal data
     
         print(f"\n* Research Pipeline Complete!")
         print(f"* Tearsheet: {ts_path}")
         print(f"* Plots saved to: {output_dir}")
         rec.add_artifact("tearsheet", ts_path)
+        _mfe_summary = os.path.join(output_dir, f"mfe_mae_summary_{args.ticker}.md")
+        if os.path.exists(_mfe_summary):
+            rec.add_artifact("mfeMaeSummary", _mfe_summary)
 
         # THE GATE. Reporting has already happened above, so this refuses the
         # RESULT rather than the file: a non-attributable run is marked as such
