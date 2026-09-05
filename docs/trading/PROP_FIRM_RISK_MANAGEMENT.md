@@ -48,7 +48,7 @@ Preserve the evaluation account. Keep total drawdown well below the $2,000 trail
 |---|---|---|---|
 | Hard daily stop | **0.90% = $450** | **0.60% = $300** | Three full losses triggers a stop. Prevents a single bad day from consuming a large fraction of the $2,000 trailing drawdown. |
 | Soft daily stop | **0.60% = $300** | **0.40% = $200** | If the tape is not giving clean follow-through, stop after two losses. Do not force trades in a choppy or regime-ambiguous session. |
-| Weekly drawdown cap | **2.0% = $1,000** | **1.5% = $750** | Aligns with the repo's backtest engine concept ([BACKTEST_ENGINE_ARCHITECTURE.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/trading_system/BACKTEST_ENGINE_ARCHITECTURE.md)). Prevents a bad week from breaching the trailing drawdown before the weekend reset. |
+| Weekly drawdown cap | **2.0% = $1,000** | **1.5% = $750** | Enforced by `scripts/libs_py/risk/account_manager.py::AccountRiskManager` — breaching `weekly_drawdown_limit` sets `is_in_observation`, which refuses further trades until `reset_week()`. Prevents a bad week from breaching the trailing drawdown before the weekend reset. |
 | Max trades per day | **3** | **3** | Caps overtrading in chop. Each entry consumes attention and risk budget. |
 
 ### 3.3 Risk-of-Ruin Math

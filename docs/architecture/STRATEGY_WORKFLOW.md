@@ -195,6 +195,31 @@ Reuse before writing. A second implementation of a rule is the drift problem at 
 | Risk primitives | `scripts/libs_py/risk/` | ad-hoc sizing |
 | Walk-forward folds | `trading_framework/ml/walk_forward.py::sequential_evaluation_folds` | `walk_forward_split` — **DEPRECATED** |
 | Prop-firm viability | `trading_framework/ml/prop_firm_simulator.py` | `prop_eval_mc.py`, `06_prop_sim.py`, `simulate_prop_pass.py` — **frozen legacy** (ADR-021) |
+| Load / merge / enrich a frame | `scripts/libs_py/data/loader.py::DataLoader.load_enriched` | `pd.read_parquet` in a hunter — that breaks pillar 2 (§1.1) |
+| Session tagging | `scripts/libs_py/data/session_tagger.py` | a hand-rolled `between_time` mask |
+| Resampling 1m → 5m / 15m | `scripts/libs_py/data/resampler.py` | a bespoke `.resample()` with its own label/closed choice |
+| ATR, EMA, Bollinger, Keltner, VWAP, IB, chop, auction, internals, acceptance/rejection | `scripts/libs_py/features/` — one module each | an inline indicator. Every one of these already exists |
+| Trade-management policy (cover-the-queen, fixed target, breakeven trail, time stop, scaled exit, base hits) | `scripts/libs_py/risk/trade_policies.py::get_policy` | a new policy written inside a hunter — the hunter may not manage trades (§2.3) |
+| Signal / trade / session / account dataclasses | `scripts/libs_py/risk/risk_config.py` | a dict. Structured state is a dataclass here (§2.8) |
+| Session and account limits | `scripts/libs_py/risk/session_manager.py::SessionRiskManager`, `account_manager.py::AccountRiskManager` | per-strategy limit logic |
+| Slippage and commission | `trading_framework/core/execution.py` | a cost constant in strategy code |
+| Excursion (MFE/MAE) | `trading_framework/core/mfe_mae.py::compute_mfe_mae` | a second excursion loop |
+| Multi-strategy P&L | `trading_framework/core/portfolio_sim.py::PortfolioSimulator` | summing per-strategy equity curves |
+| Config | `trading_framework/config/config_loader.py::load_config`, `config/sessions.yaml` | module-level constants |
+
+⚠️ **`features/feature_registry.py::FeatureRegistry` exists but is NOT on the sanctioned
+path.** `run_backtest.py` enriches through `DataLoader.load_enriched` and never calls the
+registry; its only live callers are `run_raw_analysis.py`, `run_trade_optimization.py` and
+`scripts/strategies/logic/mean_reversion.py`. A hunter therefore computes what it needs
+from the frame it is handed, or the feature is added to `load_enriched` — **it does not
+declare required features and expect the orchestrator to resolve them.** The deleted engine
+spec (§13) described the opposite, which is one reason it could not stay.
+
+⚠️ **`ml/walk_forward.py::PurgedKFold` is real and is the wrong tool for a parameter
+sweep.** It purges and embargoes around a *fitted* model's labels. A sweep fits nothing, so
+there is no training set to purge — use `sequential_evaluation_folds`. The deleted spec
+named a `PurgedWalkForwardCV` that does not exist under that name, which is how "purged
+walk-forward" ended up asserted as a property of a path that has none.
 
 ### 2.5 Register it 🟢 ENFORCED (by failure)
 
@@ -234,6 +259,49 @@ The metrics dict carries at least: `total_return_%`, `win_rate_%`, `avg_mae_%`,
 > `num_trades`, `NT8ParityBacktester` returns `total_trades`. Never read either key
 > directly; call `run_backtest.trade_count(result)`, which raises rather than defaulting.
 > A `.get('num_trades', 0)` refused a real run that had taken 38 trades.
+
+### 2.8 Code conventions 🟡 CONVENTION
+
+Nothing checks any of these. They are here because a hunter that ignores them is harder to
+compare, not because a gate will stop you.
+
+| | Rule |
+|---|---|
+| **Python** | 3.11+. Type hints on every public signature |
+| **Structured data** | a `@dataclass`, not a dict. A dict's shape is discovered at the call site that breaks |
+| **Categorical state** | an `Enum`, not a string literal. `TradeDirection`, `TradeStatus`, `PolicyAction`, `RiskMode` already exist — reuse them |
+| **Time series** | a `DataFrame` with `datetime` as the index, tz-aware `America/New_York`. **The loader localises; a hunter never guesses a timezone** (§1.1) |
+| **Logging** | the `logging` module. **No `print` in library or hunter code** — a print inside a 200-trial sweep is 200 prints |
+| **Imports** | every library module importable on its own. No circular dependency between `libs_py/` and `trading_framework/` — the dependency runs one way, hunter → library |
+| **Names** | modules `snake_case.py` · classes `PascalCase` · functions `snake_case` · constants `UPPER_SNAKE_CASE` · config keys `snake_case` · registry keys `snake_case` (§1.2) |
+
+The one that has actually cost time is the timezone rule. Everything upstream is UTC
+parquet; `DataLoader.load_enriched` is the single place that localises. A hunter that
+re-localises, or that compares a naive `Timestamp` to a tz-aware index, raises
+`TypeError: Invalid comparison between dtype=datetime64[s] and Timestamp` — which
+`box_reversion` still does when window-filtered (§11).
+
+### 2.9 The three risk modes 🔴 NOT BUILT — a knob wired to nothing
+
+`sessions.yaml` carries `risk_mode: "raw" | "strategy" | "portfolio"`, `config_loader.py`
+parses it into a `RiskMode` enum, and two tests assert it round-trips. **Nothing branches on
+it.** Outside `config_loader.py` and `tests/`, `RiskMode.` appears in this repo exactly
+twice, both of them assertions in those tests.
+
+The intent, which is still the right design, was:
+
+| Mode | Active | Question it answers |
+|---|---|---|
+| `raw` | no stops, no targets, no limits — record the forward path of every signal | *what risk parameters should this strategy have?* (MFE/MAE, §7.1) |
+| `strategy` | trade-level risk only: stop, target, partials via a `trade_policies.py` policy | *what is the per-trade expectancy with realistic exits?* |
+| `portfolio` | trade + session + account limits (prop rules) | *does this survive a prop evaluation?* (ADR-021) |
+
+Treat the setting as **decoration until something reads it**. The reports it was meant to
+switch between are today selected by which function `run_backtest.py` calls, so setting
+`risk_mode` in a config file changes nothing and says nothing about what ran. This is the
+same shape as a config file that reads as protection which does not exist — do not cite it
+as evidence of what a run enforced, and if you wire it, name the reader here in the same
+edit.
 
 ---
 
@@ -904,7 +972,8 @@ computation becomes a new primitive written once in both languages. This is expl
 
 ## 13. What this document replaced
 
-**Eight documents, all deleted 2026-09-04.** `git log --follow` has every one of them.
+**Ten documents** — nine deleted 2026-09-04, the engine spec 2026-09-05.
+`git log --follow` has every one of them.
 
 | Deleted | What moved here | What was dropped, and why |
 |---|---|---|
@@ -917,6 +986,7 @@ computation becomes a new primitive written once in both languages. This is expl
 | `RESEARCH_FRAMEWORK.md` (54 ln) | nothing | described `FrameworkLoader` and a `data/loader.py` that **do not exist**, and a "7-layer protocol" no code implements |
 | `CLI_USER_GUIDE.md` (61 ln) | nothing | documented `run_backtest.py` as the CLI; superseded by §0.1 |
 | `HARMONISED_TRADING_ARCHITECTURE.md` (49 ln) | the three pillars and their prohibitions (§1.1) | its data-flow diagram, restated in one line |
+| `BACKTEST_ENGINE_ARCHITECTURE.md` (2,553 ln) | the code conventions (§2.8), the three risk modes and the fact that nothing reads them (§2.9), and the library map extended to the data / feature / execution / portfolio / config layers (§2.4) | **~2,000 lines of skeleton source.** It was a code-generation spec, and the code it specifies now exists — a spec kept beside its implementation is a second, non-executing copy that drifts. Its `StrategyBase` interface and `FeatureRegistry`-resolves-features design are dropped as **contradicted**, not compressed |
 
 ### Why none of them could stay as appendices
 
@@ -945,13 +1015,21 @@ Kept because the shapes recur, and every one of them survived by nobody re-deriv
   month** changes which trades exist. Both halves are stated correctly in §6.4.
 - **Combined Edge**: formula from one reading, thresholds from another — so the metric
   graded the spec's own A+ exemplar F (§7.2).
+- **`StrategyBase(ABC)` with `generate_signals` / `get_required_features` /
+  `get_search_space`** — a full abstract interface, specified in prose, that **no strategy
+  has ever implemented.** All 15 registered strategies implement `hunt()` +
+  `get_param_grid()` (§2.1), and `scripts/strategies/base.py` is still a three-line stub
+  reading *"Pending implementation as per IMPLEMENTATION_SPEC.md"* — **a file that does not
+  exist.** Two interfaces for the same thing, one of them dead, and the dead one was the
+  documented one.
+- **`data/parquet/<SYMBOL>_1m.parquet`** — the store is `data/<TICKER>_1m.parquet` plus
+  `data/live/live_storage_-{ticker}.parquet`, and the split between them matters (§4.2).
+- **`scripts/libs/`** throughout its directory tree — the package is `scripts/libs_py/`.
+  A path that is *almost* right is worse than a missing one; it reads as verified.
 
 ### What is deliberately NOT here
 
 - **`scripts/trading_framework/README.md`** — a package *map* (what each module is), not a
   procedure. It defers here for anything procedural.
-- **`docs/trading_system/BACKTEST_ENGINE_ARCHITECTURE.md`** — a 2,553-line code-generation
-  spec for the `libs_py` layer, whose named paths **do** exist. It is a spec for a different
-  layer, not a competing workflow. Left standing pending a decision.
 - **Dated session handovers** (`SESSION_9`/`SESSION_10`) — records of what was true on a
   date. Rewriting a record to match today is how a history stops being evidence.
