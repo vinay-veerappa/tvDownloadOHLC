@@ -166,10 +166,118 @@ def _compute_mfe_mae_compat(signals: pd.DataFrame, df: pd.DataFrame, mfe_mae_con
     return compute_mfe_mae(work_df, "signal", horizons)
 
 
-def run_optimization(args, config, df, engine=None):
+def build_engine(args, config, rec=None):
+    """THE execution engine for this run, built ONCE. Returns (engine, risk_params).
+
+    WHY ONCE. The search and the report used to build their own. `--engine`
+    defaults to `nt8_parity` (ADR-024), so the tearsheet came from
+    `NT8ParityBacktester` -- a queen/runner bracket at 10/30 bps, NT8's risk
+    state machine, commission and slippage. The optimiser, meanwhile, took
+    `engine or VectorizedBacktester()` and was never passed one, so every trial
+    was scored by the vectorised engine honouring the hunter's own
+    `target1_price`, with no bracket, no risk state machine and no costs.
+
+    Parameters were therefore SELECTED under one payoff function and JUDGED
+    under another. That is not a tolerance question: a parameter set that is
+    best under a fixed target need not be best under a two-leg bracket, and the
+    reported metric is then a measurement of a parameter set nothing chose.
+
+    Note what this makes visible rather than fixes: `NT8ParityBacktester`
+    ignores `target1_price` entirely and substitutes `queen_bps`/`runner_bps`,
+    so a hunter's declared target does not reach the sanctioned engine. That is
+    a real gap in the `hunt()` contract, recorded in section 11 -- but with one
+    engine on both sides it is at least the SAME gap on both sides.
+    """
+    from scripts.trading_framework.config.defaults import (
+        execution_policy, engine_max_trades_per_day)
+
+    if getattr(args, "engine", "nt8_parity") != "nt8_parity":
+        # `ticker` was omitted here once, so the engine silently fell back to
+        # its NQ1 point multiplier for every instrument.
+        return VectorizedBacktester(), {"leverage": 1.0, "ticker": args.ticker}
+
+    # THESE WERE READ OFF THE WRONG CONFIG OBJECT. Every one of the session-risk
+    # knobs below lives on `config.session_risk`, not `config.account_risk`, and
+    # four of the five were fetched with `getattr(config.account_risk, ...,
+    # <default>)` -- so they silently resolved to the hardcoded defaults
+    # 3 / 2 / 30 / 3 rather than to anything in sessions.yaml. The fifth used
+    # direct attribute access and raised `AttributeError`, which is the ONLY
+    # reason this was visible at all. Had that one also used getattr, the run
+    # would have succeeded with entirely fabricated risk limits.
+    #
+    # ONE DOCUMENT DECIDES THE EXECUTION POLICY. This block used to carry its
+    # own: 2 contracts, a 09:45-15:30 entry window, lunch filtered and a 15:55
+    # flatten, all as literals, against a frozen document (section 1.3) saying
+    # 1 contract, NO entry cut-off, lunch REPORTED rather than deleted, and a
+    # 15:45 flatten. Neither cited the other, so the canonical document decided
+    # nothing. The two that were not cosmetic: `filter_lunch=True` deleted the
+    # NY_LUNCH session that `sessions.reportPerSession` exists to MEASURE, and a
+    # 15:30 cut-off forbids the NY_PM setup BBMRReversionBot is built around --
+    # the exact case `lastEntryEt: null` was written for.
+    policy = execution_policy()
+    sr = config.session_risk
+    engine_cfg = {
+        "account_size": config.account_risk.starting_equity,
+        # `max_trades_per_day` has TWO claimants: sessions.yaml (a per-run
+        # engine setting) and the frozen document (which says a cap is an
+        # analysis OUTPUT, not an input). The frozen document wins, and
+        # sessions.yaml's value is recorded beside it so the disagreement is
+        # visible rather than resolved in silence.
+        "max_trades_per_day": engine_max_trades_per_day(
+            policy["max_trades_per_day"]),
+        "max_consecutive_losers": sr.max_consecutive_losers,
+        "pause_minutes": sr.pause_after_consecutive_minutes,
+        "hard_stop_losers": sr.hard_stop_consecutive_losers,
+        "daily_max_loss": sr.daily_max_loss,
+        "contracts": policy["contracts"],
+        "commission_per_contract_rt": policy["commission"],
+        "slippage_ticks": policy["slippage_ticks"],
+    }
+    risk_params = {
+        "ticker": args.ticker,
+        "queen_bps": 10.0,
+        "runner_bps": 30.0,
+        "earliest_entry_hhmm": policy["earliest_entry_hhmm"],
+        "latest_entry_hhmm": policy["latest_entry_hhmm"],
+        "flatten_hhmm": policy["flatten_hhmm"],
+        "filter_lunch": policy["filter_lunch"],
+    }
+    if rec is not None:
+        # RECORD THE POLICY AS RESOLVED, NOT AS PASSED. `max_trades_per_day` is
+        # reported as the null it is; the unreachable sentinel the engine needs
+        # never reaches an artifact, because "capped at 1000000000" and
+        # "uncapped" read differently to a human and only one of them is true.
+        rec._doc.setdefault("executionPolicy", {}).update(
+            {k: v for k, v in engine_cfg.items() if k != "max_trades_per_day"})
+        rec._doc["executionPolicy"].update(risk_params)
+        rec._doc["executionPolicy"].update({
+            "max_trades_per_day": policy["max_trades_per_day"],
+            "maxTradesPerDaySessionsYaml": sr.max_trades_per_day,
+            "source": policy["_source"],
+        })
+    return NT8ParityBacktester(**engine_cfg), risk_params
+
+
+def run_optimization(args, config, df, engine=None, risk_params=None):
     """Optuna study over the STRATEGY'S OWN grid, on embargoed windows.
 
-    Two defects lived here, both measured 2026-09-04 on NQ1:
+    Three defects lived here. The third is the one that made the other two
+    matter less than they look:
+
+    0. THE SEARCH SCORED UNDER A DIFFERENT ENGINE FROM THE REPORT. `engine` was
+       optional and nothing ever passed one, so the fallback below --
+       `VectorizedBacktester()` -- ranked every trial, while `--engine` defaults
+       to `nt8_parity` and the tearsheet came from `NT8ParityBacktester`. The
+       two do not share a payoff function: one honours the hunter's
+       `target1_price` with no costs, the other imposes a 10/30 bps queen/runner
+       bracket, NT8's risk state machine, commission and slippage. Parameters
+       were selected under one and judged under the other, so the reported
+       metric described a parameter set that nothing had chosen.
+
+       The fallback is gone. `build_engine` is the one constructor, and it is
+       called ONCE per run.
+
+    Two defects, both measured 2026-09-04 on NQ1:
 
     1. The parameter space was HARDCODED to BoxReversion's keys (`min_dist`,
        `sl_dist`, `tp_buffer`, `filter_high_vol`) regardless of `--strategy`.
@@ -202,8 +310,12 @@ def run_optimization(args, config, df, engine=None):
     print(f"[*] Evaluation windows: {len(folds)} x {width} bars "
           f"(+{EXIT_BUFFER_BARS} exit buffer, {EMBARGO_BARS} embargo)")
 
+    if engine is None:
+        engine, risk_params = build_engine(args, config)
     objective = make_cv_objective(
-        strategy, df, engine or VectorizedBacktester(), args.ticker, grid, folds)
+        strategy, df, engine, args.ticker, grid, folds, risk_params=risk_params)
+    print("[*] Search engine: {} (the one the report will use)".format(
+        type(engine).__name__))
 
     study_name = f"opt_{args.ticker}_{args.strategy}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     optimizer = OptunaOptimizer(study_name=study_name)
@@ -305,13 +417,22 @@ def run_research_pipeline(args, rec=None, output_dir=None):
                          "the pipeline ran on. Valid for fixed parameters, not "
                          "for a searched result.")
 
+        # BUILT ONCE, BEFORE THE SEARCH. The search and the report used to each
+        # build their own, and they were not the same engine -- see
+        # `build_engine`. One object now scores the trials and produces the
+        # tearsheet, so "best" and "reported" are statements about the same
+        # payoff function.
+        engine, risk_dict = build_engine(args, config, rec)
+
         best_params = {}
         trials_df = None
         if args.optimize:
             with rec.stage("optimize") as st:
-                best_params, opt_meta = run_optimization(args, config, df_search)
+                best_params, opt_meta = run_optimization(
+                    args, config, df_search, engine=engine, risk_params=risk_dict)
                 trials_df = opt_meta.pop("_trialsDf", None)
-                st.detail(requestedTrials=int(args.trials),
+                st.detail(searchEngine=type(engine).__name__,
+                          requestedTrials=int(args.trials),
                           studyName=opt_meta["studyName"],
                           bestValue=opt_meta["bestValue"],
                           completedTrials=(int(len(trials_df))
@@ -345,87 +466,8 @@ def run_research_pipeline(args, rec=None, output_dir=None):
     
         # 4. Backtest Engine Execution
         print(f"* Running backtest engine ({args.engine})...")
-        if getattr(args, "engine", "nt8_parity") == "nt8_parity":
-            # THESE WERE READ OFF THE WRONG CONFIG OBJECT. Every one of the
-            # session-risk knobs below lives on `config.session_risk`, not
-            # `config.account_risk`, and four of the five were fetched with
-            # `getattr(config.account_risk, ..., <default>)` -- so they silently
-            # resolved to the hardcoded defaults 3 / 2 / 30 / 3 rather than to
-            # anything in sessions.yaml. The fifth used direct attribute access
-            # and raised `AttributeError: 'AccountRiskConfig' object has no
-            # attribute 'daily_loss_limit'`, which is the ONLY reason this was
-            # visible at all: `--engine nt8_parity` is the ADR-024 DEFAULT, so a
-            # default invocation of this pipeline had never completed. Had that
-            # one also used getattr, the run would have succeeded with entirely
-            # fabricated risk limits.
-            #
-            # Read from session_risk, and let a missing field raise rather than
-            # substituting a number nobody chose -- a default and an erasure are
-            # indistinguishable once they are in a result.
-            # ONE DOCUMENT DECIDES THE EXECUTION POLICY. This block used to
-            # carry its own: 2 contracts, a 09:45-15:30 entry window, lunch
-            # filtered and a 15:55 flatten, all as literals, against a frozen
-            # document (section 1.3) saying 1 contract, NO entry cut-off, lunch
-            # REPORTED rather than deleted, and a 15:45 flatten. Neither cited
-            # the other, so the canonical document decided nothing and the
-            # result was produced under a policy no one had chosen.
-            #
-            # The two that were not cosmetic: `filter_lunch=True` deleted the
-            # NY_LUNCH session that `sessions.reportPerSession` exists to
-            # MEASURE, and a 15:30 cut-off forbids the NY_PM setup that
-            # BBMRReversionBot is built around -- the exact case `lastEntryEt:
-            # null` was written for.
-            from scripts.trading_framework.config.defaults import (
-                execution_policy, engine_max_trades_per_day)
-            policy = execution_policy()
-            sr = config.session_risk
-            engine_cfg = {
-                "account_size": config.account_risk.starting_equity,
-                # `max_trades_per_day` has TWO claimants: sessions.yaml (a
-                # per-run engine setting) and the frozen document (which says
-                # a cap is an analysis OUTPUT, not an input). The frozen
-                # document wins, and sessions.yaml's value is recorded beside
-                # it so the disagreement is visible rather than resolved in
-                # silence.
-                "max_trades_per_day": engine_max_trades_per_day(
-                    policy["max_trades_per_day"]),
-                "max_consecutive_losers": sr.max_consecutive_losers,
-                "pause_minutes": sr.pause_after_consecutive_minutes,
-                "hard_stop_losers": sr.hard_stop_consecutive_losers,
-                "daily_max_loss": sr.daily_max_loss,
-                "contracts": policy["contracts"],
-                "commission_per_contract_rt": policy["commission"],
-                "slippage_ticks": policy["slippage_ticks"],
-            }
-            engine = NT8ParityBacktester(**engine_cfg)
-            risk_dict = {
-                'ticker': args.ticker,
-                'queen_bps': 10.0,
-                'runner_bps': 30.0,
-                'earliest_entry_hhmm': policy["earliest_entry_hhmm"],
-                'latest_entry_hhmm': policy["latest_entry_hhmm"],
-                'flatten_hhmm': policy["flatten_hhmm"],
-                'filter_lunch': policy["filter_lunch"],
-            }
-            # RECORD THE POLICY AS RESOLVED, NOT AS PASSED. `max_trades_per_day`
-            # is reported as the null it is; the unreachable sentinel the engine
-            # needs never reaches an artifact, because "capped at 1000000000"
-            # and "uncapped" read differently to a human and only one is true.
-            rec._doc.setdefault("executionPolicy", {}).update(
-                {k: v for k, v in engine_cfg.items() if k != "max_trades_per_day"})
-            rec._doc["executionPolicy"].update(risk_dict)
-            rec._doc["executionPolicy"].update({
-                "max_trades_per_day": policy["max_trades_per_day"],
-                "maxTradesPerDaySessionsYaml": sr.max_trades_per_day,
-                "source": policy["_source"],
-            })
-            result = engine.run(signals, df_report, risk_dict)
-        else:
-            engine = VectorizedBacktester()
-            # `ticker` was omitted, so the engine silently fell back to its
-            # NQ1 point multiplier for every instrument.
-            result = engine.run(signals, df_report, {'leverage': 1.0, 'ticker': args.ticker})
-    
+        result = engine.run(signals, df_report, risk_dict)
+
         # 5. Advanced Research Analysis (MFE/MAE)
         rec.declare_engine(engine)
         rec.record_alignment("report", result.get('signal_alignment'))

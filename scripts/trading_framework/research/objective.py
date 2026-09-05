@@ -36,6 +36,7 @@ import optuna
 import pandas as pd
 
 from scripts.trading_framework.ml.walk_forward import sequential_evaluation_folds
+from scripts.trading_framework.provenance.run_record import trade_count
 
 # Must match VectorizedBacktester's MAX_SEARCH, or the buffer reserved per fold
 # does not cover the forward search the engine actually performs.
@@ -328,7 +329,8 @@ def probe_causality(strategy: Any, data: pd.DataFrame, params: Dict[str, Any],
 
 def evaluate_folds(strategy: Any, data: pd.DataFrame, params: Dict[str, Any],
                    engine: Any, ticker: str, folds: Sequence[Dict[str, Any]],
-                   trial: Optional["optuna.Trial"] = None) -> List[float]:
+                   trial: Optional["optuna.Trial"] = None,
+                   risk_params: Optional[Dict[str, Any]] = None) -> List[float]:
     """Score one parameter set across pre-computed evaluation windows.
 
     The three framing rules, in one place:
@@ -360,13 +362,21 @@ def evaluate_folds(strategy: Any, data: pd.DataFrame, params: Dict[str, Any],
             continue
 
         score_df = data.iloc[f["score_start"]: f["score_end"]]
-        metrics = engine.run(in_window, score_df, {
-            "leverage": 1.0,
-            "ticker": ticker,
-            "strict_alignment": True,
-        })
+        # THE SEARCH SCORES UNDER THE REPORT'S EXECUTION POLICY. This dict used
+        # to be written out here, which was fine only while the engine was
+        # always `VectorizedBacktester` and ignored all of it. Passing the real
+        # engine without its risk params would score every fold under the
+        # engine's own signature defaults instead of the frozen document's.
+        rp = dict(risk_params or {"leverage": 1.0})
+        rp.update({"ticker": ticker, "strict_alignment": True})
+        metrics = engine.run(in_window, score_df, rp)
 
-        if int(metrics.get("num_trades", 0)) == 0:
+        # `.get("num_trades", 0)` -- the parity engine calls it `total_trades`,
+        # so under that engine EVERY fold scored EMPTY_FOLD_SCORE and the search
+        # optimised a constant. `trade_count` knows both names and RAISES on
+        # neither, which is the difference between "took no trades" and "could
+        # not be measured".
+        if trade_count(metrics) == 0:
             scores.append(EMPTY_FOLD_SCORE)
         else:
             scores.append(float(metrics.get("sharpe_ratio", EMPTY_FOLD_SCORE)))
@@ -386,12 +396,13 @@ def build_folds(n_samples: int, n_splits: int = 3) -> List[Dict[str, Any]]:
 
 def make_cv_objective(strategy: Any, data: pd.DataFrame, engine: Any, ticker: str,
                       grid: Dict[str, Any],
-                      folds: Sequence[Dict[str, Any]]) -> Callable:
+                      folds: Sequence[Dict[str, Any]],
+                      risk_params: Optional[Dict[str, Any]] = None) -> Callable:
     """An Optuna objective over the strategy's OWN grid, on fixed windows."""
     def objective(trial: "optuna.Trial") -> float:
         params = {k: suggest_from_grid(trial, k, spec) for k, spec in grid.items()}
         scores = evaluate_folds(strategy, data, params, engine, ticker, folds,
-                                trial=trial)
+                                trial=trial, risk_params=risk_params)
         return float(np.mean(scores)) if scores else EMPTY_FOLD_SCORE
 
     return objective
