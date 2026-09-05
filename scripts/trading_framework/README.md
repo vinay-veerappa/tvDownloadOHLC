@@ -1,61 +1,102 @@
-# Statistical Trading Framework v2
+# `trading_framework` — package map
 
-The Statistical Trading Framework is a unified, 7-layer institutional research pipeline. This framework enables seamless fusion of 18+ years of historical Parquet data (e.g. `NQ1_1m.parquet`) with millisecond live storage (`live_storage_-NQ.parquet`), automatically conforming to ADR-002 (%-normalized price distance) logic for institutional-grade quantitative backtesting.
+> **This file orients you inside the package. It is NOT the procedure.**
+> The procedure — how to write a strategy, back-test it, validate it in NT8,
+> compare the two, report on it, store it and promote it — is
+> [`docs/architecture/STRATEGY_WORKFLOW.md`](../../docs/architecture/STRATEGY_WORKFLOW.md).
+> Read that first and do not reconstruct a workflow from this file.
+>
+> **Rewritten 2026-09-04.** The previous version described a system that did not
+> exist; every false claim it made is listed in the last section, because the
+> shape of those errors is worth knowing.
 
-## Setup & Architecture Overview
-
-The system architecture spans 7 layers to cleanly separate data ingestion from alpha generation and tear-sheet reporting.
-
-### 1. Data Loader (Layer 1)
-- `FrameworkLoader` inside `scripts/trading_framework/data/loader.py`
-- Connects disjointed historical indices with real-time live trading pipelines. Both pipelines are intrinsically normalized to purely naive `DatetimeIndex` structures to securely merge years ranging from 2006 up through yesterday. 
-
-### 2. Event Splicing & Market Regimes (Layers 2 & 3)
-- Connects to SQLite (Prisma) to inject macroeconomic catalysts dynamically.
-- Segments the time series data across normalized clusters natively based on Volatility. 
-
-### 3. Logic Execution & Signal Mapping (Layer 4)
-- Integrates legacy script strategies (like `NQStatsAdapter`) into modern Pandas series processing logic.
-- Resolves daily/hourly data into the precise localized 1-minute `ffill` required to cleanly vectorize strategies into buy/sell matrices (`1` or `-1`).
-
-### 4. Vectorized Engines (Layer 5) 
-- `VectorizedBacktester` within `scripts/trading_framework/core/backtest_engine.py` processes raw integer signal outputs against index-matched returns series, generating net calculations, incorporating estimated slippage, and delivering `sharpe_ratio`, `max_drawdown_%`, and the underlying `equity_curve`.
-
-### 5. Research & Orchestration (Layer 6 & 7)
-- Hyperparameter optimization is fully handled by `OptunaOptimizer` (which wraps `optuna.create_study`).
-- The research suite seamlessly splices `In-Sample` ranges against purely untainted `Out-of-Sample` ranges.
-- Results generate fully interactive HTML institutional Tear Sheets.
-
-## Core Components
-
-- **Config Loader**: Dynamic validation of YAML settings with ADR-009 "Contract Duality" scaling.
-- **Engine**: Precision backtest simulator with slippage and commission modeling.
-- **Risk Layer**: Institutional session-level and account-level risk enforcement.
-- **ML Pipeline**: Purged Walk-Forward Cross-Validation to prevent data leakage.
-
-## ADR-009: Data vs. Execution Duality
-
-The framework allows for **institutional-grade data ingestion** (Minis) with **retail-grade risk execution** (Micros). By setting `use_micro_multipliers: true` in `sessions.yaml`, the system automatically re-values standard Mini contracts to their Micro equivalents (e.g., NQ $20.00 -> $2.00 per point).
-
-### Configuration Standard
-
-All framework modules now rely on the standalone `load_config()` utility located in `config_loader.py`. This ensures that ADR protocols are applied consistently before any strategy logic is executed.
-
-## User Guide: Strategy Verification
-
-You can instantly deploy a full top-to-bottom strategy test by executing `lifecycle_runner.py` directly from the base `venv`:
+## The one command
 
 ```powershell
-# Set root path reference
-$env:PYTHONPATH = "C:\Users\vinay\tvDownloadOHLC"
-
-# Launch 2-trial Lifecycle Strategy test with Institutional Reports
-.\.venv\Scripts\python.exe scripts/trading_framework/research/lifecycle_runner.py
+.\.venv\Scripts\python.exe -m scripts.trading_framework.workflow `
+    --strategy <registry_key> --ticker NQ1 --price-adjustment unadjusted `
+    --optimize --trials 200 --oos-start 2025-01-01
 ```
 
-### Outputs
+`workflow.py` is the single sanctioned entry point. It runs every stage under one
+run record and ends by printing the promotion checklist, each criterion PASS /
+FAIL / **NOT EVALUATED**. Exit 0 = all passed, 1 = a criterion failed, 2 = a
+required stage raised.
 
-The test will dump all metrics sequentially on the CLI output, including dynamic OOS comparison thresholds. Your tear sheets will be immediately dropped to the `/reporting/outputs/` directory in interactive HTML format:
+**Do not assemble a pipeline by hand.** 35 bespoke `run_*` scripts already exist
+across this repo and are frozen; they are the reason results were not comparable
+to each other.
 
-- `Lifecycle_Test_IS_tearsheet.html`
-- `Lifecycle_Test_OOS_tearsheet.html`
+## What is in here
+
+| Path | Role |
+|---|---|
+| `workflow.py` | **the entry point.** Orders the stages, owns the run record, prints the checklist |
+| `run_backtest.py` | the research pipeline `workflow.py` drives: load → split → gates → optimise → backtest → prop sim → reports |
+| `core/backtest_engine.py` | `VectorizedBacktester` + `validate_signal_geometry` (refuses impossible stop/target geometry) |
+| `core/nt8_parity_backtester.py` | the bracket/leg engine. **Use this for anything compared to NT8** |
+| `core/execution.py`, `mfe_mae.py` | slippage/commission primitives, excursion maths |
+| `provenance/run_record.py` | the run record + append-only ledger. A result is reportable only if attributable |
+| `research/objective.py` | the **one** CV objective, the grid-liveness precheck and the causality probe |
+| `research/lifecycle_runner.py`, `lifecycle_v3.py` | **legacy runners.** Not the sanctioned path. Do not extend |
+| `ml/walk_forward.py` | `sequential_evaluation_folds` — equal windows, exit buffer reserved from the end |
+| `ml/prop_firm_simulator.py` | **the only** prop-firm evaluator (ADR-021). `FIRM_PROFILES` lives here |
+| `ml/optimizer.py` | `OptunaOptimizer` |
+| `ml/leakage_guard.py` | NaN/feature-correlation audit. Not yet a workflow stage |
+| `reporting/institutional_metrics.py` | **the one** implementation of The Edge System metrics |
+| `reporting/tearsheet.py` | the markdown tearsheet (delegates its metrics) |
+| `reporting/risk_profiler.py` | thin wrapper over the metrics module; adds `ror_pct` |
+| `reporting/optimization_summary.py` | per-trial HTML report, emitted when `--optimize` ran |
+| `reporting/mfe_mae_report.py` | excursion matrix + plots |
+| `reporting/monte_carlo.py` | bootstrap drawdown distribution. **Unwired on purpose** — unseeded, and a second thing called "Monte Carlo" beside the prop simulator |
+| `reporting/reporter.py` | `QuantReporter` (quantstats). Reachable only from the legacy runners |
+| `strategies/registry.py` | `--strategy` resolves through `STRATEGY_FACTORY_REGISTRY` |
+| `config/config_loader.py` | `load_config()`; `config/sessions.yaml` is the settings file |
+| `library/adapters/` | adapters wrapping legacy evaluators (e.g. `NQStatsAdapter`) |
+| `signals/signal_schema.py` | the canonical signal frame |
+| `tests/` | run with `pytest scripts/trading_framework/tests -q` |
+
+`research.db` / `research_optuna.db` are Optuna study storage and are **not
+tracked**. Run artifacts go to `results/RESEARCH/_workflow/<TICKER>/<RUN_ID>/`,
+never to a fixed path.
+
+## Where the data comes from
+
+The pipeline loads via `scripts/libs_py/data/loader.py::DataLoader.load_enriched`
+(historical parquet + internals + session tags + 5m resample + VIX/VVIX). For
+current/live analysis read `data/live/live_storage_-{ticker}.parquet` directly.
+⚠️ Three classes are called `DataLoader` in this repo — **name the module**.
+
+## Metrics
+
+Defined by `docs/strategies/9_30_breakout/0930_AllDay/analysis/RISK_PROFILE_DEFINITIONS.md`
+("The Edge System") and implemented once in `reporting/institutional_metrics.py`,
+which is tested against that document's own ten worked systems. Two things worth
+carrying:
+
+- **Combined Edge is scale-free** (`EV_R × PF`). The dollar reading grades the
+  account, not the strategy — the same edge scored D on $25k and A on $250k.
+- **Risk of ruin is measured against the prop TRAILING DRAWDOWN**, not the
+  account, and every report prints the basis beside the number. Measured against
+  the account it had exactly two reachable values, `{0%, 100%}`.
+
+## What the previous version of this file claimed, and why it was wrong
+
+Kept because the failure modes recur, not as an apology.
+
+| Claim | Reality |
+|---|---|
+| `FrameworkLoader` in `trading_framework/data/loader.py` | **neither the class nor the directory exists** |
+| `config_loader.py` at the package root | it is in `config/` |
+| "fully interactive HTML institutional Tear Sheets" | the tearsheet is **markdown** |
+| outputs `Lifecycle_Test_IS_tearsheet.html` / `_OOS_tearsheet.html` | **no code anywhere produces those files** |
+| run `lifecycle_runner.py` for a full test | it is legacy and is not the sanctioned path |
+| Layers 2 & 3 splice macro catalysts from SQLite/Prisma and segment regimes | **no such code exists in the package** |
+| "**Purged** Walk-Forward Cross-Validation to prevent data leakage" | `walk_forward_split` is marked `DEPRECATED -- expanding-window split with **NO purge and NO embargo**` |
+
+The last one is the one to remember: **a document claiming a safety property the
+code explicitly denies having.** It is worse than silence, because it stops the
+reader checking. The same rule that governs
+[`STRATEGY_WORKFLOW.md`](../../docs/architecture/STRATEGY_WORKFLOW.md) applies to
+this file — never state that something is enforced without naming the enforcer in
+the same edit, and never quote a number you did not just measure.
