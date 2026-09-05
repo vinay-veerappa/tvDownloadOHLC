@@ -9,10 +9,13 @@ That distinction is easy to lose by accident. `not self.failed` reads as "nothin
 went wrong" and is true of a run that did nothing at all. These tests hold the
 line where it is easy to cross.
 """
+import pathlib
+
 import pytest
 
 from scripts.trading_framework.workflow import (
     CRITERIA, Checklist, FAIL, NOT_EVALUATED, PASS, _find_alignment,
+    _prop_viability, exit_code,
 )
 
 
@@ -236,3 +239,174 @@ def test_stages_are_visible_before_the_record_is_finalized():
         st.detail(causal=True)
     names = [s["name"] for s in rec.doc["stages"]]
     assert "causality_probe" in names
+
+
+# --------------------------------------------------------------------------- #
+# The exit code. Added 2026-09-05 after a review found `main` returning
+# `1 if check.failed else 0` -- `not failed`, the reading §0.1 disavows.
+# --------------------------------------------------------------------------- #
+
+def test_a_checklist_that_measured_nothing_does_not_exit_zero():
+    """THE NEGATIVE CONTROL. This is the defect, stated as a test.
+
+    Every criterion NOT EVALUATED: nothing failed, and nothing was proved. Under
+    `not failed` this returned 0 and a CI gate would have called it a pass.
+    """
+    c = Checklist()
+    _all(c, NOT_EVALUATED)
+    assert not c.failed, "precondition: nothing FAILED"
+    assert exit_code(c) == 1
+
+
+def test_one_unmeasured_criterion_is_enough_to_lose_exit_zero():
+    c = Checklist()
+    _all(c, PASS)
+    c.set(CRITERIA[-1][0], NOT_EVALUATED)
+    assert exit_code(c) == 1
+
+
+def test_all_pass_exits_zero():
+    c = Checklist()
+    _all(c, PASS)
+    assert exit_code(c) == 0
+
+
+def test_a_failure_exits_one():
+    c = Checklist()
+    _all(c, PASS)
+    c.set(CRITERIA[0][0], FAIL)
+    assert exit_code(c) == 1
+
+
+def test_a_raised_required_stage_outranks_a_green_checklist():
+    """2 is "inconclusive", and it must not be maskable by a full green."""
+    c = Checklist()
+    _all(c, PASS)
+    assert exit_code(c, failed_hard="resolve") == 2
+
+
+def test_exit_zero_agrees_with_validated_for_every_uniform_checklist():
+    for status in (PASS, FAIL, NOT_EVALUATED):
+        c = Checklist()
+        _all(c, status)
+        assert (exit_code(c) == 0) is c.validated, status
+
+
+# --------------------------------------------------------------------------- #
+# §9 and CRITERIA have to be the same list. The review found §9 carrying 12
+# checkboxes against 10 criteria: two items the document called part of
+# "validated" could not block it, because the tool did not know they existed.
+# --------------------------------------------------------------------------- #
+
+_DOC = pathlib.Path(__file__).resolve().parents[3] / "docs" / "architecture" / "STRATEGY_WORKFLOW.md"
+
+
+def _doc_checkboxes():
+    text = _DOC.read_text(encoding="utf-8")
+    start = text.index('## 9. Definition of "validated"')
+    end = text.index("## 10.", start)
+    return [ln.strip() for ln in text[start:end].splitlines()
+            if ln.strip().startswith("- [ ]")]
+
+
+def test_the_document_is_present_and_section_9_is_findable():
+    """Guards the two tests below against passing vacuously on a renamed heading."""
+    assert _DOC.is_file(), _DOC
+    assert len(_doc_checkboxes()) > 0
+
+
+def test_section_9_has_exactly_one_checkbox_per_evaluated_criterion():
+    boxes = _doc_checkboxes()
+    assert len(boxes) == len(CRITERIA), (
+        "section 9 lists {} items, workflow.py evaluates {}. A criterion the "
+        "document calls part of 'validated' but CRITERIA omits cannot block "
+        "it: {}".format(len(boxes), len(CRITERIA), boxes))
+
+
+def test_the_two_criteria_the_review_found_missing_are_evaluated():
+    keys = {k for k, _ in CRITERIA}
+    assert "prop_viability" in keys
+    assert "reports_attributed" in keys
+
+
+# --------------------------------------------------------------------------- #
+# prop_viability reads the run record, not a live object.
+# --------------------------------------------------------------------------- #
+
+def _stage(**details):
+    """Build the stage map the way a REAL run builds it.
+
+    The first version of this helper hand-wrote `{"details": ...}`. The recorder
+    serialises `_Stage.details` under the key **"detail"**, so `_prop_viability`
+    read `{}` on every real run and reported FAIL "evaluated by 'None'" -- while
+    this test passed, because the test restated my assumption instead of asking
+    the recorder. Ask the recorder.
+    """
+    from scripts.trading_framework.provenance.run_record import RunRecord
+    rec = RunRecord("RUN_TEST_PROP", strategy_key="t", ticker="NQ1")
+    with rec.stage("prop_firm_sim") as st:
+        st.detail(**details)
+    return {s["name"]: s for s in rec.stages}
+
+
+def test_the_stage_fixture_uses_the_recorders_own_key():
+    """Negative control for the helper above: pin the serialised key name."""
+    m = _stage(evaluator="PropFirmSimulator")
+    assert "detail" in m["prop_firm_sim"], m["prop_firm_sim"].keys()
+    assert m["prop_firm_sim"]["detail"]["evaluator"] == "PropFirmSimulator"
+
+
+class _Ctx:
+    def __init__(self):
+        self.check = Checklist()
+
+
+def test_prop_viability_passes_on_a_rate_above_the_threshold():
+    ctx = _Ctx()
+    _prop_viability(ctx, _stage(evaluator="PropFirmSimulator", passRatePct=71.0,
+                                grade="B", primaryProfile="Apex 50k",
+                                passThresholdPct=65.0))
+    assert ctx.check.items["prop_viability"].status == PASS
+
+
+def test_prop_viability_fails_on_a_rate_below_the_threshold():
+    ctx = _Ctx()
+    _prop_viability(ctx, _stage(evaluator="PropFirmSimulator", passRatePct=41.0,
+                                grade="D", primaryProfile="Apex 50k",
+                                passThresholdPct=65.0))
+    assert ctx.check.items["prop_viability"].status == FAIL
+
+
+def test_prop_viability_refuses_an_evaluator_adr_021_froze():
+    ctx = _Ctx()
+    _prop_viability(ctx, _stage(evaluator="prop_eval_mc", passRatePct=99.0))
+    c = ctx.check.items["prop_viability"]
+    assert c.status == FAIL
+    assert "ADR-021" in c.detail
+
+
+def test_prop_viability_is_unevaluated_when_the_stage_was_skipped():
+    from scripts.trading_framework.provenance.run_record import RunRecord
+    rec = RunRecord("RUN_TEST_PROP", strategy_key="t", ticker="NQ1")
+    rec.skip_stage("prop_firm_sim", "no firm profile configured")
+    ctx = _Ctx()
+    _prop_viability(ctx, {s["name"]: s for s in rec.stages})
+    c = ctx.check.items["prop_viability"]
+    assert c.status == NOT_EVALUATED
+    assert "no firm profile configured" in c.detail
+
+
+def test_prop_viability_is_unevaluated_when_no_trades_reached_the_simulator():
+    ctx = _Ctx()
+    _prop_viability(ctx, _stage(evaluator="PropFirmSimulator", passRatePct=None,
+                                skippedReason="no trades_detailed"))
+    c = ctx.check.items["prop_viability"]
+    assert c.status == NOT_EVALUATED
+    assert "no trades_detailed" in c.detail
+
+
+def test_prop_viability_is_unevaluated_when_the_stage_is_absent():
+    """An absent stage must not read as "not applicable"."""
+    ctx = _Ctx()
+    _prop_viability(ctx, {})
+    assert ctx.check.items["prop_viability"].status == NOT_EVALUATED

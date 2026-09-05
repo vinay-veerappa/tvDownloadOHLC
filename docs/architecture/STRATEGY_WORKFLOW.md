@@ -4,9 +4,10 @@
 > running, or judging a strategy in this repository.
 >
 > **Created**: 2026-09-04 · **Owner**: this is the ONLY document for strategy work.
-> Eight others were subsumed into it and deleted the same day — the procedure, the
-> reasoning, the build order, the metric spec and three package/CLI overviews. §12 records
-> what moved where and what was dropped. **If you find another document describing how to
+> **Ten documents** were subsumed into it and deleted — nine on 2026-09-04, the engine
+> code-generation spec on 2026-09-05: the procedure, the reasoning, the build order, the
+> metric spec, the engine spec and three package/CLI overviews. **§13** records what moved
+> where and what was dropped. **If you find another document describing how to
 > build, run or judge a strategy in this repo, it is stale — read this one.**
 >
 > The only companion is `scripts/trading_framework/README.md`, which is a *package map*
@@ -54,8 +55,16 @@ with each criterion marked PASS, FAIL or NOT EVALUATED.
 | guess a price basis | `--price-adjustment` has no default |
 | report in-sample | `--optimize` without `--oos-start` is rejected at argument parsing |
 
-Exit codes: **0** every criterion passed · **1** a criterion FAILED · **2** a
-required stage raised.
+Exit codes, from `workflow.py::exit_code`: **0** every criterion PASSED · **1** not
+validated — something FAILED *or* something was never measured · **2** a required stage
+raised, so the run is inconclusive rather than failed.
+
+> There is deliberately **no code for "nothing failed but not everything was measured"**;
+> that is `1`, because it is not a pass. This was wrong until 2026-09-05: `main` returned
+> `1 if check.failed else 0` — the `not failed` reading the row above disavows — so a run
+> in which **every** criterion was NOT EVALUATED printed "NOT validated" and exited **0**.
+> Any CI gate reading the status would have scored a run that measured nothing as a pass.
+> Pinned by `test_workflow_checklist.py::test_a_checklist_that_measured_nothing_does_not_exit_zero`.
 
 Everything below is the reference for what those stages do and why. **You should
 not need to run any other script.** If you find yourself assembling a pipeline by
@@ -165,10 +174,10 @@ Signals that fail are **dropped and counted**, attributed to the first rule they
 
 - **No trade management, no P&L, no position sizing.** It is a pure signal hunter; the
   engine owns execution — "hunters vs execution", the rule the deleted design standard
-  was built around (§12).
+  was built around (§13).
 - **No data loading.** It receives a frame.
 - **No look-ahead.** Not "be careful" — the causality probe (§4.4) will demonstrate it.
-- **No own backtest loop.** 35 such scripts already exist and are frozen (§4.1).
+- **No own backtest loop.** Dozens already exist and are frozen (§4.1).
 - **No row-by-row iteration.** `for _, row in df.iterrows()` and `for i in range(len(df))`
   are forbidden — roughly 100× slower, and they make a 200-arm Optuna sweep impractical,
   which is the entire reason the Python side exists. Use boolean masks:
@@ -376,8 +385,16 @@ Its stages, in order, each recorded with a verdict:
 `--optimize` may be passed only with `--oos-start`, and `--price-adjustment` has
 no default. Both are argument-level refusals, not warnings.
 
-**Still true: 35 bespoke `run_*` scripts exist and nothing forbids a 36th.** They
-are frozen — do not extend them, do not copy their pattern. Making the entry point
+**Still true: `run_*.py` scripts are everywhere and nothing forbids one more.** They
+are frozen — do not extend them, do not copy their pattern. This used to say "35", twice,
+and no denominator reproduced it (51 exist under `scripts/`; 2 under
+`trading_framework/`; the backtest-ish cluster is 38). **Count them, do not quote this
+line:**
+
+```powershell
+Get-ChildItem scripts -Filter "run_*.py" -Recurse -File | Measure-Object
+```
+ Making the entry point
 *exclusive* is plan §2.4 and needs a CI gate this repo does not yet have (§11).
 
 ### 4.2 Which data 🟡 CONVENTION
@@ -413,7 +430,8 @@ The ledger is appended **twice** — once at open, once at finalize — so a run
 still leaves a trace. **An abandoned arm that vanishes from the ledger cannot be counted,
 and deflated statistics need N.**
 
-*Enforcer*: `provenance/run_record.py`, 53 tests. `trade_count()` **raises** rather than
+*Enforcer*: `provenance/run_record.py`, 49 tests in `tests/test_run_record.py`
+(measured 2026-09-05). `trade_count()` **raises** rather than
 defaulting to 0 — it had already refused a real 38-trade run because the key was named
 `total_trades` instead of `num_trades`.
 
@@ -619,7 +637,9 @@ places a *limit* order at exactly that price.
 range-based stop (`StopRMult × range`) and an ATR-based stop (`StopAtrMult × atr`) differ
 by **8–16×**. Both sides must also use the same same-bar tie-break when stop and target sit
 inside one bar — **document which**, because a bar cannot tell you what arrived first
-(this repo's adverse-fill default is in `_resolve_ambiguity_policy`).
+(this repo's adverse-fill default is
+`scripts/execution/nt8_parity_engine.py::_resolve_ambiguity_policy` — **not** in
+`trading_framework/`; §4.2's name-the-module rule applies to this document too).
 
 **Exit / liquidation.** The flatten time must match exactly. NT8 `FlattenBy = 1550`
 flattens at 15:50 ET, so Python must exit on the close of the **15:49** bar — not 15:59.
@@ -682,13 +702,16 @@ test, but a different **contract** changes which trades exist at all.
 
 ### 7.2 Metric definitions 🟢 ENFORCED (one implementation, spec-tested)
 
-The metric spec is **`docs/strategies/9_30_breakout/0930_AllDay/analysis/RISK_PROFILE_DEFINITIONS.md`**
-("The Edge System"), and `scripts/trading_framework/reporting/institutional_metrics.py`
-is its single implementation. `tearsheet.py` and `risk_profiler.py` both delegate to it;
+The metric spec **was** `RISK_PROFILE_DEFINITIONS.md` ("The Edge System"), subsumed into
+this section and deleted 2026-09-04 (§13). It no longer exists as a file — its authority
+now lives in `scripts/trading_framework/reporting/institutional_metrics.py`, the single
+implementation, and in the ten worked systems carried into
+`tests/test_institutional_metrics.py::SPEC_SYSTEMS`. The `spec §5` / `spec §13` citations
+below refer to that deleted document as it stood; `git log --follow` has it. `tearsheet.py` and `risk_profiler.py` both delegate to it;
 they used to hold two copies of every formula that disagreed on the units of `ror`.
 
 *Enforcer*: `tests/test_institutional_metrics.py` runs the spec's **own ten worked systems**
-(spec §13) through the grader. That is the only way to check a grader that would otherwise
+(the deleted spec's §13, preserved as `SPEC_SYSTEMS`) through the grader. That is the only way to check a grader that would otherwise
 be checked against itself — and it is what found both defects below.
 
 > **Two corrections, decided 2026-09-04.**
@@ -820,10 +843,22 @@ result and must be reported as one.
 - [ ] Layer 1 rule parity green for every shared primitive it uses (§6.1) 🟡
 - [ ] An NT8 trade list is **committed** for a pinned range and profile (§5.4) 🔴
 - [ ] Trade-set parity meets its stated recall/precision, per-leg (§6.3) 🔴
-- [ ] Prop-firm viability via `PropFirmSimulator` only (ADR-021) 🟡
-- [ ] Reports name their inputs (§7.3) 🔴
+- [ ] Prop-firm viability via `PropFirmSimulator` only (ADR-021) 🟢
+- [ ] Reports name their inputs (§7.3) 🔴 — evaluable only as NOT EVALUATED
 
-This checklist is not prose — `workflow.py` evaluates it on every run and prints it (§0.1). A criterion it could not evaluate prints **NOT EVALUATED**, which is neither a pass nor a failure and still blocks `validated`.
+This checklist is not prose — `workflow.py` evaluates it on every run and prints it (§0.1).
+A criterion it could not evaluate prints **NOT EVALUATED**, which is neither a pass nor a
+failure and still blocks `validated` and exit 0.
+
+> **§9 and `CRITERIA` are now tied mechanically.** Until 2026-09-05 this list carried 12
+> items while `workflow.py` evaluated 10 — *prop-firm viability* and *reports name their
+> inputs* were absent from `CRITERIA` entirely, so two criteria this section calls part of
+> "validated" could not block it, and not even as NOT EVALUATED: they simply were not
+> there. Both are wired now — `prop_viability` reads the `prop_firm_sim` stage from the run
+> record (`workflow.py::_prop_viability`), which had to be added to `run_backtest.py`
+> because the prop evaluation ran without being recorded. *Enforcer*:
+> `test_workflow_checklist.py::test_section_9_has_exactly_one_checkbox_per_evaluated_criterion`
+> parses **this list** and fails if the two ever disagree again.
 
 The 🔴 items are why **no strategy in this repository is validated today**, and saying so
 plainly is more useful than a number nobody can reproduce.
@@ -904,7 +939,7 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | 3 | **No CI in this repo at all** — no `.github/workflows`, no `tools/ci_local.py`. Every gate above is green only when someone types `pytest`. | code |
 | 4 | Parameter document for the non-ICT families (§3.3) | code |
 | 5 | Reports from the run record (§7.3) | code |
-| 6 | Freeze the 35 bespoke runners with a gate (§4.1); note an *absence* gate passes silently when code moves — give it a negative control | code |
+| 6 | Freeze the bespoke runners with a gate (§4.1); note an *absence* gate passes silently when code moves — give it a negative control | code |
 | 7 | `box_reversion` raises `TypeError: Invalid comparison between dtype=datetime64[s] and Timestamp` when window-filtered | code |
 
 ### 11.1 The remaining build order
@@ -915,7 +950,7 @@ Subsumed from the phased plan. Ordered by what unblocks what, not by size.
 |---|---|---|
 | **0.2/0.3** | adverse fills already default; **restate the existing prop-firm conclusions on them** — this is where optimism did the most damage, and published numbers may change | 🔴 |
 | **1.1** | rank-correlation calibration Python↔NT8 — tells you whether the screen has been lying, and by how much (§12.1: the ranking is what must be preserved) | 🔴 |
-| **2.4** | freeze the 35 bespoke runners with a CI check. ⚠️ an *absence* gate passes silently when code moves — give it a negative control | 🔴 |
+| **2.4** | freeze the bespoke runners with a CI check. ⚠️ an *absence* gate passes silently when code moves — give it a negative control | 🔴 |
 | **2.5** | arm ledger — log **every** arm ever tested, including abandoned ones. Deflated statistics need N, and the optimisation summary (§7.1) now emits the per-trial table | 🟡 partial |
 | **2.6** | reports generated from the run record only (§7.3) | 🔴 |
 | **3.1–3.3** | per-contract-month data on both sides; roll-warmup rule; bar-completeness precondition | 🔴 |

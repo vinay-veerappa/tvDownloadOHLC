@@ -68,6 +68,8 @@ CRITERIA = (
     ("rule_parity", "shared-core rules agree between C# and Python"),
     ("nt8_ground_truth", "an NT8 trade list was captured for this run"),
     ("trade_set_parity", "trade-set parity meets its stated recall and precision"),
+    ("prop_viability", "prop-firm viability evaluated by PropFirmSimulator only (ADR-021)"),
+    ("reports_attributed", "every report names its inputs (section 7.3)"),
 )
 
 
@@ -243,6 +245,17 @@ def stage_python_research(ctx: Ctx) -> None:
                       "no search was run; the grid precheck applies to --optimize")
     _causality(ctx, stages)
     _out_of_sample(ctx)
+    _prop_viability(ctx, stages)
+
+    # §7.3 IS NOT BUILT, AND THAT IS WHAT THIS REPORTS.
+    # The reporters are handed live objects and write whatever they are given;
+    # nothing makes a report state which run record, price basis or date range
+    # produced it. Until that is wired this criterion can only be NOT
+    # EVALUATED -- which blocks `validated`, correctly, and is why §9 says no
+    # strategy in this repository is validated today.
+    ctx.check.set("reports_attributed", NOT_EVALUATED,
+                  "section 7.3 not built: reports are generated from live objects, "
+                  "not from the run record, so none of them names its inputs")
 
 
 def _signal_geometry(ctx: "Ctx", doc: Dict[str, Any]) -> None:
@@ -283,6 +296,46 @@ def _signal_geometry(ctx: "Ctx", doc: Dict[str, Any]) -> None:
                                     for k, v in drops.items() if v)))
     else:
         ctx.check.set("signal_geometry", PASS, "{} signals, none refused".format(kept))
+
+
+def _prop_viability(ctx: "Ctx", stages: Dict[str, Any]) -> None:
+    """Did PropFirmSimulator -- and only it -- judge this survivable? (ADR-021)
+
+    Read from the run record rather than from the result object on purpose: the
+    criterion is about what the RUN did, and a number lifted off a live object
+    cannot be attributed to a run afterwards.
+    """
+    st = stages.get("prop_firm_sim")
+    if st is None:
+        ctx.check.set("prop_viability", NOT_EVALUATED,
+                      "the research stage recorded no prop_firm_sim stage")
+        return
+    # `_Stage.to_dict()` serialises `self.details` under the key "detail".
+    # Reading "details" here returned {} on every real run, so the evaluator
+    # check saw None and reported FAIL "evaluated by 'None'" -- accusing the
+    # run of using an evaluator ADR-021 froze, on a run that had used the
+    # right one. The two readers below this in the same file already had it
+    # right; I did not look at them.
+    d = st.get("detail") or {}
+    if st.get("status") == "skipped":
+        ctx.check.set("prop_viability", NOT_EVALUATED,
+                      d.get("reason", "prop_firm_sim was skipped"))
+        return
+    if d.get("evaluator") != "PropFirmSimulator":
+        # ADR-021 froze prop_eval_mc.py, 06_prop_sim.py and simulate_prop_pass.py.
+        ctx.check.set("prop_viability", FAIL,
+                      "evaluated by '{}', not PropFirmSimulator (ADR-021)".format(
+                          d.get("evaluator")))
+        return
+    rate = d.get("passRatePct")
+    if rate is None:
+        ctx.check.set("prop_viability", NOT_EVALUATED,
+                      d.get("skippedReason") or "no pass rate was computed")
+        return
+    thresh = float(d.get("passThresholdPct") or 65.0)
+    detail = "{} pass rate {:.1f}% (grade {}), threshold {:.0f}%".format(
+        d.get("primaryProfile"), rate, d.get("grade"), thresh)
+    ctx.check.set("prop_viability", PASS if rate >= thresh else FAIL, detail)
 
 
 def _out_of_sample(ctx: "Ctx") -> None:
@@ -608,9 +661,36 @@ def run_workflow(args) -> int:
     with open(os.path.join(output_dir, "checklist.json"), "w", encoding="utf-8") as fh:
         json.dump(ctx.check.to_dict(), fh, indent=2)
 
+    return exit_code(ctx.check, failed_hard)
+
+
+def exit_code(check: "Checklist", failed_hard: Optional[str] = None) -> int:
+    """Map a finished run onto a process exit code.
+
+    EXIT 0 MEANS VALIDATED, NOT "NOTHING FAILED".
+
+    This was written inline as `1 if check.failed else 0` -- the exact
+    `not failed` semantics that `Checklist.validated` exists to reject and that
+    §0.1 promises the workflow does not use. A run in which every criterion was
+    NOT EVALUATED printed "NOT validated" and exited **0**, so the CI gate §11.1
+    plans would have scored a run that measured nothing as a pass. A status with
+    no reachable red is the defect this module was written to remove, and it was
+    in this module.
+
+    It lives here as a function, not inline in `main`, so that the mapping is
+    callable by a test. Asserting it by reading the source would prove the text
+    and not the behaviour.
+
+        2  a required stage raised -- the run is inconclusive, not failed
+        1  not validated: something FAILED, or something was never measured
+        0  every criterion PASSED
+
+    Note there is deliberately no code for "nothing failed but not everything
+    was measured". That state is `1`, because it is not a pass.
+    """
     if failed_hard is not None:
         return 2
-    return 1 if ctx.check.failed else 0
+    return 0 if check.validated else 1
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -412,55 +412,73 @@ def run_research_pipeline(args, rec=None, output_dir=None):
         print("* Computing MFE/MAE excursions...")
         mfe_mae_signals = _compute_mfe_mae_compat(signals, df_report, config.mfe_mae)
     
-        # 6. ML / Prop Evaluation (ADR-021: Unified PropFirmSimulator)
-        print("* Computing Prop Firm evaluation (Monte Carlo across all firm profiles)...")
-        trades_detailed = result.get('trades_detailed', pd.DataFrame())
-        pf_config = config.prop_firm
+        # THE CHECKLIST HAS TO BE ABLE TO READ THIS.
+        # The prop-firm evaluation ran here for months without being recorded
+        # as a stage, so `prop_viability` -- a criterion §9 lists -- had no
+        # input and could not be evaluated even though the answer was computed.
+        with rec.stage("prop_firm_sim") as _pf_st:
+            # 6. ML / Prop Evaluation (ADR-021: Unified PropFirmSimulator)
+            print("* Computing Prop Firm evaluation (Monte Carlo across all firm profiles)...")
+            trades_detailed = result.get('trades_detailed', pd.DataFrame())
+            pf_config = config.prop_firm
 
-        # Build overridden profiles from config
-        sim_profiles: list[PropFirmProfile] = []
-        for key in pf_config.run_profiles:
-            if key not in FIRM_PROFILES:
-                print(f"  *  Unknown profile key '{key}' in config * skipping.")
-                continue
-            base = FIRM_PROFILES[key]
-            overrides = pf_config.overrides.get(key, {})
-            if overrides:
-                # Rebuild with overrides applied (frozen dataclass needs replace)
-                from dataclasses import replace
-                base = replace(base, **overrides)
-            sim_profiles.append(base)
+            # Build overridden profiles from config
+            sim_profiles: list[PropFirmProfile] = []
+            for key in pf_config.run_profiles:
+                if key not in FIRM_PROFILES:
+                    print(f"  *  Unknown profile key '{key}' in config * skipping.")
+                    continue
+                base = FIRM_PROFILES[key]
+                overrides = pf_config.overrides.get(key, {})
+                if overrides:
+                    # Rebuild with overrides applied (frozen dataclass needs replace)
+                    from dataclasses import replace
+                    base = replace(base, **overrides)
+                sim_profiles.append(base)
 
-        pf_sim = PropFirmSimulator(
-            account_size=config.account_risk.starting_equity,
-            point_value=config.execution.point_value.get(args.ticker, 2.0),
-        )
-
-        all_pf_results = {}
-        primary_det = None
-        primary_mc = None
-        pf_summary_md = ""
-
-        if not trades_detailed.empty and sim_profiles:
-            for profile in sim_profiles:
-                det = pf_sim.run_deterministic(trades_detailed, profile)
-                mc  = pf_sim.run_monte_carlo(trades_detailed, profile, n_simulations=pf_config.n_simulations)
-                all_pf_results[profile.name] = (det, mc)
-                print(f"  * {profile.name}: Pass Rate {mc.pass_rate_pct:.1f}% (Grade {mc.grade}) | Blow {mc.blow_rate_pct:.1f}%")
-                if profile.name == FIRM_PROFILES.get(pf_config.primary_profile, sim_profiles[0]).name:
-                    primary_det, primary_mc = det, mc
-
-            if primary_det is None and all_pf_results:
-                primary_det, primary_mc = next(iter(all_pf_results.values()))
-
-            # Build multi-profile summary markdown
-            pf_summary_md = pf_sim.format_multi_report(
-                {k: v for k, v in all_pf_results.items()}
+            pf_sim = PropFirmSimulator(
+                account_size=config.account_risk.starting_equity,
+                point_value=config.execution.point_value.get(args.ticker, 2.0),
             )
-            if primary_det is not None:
-                pf_summary_md += pf_sim.format_report(primary_det, primary_mc)
-        else:
-            print("  *  No trades_detailed available * skipping prop firm simulation.")
+
+            all_pf_results = {}
+            primary_det = None
+            primary_mc = None
+            pf_summary_md = ""
+
+            if not trades_detailed.empty and sim_profiles:
+                for profile in sim_profiles:
+                    det = pf_sim.run_deterministic(trades_detailed, profile)
+                    mc  = pf_sim.run_monte_carlo(trades_detailed, profile, n_simulations=pf_config.n_simulations)
+                    all_pf_results[profile.name] = (det, mc)
+                    print(f"  * {profile.name}: Pass Rate {mc.pass_rate_pct:.1f}% (Grade {mc.grade}) | Blow {mc.blow_rate_pct:.1f}%")
+                    if profile.name == FIRM_PROFILES.get(pf_config.primary_profile, sim_profiles[0]).name:
+                        primary_det, primary_mc = det, mc
+
+                if primary_det is None and all_pf_results:
+                    primary_det, primary_mc = next(iter(all_pf_results.values()))
+
+                # Build multi-profile summary markdown
+                pf_summary_md = pf_sim.format_multi_report(
+                    {k: v for k, v in all_pf_results.items()}
+                )
+                if primary_det is not None:
+                    pf_summary_md += pf_sim.format_report(primary_det, primary_mc)
+            else:
+                print("  *  No trades_detailed available * skipping prop firm simulation.")
+
+            _pf_st.detail(
+                evaluator="PropFirmSimulator",       # ADR-021: the only one
+                profilesRun=sorted(all_pf_results),
+                primaryProfile=(primary_mc and getattr(primary_mc, "profile_name", None))
+                               or pf_config.primary_profile,
+                passRatePct=(primary_mc.pass_rate_pct if primary_mc else None),
+                blowRatePct=(primary_mc.blow_rate_pct if primary_mc else None),
+                grade=(primary_mc.grade if primary_mc else None),
+                passThresholdPct=65.0,
+                skippedReason=(None if primary_mc else
+                               "no trades_detailed, or no runnable firm profile"),
+            )
 
         # 7. Reporting Suite
         print("* Generating institutional reports...")
