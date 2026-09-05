@@ -18,13 +18,18 @@ THREE MEASUREMENTS, and one of them is a judgment call:
   1. COUNT. Out-of-sample trades against `MIN_TRADES`. Mechanical.
 
   2. REGIME SPREAD. The document says "3 regimes" and this repository has no
-     regime definition -- four session definitions, no volatility-regime one. So
-     the bucket used here is the CALENDAR QUARTER of the entry, which is a
-     PROXY and is declared as one in the output. It catches the case that
-     actually recurs (all the evidence inside one three-month stretch of one
-     kind of market) and it will not catch a year of uniformly quiet tape. A
-     reviewer who wants VIX terciles instead should say so; this is the
-     reviewable decision in this file.
+     ONE regime definition -- it has three that disagree, and one of them
+     (`*_bucket_full`) is computed with lookahead and is in live use. So the
+     bucket here is the CALENDAR QUARTER (ET) of the entry, which is a PROXY
+     and is declared as one in the output. It catches the case that actually
+     recurs (all the evidence inside one three-month stretch of one kind of
+     market) and it will not catch a year of uniformly quiet tape.
+
+     THIS IS A PLACEHOLDER WITH AN OWNER: `docs/strategies/research_backlog/
+     13_market_regime_definition.md` (item REG-1) is the research item that
+     settles it, lists the seven candidates and the acceptance criteria, and
+     names every consumer that switches over when it lands. Do not quietly
+     replace the proxy here with a fourth definition.
 
   3. BOOTSTRAP CI on the mean per-trade P&L. Percentile bootstrap, resampling
      trades independently. That understates the interval when returns are

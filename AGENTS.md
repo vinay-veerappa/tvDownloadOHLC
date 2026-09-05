@@ -95,7 +95,10 @@ measured · **2** = a required stage raised.
    already caught wrong claims in that document.
 9. **Do not create another strategy document.** Extend §-numbered sections of
    `STRATEGY_WORKFLOW.md` instead. Two sources of truth is the failure this repo
-   spent a week undoing.
+   spent a week undoing. The one exception is `docs/architecture/HANDOVER.md`,
+   which carries **state, never procedure**, is **rewritten rather than appended
+   to**, and loses to the workflow doc and the backlog wherever they disagree.
+   Start a session there; do not quote a count from it.
 
 ## Known C# bot defects
 
