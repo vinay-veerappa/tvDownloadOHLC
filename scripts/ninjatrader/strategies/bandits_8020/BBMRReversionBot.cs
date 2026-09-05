@@ -177,7 +177,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Time — NY_PM only (matches Python v3: 13:30-16:00)
             EarliestEntry = 1330;
             LatestEntry = 1600;
-            FlattenBy = 1615;
+            // FlattenBy was 1615, PAST the ADR-020 hard exit of 16:00 (close of
+            // the 15:59 bar). A prop account can be liquidated for holding an
+            // intraday position past it, so this is a safety limit and not a
+            // tuning choice. The NY_PM intent above is unchanged.
+            // See TradingDefaults.RthHardExit.
+            FlattenBy = 1600;
 
             AddSecondaryTimeframe = true; // 5m for BB/RSI/ADX
             DebugMode = true;

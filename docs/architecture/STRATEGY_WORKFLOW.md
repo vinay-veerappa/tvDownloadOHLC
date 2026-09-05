@@ -164,15 +164,37 @@ engine (via `config/defaults.py`), the C# bot, and the NT8 Strategy Analyzer.
 | **Instrument** | default **MNQ**; micros are the traded class (ADR-009). `MNQ` $2/pt, `MES` $5/pt, `NQ` $20, `ES` $50. Tick 0.25 throughout |
 | **Data ticker vs contract** | `NQ1` → **MNQ**, `ES1` → **MES**. A data ticker names a *price series*; an instrument names the *contract you trade* |
 | **Sessions** | `GLOBEX 18:00` · `ASIA 20:00` · `LONDON 02:00` · `NY_PRE 08:00` · `NY_AM 09:30` · `NY_LUNCH 11:00` · `NY_PM 13:30` · `CLOSED 16:00–18:00`, ET. Every session but `CLOSED` is tradeable |
-| **Risk** | 1 contract, 1 concurrent position, 3 trades/day, last entry 14:30, flatten 15:45, hard exit 16:00 (ADR-020), primary prop profile `apex_50k`, ruin fraction 0.20 |
+| **Risk** | 1 contract, 1 concurrent position, primary prop profile `apex_50k`, ruin fraction 0.20. **Invariant: hard exit 16:00 ET (ADR-020).** *Overridable per strategy*: `maxTradesPerDay` (3), `lastEntryEt` (14:30), `flattenByEt` (15:45) |
 | **Execution** | 1 tick slippage, $0.62/contract round trip, `OnBarClose` |
 | **NT8** | `MergeNonBackAdjusted`, tick replay off, `OrderFillResolution High`, commission on |
+
+> **Not everything here is strategy-invariant, and my first version wrongly said it
+> was.** `lastEntryEt` and `flattenByEt` **interact with the session a strategy
+> trades**: a deliberate NY_PM setup must be allowed to enter after 14:30, so freezing
+> 14:30 globally would forbid a legitimate strategy. `BBMRReversionBot` is exactly that
+> case and its own source says so — *"// Time — NY_PM only (matches Python v3:
+> 13:30-16:00)"*. Those three fields are listed `overridable` in the document; the
+> **16:00 hard exit is not, and never will be**, because it is a prop-firm liquidation
+> limit rather than a tuning choice.
+>
+> Measured across the twelve bots: **five** different flatten times and **six** different
+> daily trade caps, every one hand-set, none compared to the Python engine that predicts
+> its trades. One was a real ADR-020 violation — `BBMRReversionBot` flattened at **16:15**
+> — and was fixed rather than recorded. The rest are inventoried in
+> `tests/known_bot_divergences.py`, which freezes the spread so it cannot grow: a bot not
+> in it must match, a bot in it may only move *toward* the frozen value, and one that now
+> agrees must lose its line. **`BBMRReversionBot` still allows 99 trades a day where
+> `mean_reversion` allows 3** — that pair is not comparable at the trade-set layer, and
+> until 2026-09-05 no report said so.
 
 *Enforcers*: `config/defaults.py::resolve_instrument` **raises** on an unknown
 ticker rather than defaulting; `assert_sessions_partition` refuses a window set
 that is not a partition; `tests/test_frozen_defaults.py` (30 tests) scans for a
 second point-value table, checks both engines agree, and cross-checks the `nt8`
-block against `parity/backtest_profile.json`.
+block against `parity/backtest_profile.json`; `tests/test_bot_defaults.py` (23 tests)
+regenerates `TradingDefaults.cs` in memory and fails if the committed file has drifted,
+parses the C# **back** so the generator cannot vouch for itself, and hard-fails any bot
+exiting past 16:00 regardless of the inventory.
 
 > **What this replaced, and what it cost.** There were **three** point-value
 > tables. `core/backtest_engine.py` said `NQ1: 20.0`, `core/nt8_parity_backtester.py`
@@ -1052,7 +1074,10 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | ~~6~~ | ~~Freeze the bespoke runners with a gate~~ — **DONE 2026-09-05.** `tests/test_no_new_runners.py` + `frozen_runners.txt`, matched on behaviour with three negative controls (§4.1) | done |
 | 7 | `box_reversion` raises `TypeError: Invalid comparison between dtype=datetime64[s] and Timestamp` when window-filtered | code |
 | 8 | **Migrate strategies off the legacy `session_block`** onto §1.3's `session_name`. The legacy labels are RTH-only and every existing strategy reads them, so this changes results and must land through a recorded run per strategy | code |
-| 9 | **Generate `TradingDefaults.cs` from `trading_defaults.json`** so the C# bot reads the same numbers instead of its own consts. The JSON is authoritative today for Python and for the SA profile check; the bot side is still hand-maintained | code |
+| ~~9~~ | ~~Generate `TradingDefaults.cs`~~ — **DONE 2026-09-05.** `scripts/utils/generate_trading_defaults.py` emits it; `--check` fails a build when the JSON moves and the C# does not | done |
+| 10 | **Normalise the 10 inventoried bot divergences** (`tests/known_bot_divergences.py`): five flatten times, six daily trade caps, hand-set, never compared to the Python side. `BBMRReversionBot` allows **99** trades/day where `mean_reversion` allows **3**, so that pair cannot be compared at the trade-set layer. One bot at a time, each through a recorded run | code |
+| 11 | **Capture SA *executions*, not just trades.** `nt_backtest` returns trades and caps them at `maxTrades` (default **50**) — a 300-trade backtest silently returns 50, and recall would be measured against a truncated ground truth. Per-fill data is what the leg convention needs | code |
+| 12 | **Win/loss attribution report** on both sides — what separates winners from losers (session, MAE before target, time-in-trade, exit reason) | code |
 
 ### 11.1 The remaining build order
 

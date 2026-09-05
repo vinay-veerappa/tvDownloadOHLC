@@ -80,8 +80,21 @@
     "_doc": [
       "Sourced from config/sessions.yaml as it stood 2026-09-05 so this file",
       "changes nothing on adoption; riskPerTradeFraction is derived from that",
-      "file's daily_max_loss / max_trades_per_day = 400/3 on a 50k account."
+      "file's daily_max_loss / max_trades_per_day = 400/3 on a 50k account.",
+      "",
+      "NOT EVERYTHING HERE IS STRATEGY-INVARIANT, and the first version of this",
+      "file wrongly said it was. `lastEntryEt` and `flattenByEt` INTERACT WITH",
+      "WHICH SESSION A STRATEGY TRADES: a deliberate NY_PM strategy (13:30-16:00)",
+      "must be allowed to enter after 14:30, so freezing 14:30 globally would",
+      "forbid a legitimate setup. BBMRReversionBot is exactly that case and its",
+      "source says so: '// Time -- NY_PM only (matches Python v3: 13:30-16:00)'.",
+      "",
+      "`overridable` names the fields a strategy may set for itself. Everything",
+      "else is invariant. `rthHardExitEt` is invariant and is a SAFETY rule, not",
+      "a convention -- ADR-020, prop-firm liquidation -- so it is enforced with",
+      "no exemptions and every overridable exit must be <= it."
     ],
+    "overridable": ["lastEntryEt", "flattenByEt", "maxTradesPerDay"],
     "riskPerTradeFraction": 0.00267,
     "maxContractsPerTrade": 1,
     "maxConcurrentPositions": 1,
