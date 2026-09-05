@@ -19,7 +19,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     /// </summary>
     public static class TradingDefaults
     {
-        public const string SourceHash = "992f9c07befaa2e9";
+        public const string SourceHash = "9fcab64032ab42f6";
         public const string FrozenOn   = "2026-09-05";
 
         // ---- Instrument (ADR-009: micros are the traded class) ----------
@@ -58,11 +58,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         }
 
         // ---- Risk ------------------------------------------------------
+        // NoLimit is -1, not 0 and not int.MaxValue: 0 would read as 'no
+        // trades allowed' if a caller compared with >=, and MaxValue hides
+        // in arithmetic. A cap is an OUTPUT of reporting/trade_ordinal.py,
+        // not a frozen input, and an entry may happen at ANY time -- only
+        // the 16:00 exit is fixed. See trading_defaults.json risk._doc.
+        public const int    NoLimit = -1;
         public const int    MaxContractsPerTrade   = 1;
         public const int    MaxConcurrentPositions = 1;
-        public const int    MaxTradesPerDay        = 3;
-        public const int    LastEntry              = 1430;   // 14:30 ET
-        public const int    FlattenBy              = 1545;   // 15:45 ET
+        public const int    MaxTradesPerDay        = NoLimit;   // analysis-derived; no frozen cap
+        public const int    MaxTradesPerSession    = NoLimit;   // analysis-derived; no frozen cap
+        public const int    LastEntry              = NoLimit;   // an entry may happen at ANY time
+        public const int    FlattenBy              = 1545;   // 15:45 ET, overridable
         public const int    RthHardExit            = 1600;   // 16:00 ET, ADR-020
         public const double RiskPerTradeFraction   = 0.00267;
 

@@ -568,7 +568,11 @@ def run_research_pipeline(args, rec=None, output_dir=None):
             render_session_breakdown,
         )
         _td = result.get('trades_detailed', pd.DataFrame())
+        from scripts.trading_framework.reporting.trade_ordinal import (
+            render_trade_ordinal,
+        )
         tearsheet += "\n\n" + render_session_breakdown(_td)
+        tearsheet += "\n\n" + render_trade_ordinal(_td)
     
         # Save Outputs
         # output_dir is the run-id'd directory created above; the old fixed path

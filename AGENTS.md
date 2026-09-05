@@ -70,6 +70,15 @@ measured · **2** = a required stage raised.
    `STRATEGY_WORKFLOW.md` instead. Two sources of truth is the failure this repo
    spent a week undoing.
 
+## Known C# bot defects
+
+Do not re-derive these. `docs/architecture/BOT_FIX_BACKLOG.md` carries tickets
+B1-B6 with a loop prompt; `scripts/trading_framework/tests/known_bot_divergences.py`
+is its machine-readable half and a test fails if the two drift apart. The one to
+know: **`BBMRReversionBot` allows 99 trades/day where the Python `mean_reversion`
+that predicts it allows 3**, so that pair cannot be compared at the trade-set
+layer.
+
 ## Everything else
 
 Global engineering rules (fail-fast, GPU awareness, directory layout) are in

@@ -45,8 +45,19 @@ KNOWN_DIVERGENCES = {
     "scripts/ninjatrader/strategies/supertrend/STTrendBot.cs": (1555, 99, 1555),
     "scripts/ninjatrader/strategies/the_strat/Strat212ContinuationBot.cs": (1555, 6, 1530),
     "scripts/ninjatrader/strategies/the_strat/Strat22RevStratBot.cs": (1555, 6, 1530),
-    "scripts/ninjatrader/strategies/ema_pullback/EMAPullbackBot.cs": (1545, 3, 1530),
+    # EMAPullbackBot left this list 2026-09-05: it differs only in LatestEntry,
+    # which stopped being a frozen field when entries became unrestricted. See
+    # BOT_FIX_BACKLOG.md B6.
 }
+
+# ONLY `flattenByEt` IS COMPARED. `maxTradesPerDay` and `lastEntryEt` are
+# `analysisDerived` in trading_defaults.json -- an entry may happen at any time,
+# and a trade cap is an OUTPUT of reporting/trade_ordinal.py rather than a
+# frozen input. A bot setting either is therefore not a divergence to be fixed;
+# it is a number waiting for the analysis that justifies it. The tuples above
+# still record all three, because the SPREAD is what BOT_FIX_BACKLOG.md works
+# through, and a value that moves should be noticed even when it is not policed.
+COMPARED_FIELD = "FlattenBy"
 
 # Bots that already match the frozen defaults exactly, kept out of the inventory
 # on purpose: FailedAuctionBot and VWAPReclaimBot (1545 / 3 / 1430). The

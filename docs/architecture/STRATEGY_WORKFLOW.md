@@ -164,18 +164,31 @@ engine (via `config/defaults.py`), the C# bot, and the NT8 Strategy Analyzer.
 | **Instrument** | default **MNQ**; micros are the traded class (ADR-009). `MNQ` $2/pt, `MES` $5/pt, `NQ` $20, `ES` $50. Tick 0.25 throughout |
 | **Data ticker vs contract** | `NQ1` → **MNQ**, `ES1` → **MES**. A data ticker names a *price series*; an instrument names the *contract you trade* |
 | **Sessions** | `GLOBEX 18:00` · `ASIA 20:00` · `LONDON 02:00` · `NY_PRE 08:00` · `NY_AM 09:30` · `NY_LUNCH 11:00` · `NY_PM 13:30` · `CLOSED 16:00–18:00`, ET. Every session but `CLOSED` is tradeable |
-| **Risk** | 1 contract, 1 concurrent position, primary prop profile `apex_50k`, ruin fraction 0.20. **Invariant: hard exit 16:00 ET (ADR-020).** *Overridable per strategy*: `maxTradesPerDay` (3), `lastEntryEt` (14:30), `flattenByEt` (15:45) |
+| **Risk** | 1 contract, 1 concurrent position, primary prop profile `apex_50k`, ruin fraction 0.20. **Invariant: hard exit 16:00 ET (ADR-020)** — no exemptions. *Overridable*: `flattenByEt` (15:45). ***Analysis-derived, deliberately unset***: `maxTradesPerDay`, `maxTradesPerSession`, `lastEntryEt` |
 | **Execution** | 1 tick slippage, $0.62/contract round trip, `OnBarClose` |
 | **NT8** | `MergeNonBackAdjusted`, tick replay off, `OrderFillResolution High`, commission on |
 
-> **Not everything here is strategy-invariant, and my first version wrongly said it
-> was.** `lastEntryEt` and `flattenByEt` **interact with the session a strategy
-> trades**: a deliberate NY_PM setup must be allowed to enter after 14:30, so freezing
-> 14:30 globally would forbid a legitimate strategy. `BBMRReversionBot` is exactly that
-> case and its own source says so — *"// Time — NY_PM only (matches Python v3:
-> 13:30-16:00)"*. Those three fields are listed `overridable` in the document; the
-> **16:00 hard exit is not, and never will be**, because it is a prop-firm liquidation
-> limit rather than a tuning choice.
+> **Three kinds of value, and my first version called them all one.**
+>
+> | Kind | Fields | Rule |
+> |---|---|---|
+> | **Invariant** | `rthHardExitEt` 16:00 | ADR-020. A safety limit, not a tuning choice. Enforced with **no exemptions**, and every exit must be ≤ it |
+> | **Overridable** | `flattenByEt` | a strategy may set its own, recorded in `known_bot_divergences.py` and ticketed in the bot backlog |
+> | **Analysis-derived** | `maxTradesPerDay`, `maxTradesPerSession`, `lastEntryEt` | **deliberately null.** These are OUTPUTS |
+>
+> **An entry may happen at any time.** The first version froze `lastEntryEt` at 14:30,
+> which would have forbidden a deliberate NY_PM setup — and `BBMRReversionBot` is
+> exactly that, entering to 16:00 by design, as its own source says: *"// Time — NY_PM
+> only (matches Python v3: 13:30-16:00)"*. Reporting is partitioned by session (§7.1),
+> and **when a bot should run is a decision taken *from* those results, not a constraint
+> imposed before them.**
+>
+> **A trade cap is a conclusion, not a setting.** `sessions.yaml` carried
+> `max_trades_per_day: 3` with no recorded basis. `reporting/trade_ordinal.py` now
+> reports EV_R and win rate by trade ordinal — within the day and within the session,
+> marginal *and* cumulative — so the cap can be read off the data. It prints a
+> suggestion **with its sample size** and refuses to endorse one below 20 trades,
+> because a cap chosen from five observations is noise wearing a number.
 >
 > Measured across the twelve bots: **five** different flatten times and **six** different
 > daily trade caps, every one hand-set, none compared to the Python engine that predicts
@@ -645,6 +658,35 @@ succeeds means the machine already matches.
 > is resolved *before* the shared window is touched, the selection is read *back*, and a
 > mismatch fails closed.
 
+### 5.0 The capture is automated 🟢 ENFORCED
+
+`--nt8` **captures the NT8 run itself.** It resolves the paired C# bot class, POSTs to the
+bridge at `localhost:7890/api/backtest` under the frozen profile, and writes the trade list
+plus a `.meta.json` into the run directory as recorded artifacts.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.trading_framework.workflow `
+    --strategy mean_reversion --ticker NQ1 --price-adjustment unadjusted `
+    --nt8 --nt8-symbol "MNQ 12-26" --nt8-from 2025-01-01 --nt8-to 2025-06-30
+```
+
+`--nt8-trades` still accepts a hand-made CSV; it is now the exception, not the procedure.
+This used to read *"live capture is not driven from this process"* and tell the operator to
+run `nt_backtest` by hand — a manual step inside the procedure whose whole point is one
+command, when the bridge had an HTTP endpoint and a token on disk the entire time.
+
+*Enforcer*: `scripts/parity/capture_nt8.py`, three refusals, each for something that has
+happened — `tests/test_nt8_capture.py` (17 tests) drives all of them without touching NT8.
+
+| Refusal | Why |
+|---|---|
+| **`len(trades) == maxTrades`** | indistinguishable from a TRUNCATED list. The MCP tool's own default is **50**, so a 300-trade backtest returns 50 and looks complete; recall against a truncated ground truth is a false red that reads as a strategy defect. The capture asks for 5000 and refuses on equality rather than guessing |
+| **`effectiveStrategy` != requested** | the Analyzer window is REUSED, so an unresolved name leaves whatever was loaded. Those trades are not evidence about the strategy asked for |
+| **any bridge `error`** | `requireGlobals` are asserted, never written. A `MergeBackAdjusted` box silently rescales every price; the reason is surfaced instead of an empty result |
+
+`--nt8-symbol` has **no default**: NT8 needs a *contract*, and the contract **month** changes
+which trades exist (§6.4), so it cannot be derived from `--ticker`.
+
 ### 5.4 Commit the trade list 🔴 LARGELY NOT BUILT
 
 `scripts/parity/fixtures/nt8_trades_<Strategy>_<SYM>_<TF>_<from>_<to>.csv` + a `.meta.json`
@@ -831,6 +873,7 @@ test, but a different **contract** changes which trades exist at all.
 | Which arm won and by how much? | `reporting/optimization_summary.py` |
 | Is the risk profile survivable? | `reporting/risk_profiler.py` |
 | **Which sessions carry the edge?** | `reporting/session_breakdown.py` — appended to every tearsheet, keyed on the §1.3 partition |
+| **Where should the trade cap be?** | `reporting/trade_ordinal.py` — EV_R by trade ordinal, per day and per session, marginal and cumulative, with the sample size beside the suggestion |
 
 ### 7.2 Metric definitions 🟢 ENFORCED (one implementation, spec-tested)
 
@@ -1075,8 +1118,8 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | 7 | `box_reversion` raises `TypeError: Invalid comparison between dtype=datetime64[s] and Timestamp` when window-filtered | code |
 | 8 | **Migrate strategies off the legacy `session_block`** onto §1.3's `session_name`. The legacy labels are RTH-only and every existing strategy reads them, so this changes results and must land through a recorded run per strategy | code |
 | ~~9~~ | ~~Generate `TradingDefaults.cs`~~ — **DONE 2026-09-05.** `scripts/utils/generate_trading_defaults.py` emits it; `--check` fails a build when the JSON moves and the C# does not | done |
-| 10 | **Normalise the 10 inventoried bot divergences** (`tests/known_bot_divergences.py`): five flatten times, six daily trade caps, hand-set, never compared to the Python side. `BBMRReversionBot` allows **99** trades/day where `mean_reversion` allows **3**, so that pair cannot be compared at the trade-set layer. One bot at a time, each through a recorded run | code |
-| 11 | **Capture SA *executions*, not just trades.** `nt_backtest` returns trades and caps them at `maxTrades` (default **50**) — a 300-trade backtest silently returns 50, and recall would be measured against a truncated ground truth. Per-fill data is what the leg convention needs | code |
+| 10 | **Normalise the inventoried bot divergences** — tracked as tickets B1–B6 in [BOT_FIX_BACKLOG.md](BOT_FIX_BACKLOG.md), with a loop prompt. Deliberately a separate file: finalising the workflow must not be blocked on fixing twelve strategies | code |
+| 11 | **Capture SA *executions*, not just trades.** The trade-level capture is automated (§5.0) and the truncation trap is now a refusal, but `nt_backtest` returns entry/exit PAIRS, not fills — and per-fill data is what the leg convention needs. `BBMRReversionBot` already writes its own diagnostic CSV, which is the cheaper path than a bridge change | code |
 | 12 | **Win/loss attribution report** on both sides — what separates winners from losers (session, MAE before target, time-in-trade, exit reason) | code |
 
 ### 11.1 The remaining build order

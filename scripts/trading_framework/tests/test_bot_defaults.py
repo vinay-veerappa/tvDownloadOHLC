@@ -78,15 +78,29 @@ def test_the_generated_cs_carries_the_frozen_risk_numbers():
     """Parse the C# BACK and compare, so the generator cannot lie about itself."""
     risk = load_trading_defaults()["risk"]
     text = GENERATED.read_text(encoding="utf-8")
-    for field, want in (
-        ("MaxTradesPerDay", risk["maxTradesPerDay"]),
-        ("FlattenBy", _hhmm(risk["flattenByEt"])),
-        ("LastEntry", _hhmm(risk["lastEntryEt"])),
-        ("RthHardExit", _hhmm(risk["rthHardExitEt"])),
-    ):
+    for field, want in (("FlattenBy", _hhmm(risk["flattenByEt"])),
+                        ("RthHardExit", _hhmm(risk["rthHardExitEt"]))):
         m = re.search(r"const int\s+" + field + r"\s*=\s*(\d+)", text)
         assert m, field
         assert int(m.group(1)) == want, (field, m.group(1), want)
+
+
+def test_an_analysis_derived_field_is_emitted_as_nolimit_not_zero():
+    """A null cap must not become 0.
+
+    0 reads as "no trades allowed" to any caller comparing with >=, and
+    int.MaxValue disappears into arithmetic. -1 behind a named constant is the
+    only form that cannot be mistaken for a limit.
+    """
+    risk = load_trading_defaults()["risk"]
+    text = GENERATED.read_text(encoding="utf-8")
+    assert "public const int    NoLimit = -1;" in text
+    for field in ("MaxTradesPerDay", "MaxTradesPerSession", "LastEntry"):
+        m = re.search(r"const int\s+" + field + r"\s*=\s*(\S+?);", text)
+        assert m, field
+        assert m.group(1) == "NoLimit", (field, m.group(1))
+    assert risk["maxTradesPerDay"] is None
+    assert risk["lastEntryEt"] is None
 
 
 def test_the_generated_cs_refuses_an_unknown_instrument():
@@ -143,41 +157,52 @@ def test_no_bot_exits_later_than_the_adr_020_hard_limit():
         "ADR-020 caps an intraday exit at {}: {}".format(RTH_HARD_EXIT, late))
 
 
-def test_no_new_bot_diverges_from_the_frozen_defaults():
-    risk = load_trading_defaults()["risk"]
-    frozen = (_hhmm(risk["flattenByEt"]), risk["maxTradesPerDay"],
-              _hhmm(risk["lastEntryEt"]))
+def test_no_new_bot_sets_a_flatten_time_outside_the_inventory():
+    """ONLY `flattenByEt` is compared.
+
+    `maxTradesPerDay` and `lastEntryEt` are `analysisDerived`: an entry may
+    happen at any time, and a cap is an OUTPUT of reporting/trade_ordinal.py.
+    Policing them here would have forbidden BBMRReversionBot's deliberate NY_PM
+    window, which is a legitimate setup and not a defect.
+    """
+    frozen_flatten = _hhmm(load_trading_defaults()["risk"]["flattenByEt"])
     new = {}
     for p in bot_files():
         rel = p.relative_to(REPO).as_posix()
-        got = declared(p)
-        if got == (None, None, None):
-            continue                     # declares none of them: inherits
+        flatten, _mx, _le = declared(p)
+        if flatten is None:
+            continue                     # inherits
         if rel in KNOWN_DIVERGENCES:
-            continue                     # covered by the test below
-        if got != frozen:
-            new[rel] = got
+            continue                     # covered by the drift test below
+        if flatten != frozen_flatten:
+            new[rel] = flatten
     assert not new, (
-        "these bots set execution defaults the frozen document owns "
-        "(want FlattenBy/MaxTradesPerDay/LatestEntry = {}): {}\n\n"
-        "Use TradingDefaults.MaxTradesPerDay / .FlattenBy / .LastEntry. Do NOT "
-        "add a line to known_bot_divergences.py to silence this."
-        .format(frozen, new))
+        "these bots set their own FlattenBy (frozen: {}) without a recorded "
+        "reason: {}. Prefer TradingDefaults.FlattenBy. If the strategy genuinely "
+        "needs a different one, add it to known_bot_divergences.py AND file it in "
+        "docs/architecture/BOT_FIX_BACKLOG.md so it is worked, not just tolerated."
+        .format(frozen_flatten, new))
 
 
-def test_the_overridable_fields_are_declared_as_such():
-    """The invariant/overridable split lives in the document, not in this test.
+def test_the_invariant_overridable_and_derived_split_lives_in_the_document():
+    """Two corrections to my own first version, both pinned here.
 
-    A correction to my own first version: `lastEntryEt` and `flattenByEt`
-    interact with the session a strategy trades, so a global freeze at 14:30
-    would forbid a legitimate NY_PM setup. They are overridable. The ADR-020
-    hard exit never is.
+    1. `lastEntryEt` was frozen at 14:30, which would forbid a deliberate NY_PM
+       setup. An entry may happen at ANY time; reporting is per session and the
+       decision of when a bot should run comes FROM those results.
+    2. `maxTradesPerDay` was frozen at 3 with no recorded basis. A cap is an
+       OUTPUT of the trade-ordinal analysis.
+
+    The ADR-020 hard exit is neither overridable nor derived, ever.
     """
     risk = load_trading_defaults()["risk"]
-    assert set(risk["overridable"]) == {
-        "lastEntryEt", "flattenByEt", "maxTradesPerDay"}
+    assert set(risk["overridable"]) == {"flattenByEt"}
+    assert set(risk["analysisDerived"]) == {
+        "maxTradesPerDay", "maxTradesPerSession", "lastEntryEt"}
     assert "rthHardExitEt" not in risk["overridable"], (
         "the ADR-020 hard exit is a safety limit and must never be overridable")
+    assert "rthHardExitEt" not in risk["analysisDerived"]
+    assert risk["rthHardExitEt"] == "16:00"
 
 
 def test_a_known_divergence_has_not_moved_further_away():
@@ -196,18 +221,24 @@ def test_a_known_divergence_has_not_moved_further_away():
 
 
 def test_the_inventory_has_no_stale_entries():
-    """A bot that now agrees, or no longer exists, must lose its line."""
-    risk = load_trading_defaults()["risk"]
-    frozen = (_hhmm(risk["flattenByEt"]), risk["maxTradesPerDay"],
-              _hhmm(risk["lastEntryEt"]))
+    """A bot that now agrees on the compared field, or is gone, loses its line.
+
+    This is how EMAPullbackBot left the list: it differed only in LatestEntry,
+    which stopped being a frozen field. An inventory that keeps entries after
+    they stop being true stops meaning anything.
+    """
+    frozen_flatten = _hhmm(load_trading_defaults()["risk"]["flattenByEt"])
     stale = []
     for rel, expected in KNOWN_DIVERGENCES.items():
         p = REPO / rel
         if not p.exists():
             stale.append("{} (file gone)".format(rel))
-        elif tuple(expected) == frozen:
-            stale.append("{} (agrees with the frozen defaults)".format(rel))
-    assert not stale, "remove these lines from known_bot_divergences.py: {}".format(stale)
+        elif expected[0] == frozen_flatten:
+            stale.append("{} (FlattenBy now matches the frozen {})"
+                         .format(rel, frozen_flatten))
+    assert not stale, (
+        "remove these lines from known_bot_divergences.py, and close the "
+        "matching ticket in docs/architecture/BOT_FIX_BACKLOG.md: {}".format(stale))
 
 
 def test_the_worst_divergence_is_recorded_with_its_consequence():

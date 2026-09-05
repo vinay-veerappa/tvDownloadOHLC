@@ -468,6 +468,68 @@ def _shared_core_families(key: str) -> List[str]:
     return []
 
 
+def _capture_nt8(ctx: "Ctx") -> Optional[str]:
+    """Run the paired C# bot in the Analyzer and store the result in the run dir.
+
+    Returns the fixture path, or None having already recorded WHY it could not.
+    Every failure here is a refusal with a reason, never a silent skip: an NT8
+    capture that half-worked is the one thing that must not look like a pass.
+    """
+    from scripts.parity.capture_nt8 import Nt8CaptureError, capture
+
+    bot = _find_bot(ctx.args.strategy, ctx.args.bot)
+    if not bot:
+        ctx.check.set("nt8_ground_truth", FAIL,
+                      "no paired C# bot found for '{}', so there is nothing to "
+                      "run in the Analyzer".format(ctx.args.strategy))
+        ctx.check.set("trade_set_parity", NOT_EVALUATED, "no NT8 trade set")
+        return None
+    cls = os.path.splitext(os.path.basename(bot))[0]
+
+    symbol = ctx.args.nt8_symbol
+    if not symbol:
+        ctx.check.set("nt8_ground_truth", NOT_EVALUATED,
+                      "--nt8-symbol is required for a live capture: NT8 needs a "
+                      "CONTRACT (e.g. 'MNQ 12-26'), and the contract MONTH "
+                      "changes which trades exist, so there is no honest default "
+                      "derived from --ticker (section 6.4)")
+        ctx.check.set("trade_set_parity", NOT_EVALUATED, "no NT8 trade set")
+        return None
+
+    d_from = ctx.args.nt8_from or (ctx.args.oos_start or None)
+    d_to = ctx.args.nt8_to
+    if not (d_from and d_to):
+        ctx.check.set("nt8_ground_truth", NOT_EVALUATED,
+                      "a live capture needs --nt8-from and --nt8-to (a pinned "
+                      "range is what makes the capture citable; section 5.4)")
+        ctx.check.set("trade_set_parity", NOT_EVALUATED, "no NT8 trade set")
+        return None
+
+    with ctx.rec.stage("nt8_capture") as st:
+        st.detail(strategyClass=cls, symbol=symbol, dateFrom=d_from, dateTo=d_to,
+                  periodValue=ctx.args.nt8_period_value,
+                  maxTrades=ctx.args.nt8_max_trades)
+        try:
+            res = capture(cls, symbol, d_from, d_to,
+                          period_value=ctx.args.nt8_period_value,
+                          out_dir=ctx.output_dir,
+                          max_trades=ctx.args.nt8_max_trades)
+        except Nt8CaptureError as exc:
+            st.detail(refused=str(exc))
+            ctx.rec.refuse("nt8 capture: {}".format(exc))
+            ctx.check.set("nt8_ground_truth", FAIL, str(exc))
+            ctx.check.set("trade_set_parity", NOT_EVALUATED,
+                          "the NT8 capture was refused")
+            return None
+        st.detail(tradesReturned=res.n_trades, csv=os.path.basename(res.csv_path))
+
+    ctx.rec.add_artifact("nt8Trades", res.csv_path)
+    ctx.rec.add_artifact("nt8TradesMeta", res.meta_path)
+    print("* NT8 capture: {} trades -> {}".format(
+        res.n_trades, os.path.relpath(res.csv_path, PROJECT_ROOT)))
+    return res.csv_path
+
+
 def stage_nt8(ctx: Ctx) -> None:
     """Capture the authoritative trade set.
 
@@ -487,13 +549,13 @@ def stage_nt8(ctx: Ctx) -> None:
 
     fixture = ctx.args.nt8_trades
     if not fixture:
-        ctx.check.set("nt8_ground_truth", NOT_EVALUATED,
-                      "--nt8 was passed without --nt8-trades. Live capture through "
-                      "the MCP bridge is not driven from this process; export the "
-                      "trade list with nt_backtest + nt_extract_trades and pass the "
-                      "CSV. See STRATEGY_WORKFLOW.md section 5.")
-        ctx.check.set("trade_set_parity", NOT_EVALUATED, "no NT8 trade set")
-        return
+        # LIVE CAPTURE. This used to say "not driven from this process" and tell
+        # the operator to run nt_backtest by hand -- a manual step inside the
+        # procedure whose whole point is one command. The bridge has an HTTP
+        # endpoint and a token on disk; there was never a reason for it.
+        fixture = _capture_nt8(ctx)
+        if fixture is None:
+            return
 
     import pandas as pd
     if not os.path.exists(fixture):
@@ -750,6 +812,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     p.add_argument("--nt8", action="store_true",
                    help="include the NT8 validation and trade-set parity stages")
+    p.add_argument("--nt8-symbol", default=None,
+                   help="NT8 CONTRACT for a live capture, e.g. 'MNQ 12-26'. No "
+                        "default: the contract MONTH changes which trades exist, "
+                        "so it cannot be derived from --ticker")
+    p.add_argument("--nt8-from", default=None,
+                   help="capture range start; defaults to --oos-start")
+    p.add_argument("--nt8-to", default=None, help="capture range end")
+    p.add_argument("--nt8-period-value", type=int, default=1,
+                   help="bar size for the NT8 run, in minutes")
+    p.add_argument("--nt8-max-trades", type=int, default=5000,
+                   help="a run returning EXACTLY this many is refused as possibly "
+                        "truncated; the MCP tool's own default of 50 is why")
     p.add_argument("--nt8-trades", default=None,
                    help="NT8 trade list CSV (nt_extract_trades output)")
     p.add_argument("--nt8-tz", default=None,

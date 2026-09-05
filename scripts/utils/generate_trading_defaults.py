@@ -38,6 +38,15 @@ def _hhmm_to_int(hhmm: str) -> int:
     return int(h) * 100 + int(m)
 
 
+def _int_or_nolimit(v) -> str:
+    """A null cap is NoLimit (-1), never 0 -- see the emitted comment."""
+    return "NoLimit" if v is None else str(int(v))
+
+
+def _time_or_nolimit(v) -> str:
+    return "NoLimit" if v is None else str(_hhmm_to_int(v))
+
+
 def source_hash(text: str) -> str:
     """Hash of the canonical JSON, so C# can assert it matches what Python read."""
     canonical = json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
@@ -110,12 +119,27 @@ def render(raw: str) -> str:
     a("        }")
     a("")
     a("        // ---- Risk ------------------------------------------------------")
+    a("        // NoLimit is -1, not 0 and not int.MaxValue: 0 would read as 'no")
+    a("        // trades allowed' if a caller compared with >=, and MaxValue hides")
+    a("        // in arithmetic. A cap is an OUTPUT of reporting/trade_ordinal.py,")
+    a("        // not a frozen input, and an entry may happen at ANY time -- only")
+    a("        // the 16:00 exit is fixed. See trading_defaults.json risk._doc.")
+    a("        public const int    NoLimit = -1;")
     a("        public const int    MaxContractsPerTrade   = {};".format(risk["maxContractsPerTrade"]))
     a("        public const int    MaxConcurrentPositions = {};".format(risk["maxConcurrentPositions"]))
-    a("        public const int    MaxTradesPerDay        = {};".format(risk["maxTradesPerDay"]))
-    a("        public const int    LastEntry              = {};   // {} ET"
-      .format(_hhmm_to_int(risk["lastEntryEt"]), risk["lastEntryEt"]))
-    a("        public const int    FlattenBy              = {};   // {} ET"
+    a("        public const int    MaxTradesPerDay        = {};   // {}".format(
+        _int_or_nolimit(risk["maxTradesPerDay"]),
+        "analysis-derived; no frozen cap" if risk["maxTradesPerDay"] is None
+        else "frozen"))
+    a("        public const int    MaxTradesPerSession    = {};   // {}".format(
+        _int_or_nolimit(risk.get("maxTradesPerSession")),
+        "analysis-derived; no frozen cap"
+        if risk.get("maxTradesPerSession") is None else "frozen"))
+    a("        public const int    LastEntry              = {};   // {}"
+      .format(_time_or_nolimit(risk["lastEntryEt"]),
+              "an entry may happen at ANY time"
+              if risk["lastEntryEt"] is None else risk["lastEntryEt"] + " ET"))
+    a("        public const int    FlattenBy              = {};   // {} ET, overridable"
       .format(_hhmm_to_int(risk["flattenByEt"]), risk["flattenByEt"]))
     a("        public const int    RthHardExit            = {};   // {} ET, ADR-020"
       .format(_hhmm_to_int(risk["rthHardExitEt"]), risk["rthHardExitEt"]))
