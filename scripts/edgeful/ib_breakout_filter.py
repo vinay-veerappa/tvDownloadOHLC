@@ -98,11 +98,19 @@ def _compute_confluence_score(df: pd.DataFrame) -> pd.DataFrame:
 
     score -= df["fail_setup_score"].fillna(0) * 2.0
 
-    if "range_bucket_full" in df.columns:
-        # Prefer moderate expansion range; extremely compressed or very wide IB adds uncertainty.
-        rb = df["range_bucket_full"].astype(str)
-        score += np.where(rb == "normal", 0.5, 0.0)
-        score -= np.where(rb.isin(["compressed", "wide"]), 0.5, 0.0)
+    # REG-1: the confluence score reads the CAUSAL bucket. The shipped version
+    # read range_bucket_full (whole-sample quantiles -> lookahead). The pipeline
+    # emits Small/Medium/Large; an earlier revision matched
+    # "normal"/"compressed"/"wide", a vocabulary that never occurs, so the
+    # branch was dead and scored 0 for every row.
+    bucket_col = (
+        "range_bucket_trailing"
+        if "range_bucket_trailing" in df.columns
+        else "range_bucket_full"
+    )
+    rb = df[bucket_col].astype(str)
+    score += np.where(rb == "Medium", 0.5, 0.0)
+    score -= np.where(rb.isin(["Small", "Large"]), 0.5, 0.0)
 
     return pd.DataFrame({"confluence_score": score})
 
@@ -117,10 +125,10 @@ def _walk_forward_calibration(
 
     For every row we estimate:
       - P(win | strict-pass features) via expanding-window lookback on prior
-        trading days that share the same (session_slot, range_bucket_full,
+        trading days that share the same (session_slot, range_bucket_trailing,
         first_break_dir) calibration cell.
       - P(win | lenient-pass features) using the same expanding-window logic but
-        keyed by (session_slot, range_bucket_full) so the estimate is less sparse.
+        keyed by (session_slot, range_bucket_trailing) so the estimate is less sparse.
       - Mean realized magnitude (play3_mfe) for strict-pass and lenient-pass
         cells to inform target sizing.
 
@@ -140,7 +148,16 @@ def _walk_forward_calibration(
     work = pd.DataFrame(index=df.index)
     work["trading_day"] = df["trading_day"].astype(str)
     work["session_slot"] = df["session_slot"].astype(str)
-    work["range_bucket_full"] = df["range_bucket_full"].astype(str)
+    # REG-1: calibration cells key on the CAUSAL bucket. Keying on
+    # range_bucket_full labels a day with quantiles computed from the whole
+    # sample, including days after it (lookahead). range_bucket_trailing is
+    # expanding(min_periods=20).quantile(...).shift(1) — knowable at the time.
+    bucket_col = (
+        "range_bucket_trailing"
+        if "range_bucket_trailing" in df.columns
+        else "range_bucket_full"
+    )
+    work["range_bucket_trailing"] = df[bucket_col].astype(str)
     work["first_break_dir"] = df["first_break_dir"].fillna(0).astype(int)
     # Win = profitable play3 trade, not direction-extension match.
     work["win"] = (df["play3_result"].fillna(0) > 0).astype(float)
@@ -158,12 +175,12 @@ def _walk_forward_calibration(
 
     # Build a string cell key for vectorized grouping.
     def _cell_key(cols: list[str]) -> pd.Series:
-        key = work["session_slot"].astype(str) + "|" + work["range_bucket_full"].astype(str)
+        key = work["session_slot"].astype(str) + "|" + work["range_bucket_trailing"].astype(str)
         if "first_break_dir" in cols:
             key = key + "|" + work["first_break_dir"].astype(str)
         return key
 
-    # --- Strict calibration cell: session_slot x range_bucket_full x first_break_dir ---
+    # --- Strict calibration cell: session_slot x range_bucket_trailing x first_break_dir ---
     strict_key = _cell_key(["first_break_dir"])
     work["strict_key"] = strict_key.where(work["strict"] == 1, np.nan)
 
@@ -185,7 +202,7 @@ def _walk_forward_calibration(
         lambda s: s.expanding(min_periods=1).count()
     )
 
-    # --- Lenient calibration cell: session_slot x range_bucket_full ---
+    # --- Lenient calibration cell: session_slot x range_bucket_trailing ---
     lenient_key = _cell_key([])
     work["lenient_key"] = lenient_key.where(work["lenient"] == 1, np.nan)
     win_lenient_masked = work["win"].where(work["lenient"] == 1, np.nan)
@@ -257,7 +274,7 @@ def _compute_recommendations(df: pd.DataFrame) -> pd.DataFrame:
     out["recommended_stop_multiple"] = 1.0
 
     # Expectation bucket now uses walk-forward empirical strict win-rate
-    # calibrated by (session_slot, range_bucket_full, first_break_dir).
+    # calibrated by (session_slot, range_bucket_trailing, first_break_dir).
     # Win = play3_result > 0, so base rate is ~14%, thresholds reflect that.
     ewr = df["empirical_win_rate_strict"].fillna(0.14) if "empirical_win_rate_strict" in df.columns else pd.Series(0.14, index=df.index)
     out["expectation_bucket"] = np.where(

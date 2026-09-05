@@ -35,7 +35,7 @@ confident report about the half that matched.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -271,7 +271,8 @@ def _join(entries: pd.DataFrame, trades: pd.DataFrame,
 
 
 def render_win_loss(trades: pd.DataFrame, decisions: Optional[pd.DataFrame] = None, *,
-                    time_col: str = "entry_time") -> str:
+                    time_col: str = "entry_time",
+                    engine_rejections: Optional[Dict[str, int]] = None) -> str:
     """ASCII only -- a cp1252 console cannot encode an em-dash or a <= sign."""
     L = ["### What separated the winners from the losers", ""]
     df = _prep(trades, time_col)
@@ -298,20 +299,49 @@ def render_win_loss(trades: pd.DataFrame, decisions: Optional[pd.DataFrame] = No
 
     # THE FUNNEL GAP. The decision log records the HUNTER's gates. The engine
     # applies its own -- an entry window, a per-day trade cap, a
-    # consecutive-loser pause, a daily loss limit -- and none of them is in the
-    # log. Measured on `mean_reversion`: 3,188 hunter entries became 16 trades,
-    # a 200:1 reduction the log does not explain. Naming the gap beats leaving a
-    # reader to notice that two numbers in one report disagree by two orders of
-    # magnitude.
-    if decisions is not None and not decisions.empty:
+    # consecutive-loser pause, a daily loss limit, a position lockout -- and
+    # until item 13 none reached any report. Measured on `mean_reversion`:
+    # 3,188 hunter entries became 16 trades, a 200:1 reduction the log did not
+    # explain. The engine now counts them per reason; this renders the counts
+    # when present, and still NAMES the gap when they are absent, because an
+    # unexplained two-orders-of-magnitude funnel is worse to hide than to show.
+    if engine_rejections:
+        # Per-ATTEMPT counts, not per-signal: a pending limit order is
+        # re-evaluated on every bar until it fills or times out, so one signal
+        # contributes a rejection on each bar its order stayed working.
+        _reasons = [
+            ("entry_window", "Entry window (incl. lunch)"),
+            ("daily_cap", "Daily trade cap"),
+            ("pause_after_consecutive_losers", "Consecutive-loser pause"),
+            ("hard_stop", "Hard stop (3-loss day)"),
+            ("daily_max_loss", "Daily max loss"),
+            ("order_timeout", "Order timeout"),
+            ("position_lockout", "Position/order lockout"),
+        ]
+        _rows = [(label, int(engine_rejections.get(k, 0)))
+                 for k, label in _reasons if engine_rejections.get(k, 0) > 0]
+        if _rows:
+            L += ["", "#### 0. The engine's own funnel", "",
+                  "The decision log records the hunter's criteria; these are the "
+                  "ENGINE's, counted per working-order bar (a pending order is "
+                  "re-evaluated each bar, so one signal can appear several "
+                  "times).", "",
+                  "| Engine gate | Bars rejected |", "|---|---:|"]
+            for label, count in _rows:
+                L.append("| {} | {:,} |".format(label, count))
+        else:
+            L += ["", "#### 0. The engine's own funnel", "",
+                  "The engine rejected nothing this run -- every working order "
+                  "filled inside the entry window under the caps."]
+    elif decisions is not None and not decisions.empty:
         n_ent = int(decisions.loc[decisions["decision"] == "ENTRY", "seq"].nunique())
         if n_ent > len(df):
             L += ["", "The decision log records {:,} hunter entr(ies) and this "
-                      "trade set has {:,}. The difference is the ENGINE's own "
-                      "gates -- entry window, per-day cap, consecutive-loser "
-                      "pause, daily loss limit -- which are not instrumented "
-                      "(section 11 item 13). Rejections below are the hunter's "
-                      "only.".format(n_ent, len(df))]
+                      "trade set has {:,}. The engine's own gates -- entry "
+                      "window, per-day cap, consecutive-loser pause, daily loss "
+                      "limit, position lockout -- were NOT MEASURED this run "
+                      "(engine predates item 13 or ran the mtf path). Rejections "
+                      "below are the hunter's only.".format(n_ent, len(df))]
 
     src = loss_sources(trades, time_col=time_col)
     if not src.empty:

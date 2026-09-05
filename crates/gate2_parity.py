@@ -58,11 +58,17 @@ def main():
     signals, limit_prices, stop_losses = synth_signals(df)
     times_ms = df.index.values.astype("datetime64[ms]").astype(np.int64)
 
+    # THE "PYTHON" SIDE MUST BE THE PYTHON ENGINE. Until 2026-09-05 this call
+    # used the default dispatch, which is the RUST kernel -- so the v1 trade
+    # comparison below was Rust-vs-Rust and passed vacuously, proving nothing
+    # about the Python mirror it claimed to cover. `use_rust=False` selects the
+    # actual `_simulate_py` loop this gate exists to hold equal.
     py_df = engine.simulate(
         df,
         pd.Series(signals, index=df.index),
         pd.Series(limit_prices, index=df.index),
         pd.Series(stop_losses, index=df.index),
+        use_rust=False,
     )
 
     rust = nt8_parity_core.simulate_bars_v1(
@@ -113,6 +119,27 @@ def main():
             print(f"    py={pd.Timestamp(py_entry_ms[b], unit='ms')} rust={pd.Timestamp(rs_entry_ms[b], unit='ms')}")
     else:
         print(f"  V1 entry_time: EXACT MATCH")
+
+    # Rejection counts (section 11 item 13). The counts are a summary of the
+    # same behaviour the trade comparison above proves row-for-row; a summary
+    # the gate does not compare is a summary the two paths can drift on. The
+    # Python engine run above set engine.last_rejections via use_rust=False.
+    py_rej = getattr(engine, "last_rejections", None)
+    rs_rej = rust.get("rejection_counts")
+    if py_rej is None:
+        print("  V1 rejection_counts: NOT MEASURED on the Python path (engine predates item 13)")
+        mismatches += 1
+    elif rs_rej is None:
+        print("  V1 rejection_counts: NOT MEASURED by the kernel (stale wheel? rebuild with maturin)")
+        mismatches += 1
+    elif py_rej != rs_rej:
+        mismatches += 1
+        print("  V1 rejection_counts: DIVERGENCE")
+        for k in sorted(set(py_rej) | set(rs_rej)):
+            if py_rej.get(k) != rs_rej.get(k):
+                print(f"    {k}: py={py_rej.get(k)} rust={rs_rej.get(k)}")
+    else:
+        print(f"  V1 rejection_counts: EXACT MATCH ({sum(py_rej.values())} rejections across {len(py_rej)} reasons)")
 
     # ---------------- V2 ----------------
     df_5m = df_full.loc[YEAR_START:YEAR_END].resample("5min").agg(

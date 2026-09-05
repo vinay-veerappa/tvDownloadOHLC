@@ -279,9 +279,16 @@ class NT8ParityBacktester(BaseBacktester):
                 **_entry,
             )
 
+        # The engine's own gates, counted per reason (section 11 item 13).
+        # simulate_mtf predates the counting and carries none; an absent dict is
+        # reported as not-measured rather than zeros, per the NaN/0 distinction
+        # the reporting layer already enforces.
+        engine_rejections = getattr(engine, "last_rejections", None)
+
         if df_trades.empty:
             return {
                 "signal_alignment": alignment,
+                "engine_rejections": engine_rejections,
                 "total_trades": 0,
                 "win_rate_%": 0.0,
                 "profit_factor": 0.0,
@@ -315,6 +322,7 @@ class NT8ParityBacktester(BaseBacktester):
 
         return {
             "signal_alignment": alignment,
+            "engine_rejections": engine_rejections,
             "total_trades": len(df_trades),
             "win_rate_%": win_rate,
             "profit_factor": pf,

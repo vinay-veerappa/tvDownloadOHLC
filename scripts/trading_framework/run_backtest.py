@@ -688,7 +688,12 @@ def run_research_pipeline(args, rec=None, output_dir=None):
             print(f"* Decision log: {_dl}")
         tearsheet += "\n\n" + render_decision_log(
             _dec if _dec is not None else pd.DataFrame())
-        tearsheet += "\n\n" + render_win_loss(_td, _dec)
+        # The engine's own gates (item 13): counted per reason by the sanctioned
+        # engine and surfaced in the result dict. Absent means an mtf run or an
+        # engine predating the counting, and the report says so rather than
+        # showing zeros.
+        tearsheet += "\n\n" + render_win_loss(
+            _td, _dec, engine_rejections=result.get('engine_rejections'))
     
         # Save Outputs
         # output_dir is the run-id'd directory created above; the old fixed path

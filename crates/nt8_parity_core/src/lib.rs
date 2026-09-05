@@ -101,6 +101,18 @@ fn simulate_bars_v1(
     // measurement this kernel did not make. It reached a live report as
     // "median MAE 0.0" on eleven trades that exited on a stop.
     let mut out_exc: Vec<[f64; 2]> = Vec::new();   // mfe_pts, mae_pts
+    // Per-reason rejection counts -- section 11 item 13. The engine's own
+    // gates (entry window, daily cap, pause, hard stop, daily loss limit,
+    // timeout, concurrency lockout) were invisible to every report, so a
+    // 200:1 funnel reduction read as a mystery. COUNTS, not per-bar rows: the
+    // decision log stays a hunter artefact and these are a separate summary.
+    let mut rej_entry_window: u64 = 0;
+    let mut rej_daily_cap: u64 = 0;
+    let mut rej_pause: u64 = 0;
+    let mut rej_hard_stop: u64 = 0;
+    let mut rej_daily_max_loss: u64 = 0;
+    let mut rej_timeout: u64 = 0;
+    let mut rej_position_lockout: u64 = 0;
 
     let mut in_pos = false;
     let mut cur_mfe_pts: f64 = 0.0;
@@ -297,6 +309,14 @@ fn simulate_bars_v1(
                 }
 
                 if i - p.bar <= order_timeout_bars {
+                    // Per-reason counting (item 13). Order matters only for
+                    // determinism: every condition is evaluated so no gate is
+                    // hidden by short-circuiting, matching the Python mirror.
+                    if !in_time { rej_entry_window += 1; }
+                    if daily_trades >= max_trades_per_day { rej_daily_cap += 1; }
+                    if is_paused { rej_pause += 1; }
+                    if hit_hard_stop { rej_hard_stop += 1; }
+                    if hit_daily_max { rej_daily_max_loss += 1; }
                     if in_time && daily_trades < max_trades_per_day && !is_paused && !hit_hard_stop && !hit_daily_max {
                         if p.dir == 1 && l0 <= p.limit {
                             in_pos = true;
@@ -326,6 +346,7 @@ fn simulate_bars_v1(
                     }
                 } else {
                     pending_order = None;
+                    rej_timeout += 1;
                 }
             }
         }
@@ -335,6 +356,12 @@ fn simulate_bars_v1(
             let lmt = round_tick(limit_prices[i]);
             let sl = round_tick(stop_losses[i]);
             pending_order = Some(Pending { dir: signals[i], limit: lmt, sl, bar: i });
+        } else if signals[i] != 0 && (in_pos || pending_order.is_some()) {
+            // Concurrency lockout: a signal arrived while a position or a
+            // working order already owned the slot. Before item 13 this was
+            // the single largest invisible gate -- the state machine drops the
+            // signal without a trace.
+            rej_position_lockout += 1;
         }
     }
 
@@ -357,6 +384,17 @@ fn simulate_bars_v1(
     // -- a distinction no P&L column can make.
     dict.set_item("mfe_points", out_exc.iter().map(|e| e[0]).collect::<Vec<_>>())?;
     dict.set_item("mae_points", out_exc.iter().map(|e| e[1]).collect::<Vec<_>>())?;
+    // Per-reason rejection counts (item 13). The keys are the frozen gate
+    // names; gate2_parity.py asserts they are equal to the Python mirror's.
+    let rej = pyo3::types::PyDict::new(_py);
+    rej.set_item("entry_window", rej_entry_window)?;
+    rej.set_item("daily_cap", rej_daily_cap)?;
+    rej.set_item("pause_after_consecutive_losers", rej_pause)?;
+    rej.set_item("hard_stop", rej_hard_stop)?;
+    rej.set_item("daily_max_loss", rej_daily_max_loss)?;
+    rej.set_item("order_timeout", rej_timeout)?;
+    rej.set_item("position_lockout", rej_position_lockout)?;
+    dict.set_item("rejection_counts", rej)?;
     Ok(dict.into())
 }
 

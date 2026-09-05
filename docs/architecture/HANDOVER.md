@@ -89,9 +89,11 @@ roster diff is one-sided — and **the gate roster is layer 0 of parity**.
 parameters, so no recall figure between them means anything yet. §11 item 15 /
 B7+B8. Needs a recompile.
 
-**The 200:1 funnel number is stale.** "3,188 hunter entries became 16 trades"
-was measured under the 09:45–15:30 entry window that no longer exists. Re-measure
-before working from it. §11 item 13.
+~~**The 200:1 funnel number is stale.**~~ **Re-measured 2026-09-05 and the
+stale number is dead**: under the current frozen policy, 3,188 hunter entries
+became 2,527 trades (1.26:1); the engine's gates are now counted per reason
+and rendered in every tearsheet; the only gate still biting is the order
+timeout. Item 13 closed.
 
 **`target1_price` never reaches the sanctioned engine.** `hunt()` declares it,
 the parity engine drops it and substitutes `queen_bps`/`runner_bps`. §11 item 19.
@@ -102,11 +104,13 @@ In the order I would do them.
 
 | | Item | Why this order |
 |---|---|---|
-| 1 | **REG-1 — define "regime"** (`research_backlog/13_market_regime_definition.md`) | Everything downstream stratifies by it, `statistically_sufficient` is running on a declared proxy, and one of the three existing definitions has **lookahead and is in live use**. Its own first step is cheap and may expose a defect in a shipped filter |
-| 2 | **§11 item 13** — instrument the engine's gates | The decision log explains the hunter and not the engine, so the funnel is half dark. Toolchain is proven; the kernel returns no rejection reasons, so the cheap honest version is per-reason COUNTS, not per-bar rows |
-| 3 | **§11 item 18** — instrument the 14 hunters | Per-strategy population work, each one small. `mean_reversion` is the reference. Frozen in `tests/uninstrumented.py`, which may only shrink |
-| 4 | **§11 item 3** — hosted CI | `tools/ci_local.py` + `.githooks/pre-commit` exist and are authoritative. What is missing is the fresh-clone case, which a local run cannot cover |
-| 5 | **§11 items 4, 8** | Parameter documents for non-ICT families; migrate off the legacy `session_block` |
+| 1 | **§11 item 18** — instrument the 14 hunters | Per-strategy population work, each one small. `mean_reversion` is the reference. Frozen in `tests/uninstrumented.py`, which may only shrink |
+| 2 | **REG-1 — the remaining arms** (`research_backlog/13_market_regime_definition.md`) | The first cheap step is done (the live lookahead defect in `ib_breakout_filter.py` is fixed and pinned); what remains is the candidate comparison (balance/persistence/separation/stability) and killing the duplicated bucketing code |
+| 3 | **§11 item 3** — hosted CI | `tools/ci_local.py` + `.githooks/pre-commit` exist and are authoritative. What is missing is the fresh-clone case, which a local run cannot cover |
+| 4 | **§11 items 4, 8** | Parameter documents for non-ICT families; migrate off the legacy `session_block` |
+
+Done this session (2026-09-05, recorded in their own documents): REG-1 first
+cheap step; §11 item 13.
 
 Waiting on the user, not on code: §11 items 2 (`WickType`), 11 (deploy), 15
 (deploy), 17/B9 (which `RiskManagerBase` changes to land), 20 (deploy).

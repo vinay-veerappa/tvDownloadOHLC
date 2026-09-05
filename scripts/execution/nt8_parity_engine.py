@@ -242,10 +242,55 @@ class NT8ParityEngine:
         self.contracts = contracts
         self.commission_per_contract_rt = commission_per_contract_rt
         self.slippage_ticks = slippage_ticks
+        # Per-run rejection counts (item 13). Set by simulate(); defined here
+        # so the attribute exists before the first run.
+        self.last_rejections: Dict[str, int] = {r: 0 for r in self.REJECTION_REASONS}
 
     def round_tick(self, price: float) -> float:
         """Snap price to exact tick size (e.g. 0.25)."""
         return round(price / self.tick_size) * self.tick_size
+
+    # Frozen rejection-reason names (item 13). Single source for the engine,
+    # the adapter and the tests; a reason invented on one path only would be a
+    # silent second vocabulary. Order is display order.
+    REJECTION_REASONS = (
+        "entry_window",
+        "daily_cap",
+        "pause_after_consecutive_losers",
+        "hard_stop",
+        "daily_max_loss",
+        "order_timeout",
+        "position_lockout",
+    )
+
+    def _zero_rejections(self) -> Dict[str, int]:
+        return {r: 0 for r in self.REJECTION_REASONS}
+
+    def _normalise_rejections(self, raw) -> Dict[str, int]:
+        """Coerce a kernel rejection dict to the frozen vocabulary.
+
+        An unexpected key means the two sides disagree on the reason set --
+        which is the gate roster problem at the engine layer, so it raises
+        rather than dropping or renaming. A missing key from a STALE wheel
+        (built before the kernel counted rejections) degrades to 0 with a
+        warning, mirroring `_excursion`'s stale-wheel policy: counts that this
+        build did not measure are zeros, honestly, and the caller can see the
+        keys are absent.
+        """
+        counts = self._zero_rejections()
+        if not raw:
+            self.last_rejections = counts
+            return counts
+        for k, v in raw.items():
+            if k not in counts:
+                raise ValueError(
+                    "kernel reported unknown rejection reason {!r}; expected one "
+                    "of {}. The reason set is the engine's gate roster and must "
+                    "move on both sides together.".format(k, sorted(counts)))
+            counts[k] = int(v)
+        missing = [k for k, v in counts.items() if raw.get(k) is None]
+        self.last_rejections = counts
+        return counts
 
     def simulate(
         self,
@@ -274,6 +319,8 @@ class NT8ParityEngine:
         adverse = _resolve_ambiguity_policy(ambiguity_policy)
         if use_rust:
             _require_rust_core()
+        # Reset per run: a reused engine must not carry the last run's counts.
+        self.last_rejections = self._zero_rejections()
         if use_rust and HAS_RUST_CORE:
             return self._simulate_rust(
                 df, signals, limit_prices, stop_losses,
@@ -343,6 +390,12 @@ class NT8ParityEngine:
         )
 
         n_trades = len(res["entry_time_ms"])
+        # The kernel owns the counts on this path; read rather than re-derive,
+        # so the two paths cannot drift on the summary the way they once did on
+        # excursions. A stale wheel predating the counting yields zeros honestly
+        # (keys absent), not an exception -- same policy as `_excursion`.
+        self._normalise_rejections(res.get("rejection_counts")
+                                   if hasattr(res, "get") else None)
         if n_trades == 0:
             return pd.DataFrame(columns=[
                 "entry_time", "exit_time", "direction", "entry_price", "exit_price",
@@ -455,6 +508,19 @@ class NT8ParityEngine:
         pause_until_time = None
         daily_pnl = 0.0
         pending_order = None
+
+        # Per-reason rejection counts -- section 11 item 13. Same names as the
+        # Rust kernel's `rejection_counts`; gate2_parity.py asserts equality.
+        # Counts, not rows: the decision log stays a hunter artefact.
+        rejections = {
+            "entry_window": 0,
+            "daily_cap": 0,
+            "pause_after_consecutive_losers": 0,
+            "hard_stop": 0,
+            "daily_max_loss": 0,
+            "order_timeout": 0,
+            "position_lockout": 0,
+        }
 
         for i in range(n):
             t = times[i]
@@ -603,6 +669,18 @@ class NT8ParityEngine:
                     in_time = False
 
                 if (i - p_bar) <= order_timeout_bars:
+                    # Per-reason counting (item 13). Every condition evaluated --
+                    # no short-circuit hides a gate; matches the Rust kernel.
+                    if not in_time:
+                        rejections["entry_window"] += 1
+                    if daily_trades >= self.max_trades_per_day:
+                        rejections["daily_cap"] += 1
+                    if is_paused:
+                        rejections["pause_after_consecutive_losers"] += 1
+                    if hit_hard_stop:
+                        rejections["hard_stop"] += 1
+                    if hit_daily_max:
+                        rejections["daily_max_loss"] += 1
                     if in_time and daily_trades < self.max_trades_per_day and not is_paused and not hit_hard_stop and not hit_daily_max:
                         if p_dir == 1 and l0 <= p_limit:
                             in_pos = True
@@ -631,6 +709,7 @@ class NT8ParityEngine:
                             pending_order = None
                 else:
                     pending_order = None
+                    rejections["order_timeout"] += 1
 
             # ──────────────────────────────────────────────────────────
             # 3. ARM NEW SIGNAL (IF NOT ALREADY IN POSITION OR WORKING)
@@ -639,7 +718,12 @@ class NT8ParityEngine:
                 lmt = self.round_tick(lmt_arr[i])
                 sl = self.round_tick(sl_arr[i])
                 pending_order = {"dir": sig_arr[i], "limit": lmt, "sl": sl, "bar": i}
+            elif sig_arr[i] != 0 and (in_pos or pending_order is not None):
+                # Concurrency lockout (item 13): the state machine dropped the
+                # signal without a trace -- this is the count of those drops.
+                rejections["position_lockout"] += 1
 
+        self.last_rejections = dict(rejections)
         return _trades_to_frame(trades)
 
     def simulate_mtf(
