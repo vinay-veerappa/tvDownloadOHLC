@@ -45,6 +45,13 @@ old_data/
 debug_files/
 *.csv
 *.parquet
+
+# ...but the NT8 ground-truth trade lists are EVIDENCE, not data. Their
+# .meta.json was already tracked while the CSV it describes was not -- a
+# versioned pointer to an unversioned file. STRATEGY_WORKFLOW.md section 5.4
+# requires the trade list to be committed for a pinned range and profile;
+# the blanket rule above is what made that impossible.
+!scripts/parity/fixtures/nt8_trades_*.csv
 # Explicitly exclude generated Phase 1 daily_context parquet files (regenerated locally)
 /data/derived/daily_context_*.parquet
 **/data/*.parquet

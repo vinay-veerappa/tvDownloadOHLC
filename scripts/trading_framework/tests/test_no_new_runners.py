@@ -40,7 +40,7 @@ _EXECUTABLE = re.compile(r"^if __name__\s*==|ArgumentParser\(", re.M)
 _SKIP_PARTS = {"tests", "__pycache__", "_archive_predecessor", ".venv"}
 
 _REPO = pathlib.Path(__file__).resolve().parents[3]
-_INVENTORY = pathlib.Path(__file__).with_name("frozen_runners.txt")
+from scripts.trading_framework.tests.frozen_runners import FROZEN
 
 
 def find_runners(root: pathlib.Path, relative_to: pathlib.Path = None):
@@ -57,8 +57,7 @@ def find_runners(root: pathlib.Path, relative_to: pathlib.Path = None):
 
 
 def frozen():
-    return {ln.strip() for ln in _INVENTORY.read_text(encoding="utf-8").splitlines()
-            if ln.strip() and not ln.startswith("#")}
+    return set(FROZEN)
 
 
 # --------------------------------------------------------------------------- #
@@ -142,9 +141,22 @@ def test_the_scan_finds_a_non_trivial_number_of_files(tmp_path):
     assert n > 500, "only {} python files under scripts/ -- wrong root?".format(n)
 
 
-def test_the_inventory_file_is_present_and_populated():
-    assert _INVENTORY.is_file(), _INVENTORY
+def test_the_inventory_is_populated_and_tracked_by_git():
+    """A gate whose data is gitignored is not a gate.
+
+    This inventory was first written as `frozen_runners.txt`; `.gitignore` line
+    69 is a blanket `*.txt`, so `git add` dropped it without failing and the
+    gate would have errored on any fresh clone. Assert both facts.
+    """
+    import subprocess
     assert len(frozen()) >= 30, len(frozen())
+    mod = pathlib.Path(__file__).with_name("frozen_runners.py")
+    out = subprocess.run(["git", "check-ignore", "-q", str(mod)],
+                         cwd=_REPO, capture_output=True)
+    assert out.returncode != 0, "{} is gitignored".format(mod)
+    out = subprocess.run(["git", "ls-files", "--error-unmatch", str(mod)],
+                         cwd=_REPO, capture_output=True)
+    assert out.returncode == 0, "{} is not tracked by git".format(mod)
 
 
 if __name__ == "__main__":

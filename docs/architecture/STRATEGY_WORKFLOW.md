@@ -420,7 +420,15 @@ no default. Both are argument-level refusals, not warnings.
 **A 33rd bespoke runner now fails a test.** 🟢
 
 *Enforcer*: `tests/test_no_new_runners.py`, against the inventory in
-`tests/frozen_runners.txt`. **It matches on behaviour, not on the filename**: a module
+`tests/frozen_runners.py`.
+
+> ⚠️ **The inventory is a `.py` and not a `.txt` on purpose.** It was written as
+> `frozen_runners.txt`, and `.gitignore` carries a blanket `*.txt`, so `git add` dropped
+> it **without failing** and the gate would have errored on every fresh clone. A gate whose
+> data is untracked is not a gate. `test_the_inventory_is_populated_and_tracked_by_git`
+> now asserts both `git check-ignore` and `git ls-files` on it. The same blanket-extension
+> hazard on `*.csv` was hiding the NT8 ground-truth capture (§5.4) — fixed in the same
+> commit with a negative-ignore rule. **It matches on behaviour, not on the filename**: a module
 counts as a runner if it names a backtest engine (`VectorizedBacktester`,
 `NT8ParityBacktester`, `BacktestEngine`, `run_research_pipeline`) *and* is executable
 (`__main__` or an `ArgumentParser`). Two modules are sanctioned — `workflow.py` and
