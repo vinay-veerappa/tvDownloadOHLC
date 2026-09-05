@@ -1,8 +1,9 @@
 # Bot fix backlog
 
 > **Scope**: defects and divergences in the **C# bots**, tracked separately from
-> the workflow so that finalising the workflow is not blocked on fixing twelve
-> strategies. The workflow procedure itself is
+> the workflow so that finalising the workflow is not blocked on fixing fourteen
+> bots (the count is `tests/uninstrumented.py`; do not restate it). The workflow
+> procedure itself is
 > [STRATEGY_WORKFLOW.md](STRATEGY_WORKFLOW.md); this file is a *worklist*, not a
 > second procedure, and it must never grow a rule of its own.
 >
@@ -32,7 +33,7 @@ a line, so the two cannot drift apart.
 
 ---
 
-## B1 — `BBMRReversionBot` allows 99 trades/day; Python allows 3 🔴 highest value
+## B1 — `BBMRReversionBot` allows 99 trades/day; Python now caps at nothing 🔴 highest value
 
 | | |
 |---|---|
@@ -40,20 +41,40 @@ a line, so the two cannot drift apart.
 | **Registry key** | `mean_reversion` |
 | **Found by** | `test_bot_defaults.py`, cross-reading the bot against `sessions.yaml` |
 
-`MaxTradesPerDay = 99` in the bot; the Python engine that predicts it enforces 3.
-**The pair cannot be compared at the trade-set layer** — the C# side can take
-trades the Python side structurally cannot, so any recall figure is meaningless
-and would read as a Python defect.
+`MaxTradesPerDay = 99` in the bot. **This ticket's original text said the Python
+engine enforces 3, and that stopped being true on 2026-09-05** — `build_engine`
+now takes the cap from the frozen document, which sets it to `null`, so the
+engine runs UNCAPPED and `sessions.yaml`'s 3 is recorded beside it as the
+disagreement rather than applied. Re-measured 2026-09-05:
 
-*Decide which is right before editing either.* The frozen document no longer
-imposes a cap at all (`risk.analysisDerived`), and
-`reporting/trade_ordinal.py` now reports EV_R by trade ordinal so the number can
-be read off the data. Run that report first; the answer it gives is the value
-both sides should carry.
+| | cap |
+|---|---|
+| `BBMRReversionBot` | 99 |
+| the Python engine, before | 3 (from `sessions.yaml`) |
+| the Python engine, now | **none** — `risk.maxTradesPerDay: null` |
+| `sessions.yaml`, still | 3, recorded but not applied |
 
-`FlattenBy` was **1615**, past ADR-020's 16:00 hard exit — already fixed
-2026-09-05 (`71536a51`). `LatestEntry = 1600` is deliberate (NY_PM strategy) and
-is **not** a defect: an entry may happen at any time (§1.3).
+So the direction of the divergence has flipped, and the ticket is now *cheaper*,
+not harder: the two sides are 99-vs-uncapped rather than 99-vs-3, and the
+question is only whether 99 should be a number at all. **The pair still cannot be
+compared at the trade-set layer** until it is settled — one side having a cap the
+other does not means any recall figure reads as a Python defect.
+
+*Decide which is right before editing either.* `reporting/trade_ordinal.py`
+reports EV_R by trade ordinal so the number can be read off the data. Run that
+report first; the answer it gives is the value both sides should carry, and if
+its sample is under 20 it will refuse rather than suggest one.
+
+`FlattenBy` in the repo is **1600**, fixed 2026-09-05 (`71536a51`) from 1615,
+which was past ADR-020's hard exit. ⚠️ **The DEPLOYED copy is still 1615** —
+found 2026-09-05 by `workflow.py::_deployment_state`, recorded as
+STRATEGY_WORKFLOW.md §11 item 20. So an NT8 capture taken from the current
+install is evidence about a bot that violates ADR-020, and this ticket is not
+finished by the repo edit alone. Do not deploy to close it; that is the user's
+call.
+
+`LatestEntry = 1600` is deliberate (NY_PM strategy) and is **not** a defect: an
+entry may happen at any time (§1.3).
 
 ---
 
@@ -124,16 +145,21 @@ No registry key: research artifact, same as B2.
 
 ---
 
-## B6 — `Bandits8020Bot` and `EMAPullbackBot`: minor 🟢
+## B6 — `Bandits8020Bot`: minor 🟢  *(the `EMAPullbackBot` half is closed)*
 
 | | |
 |---|---|
-| **Bots** | `bandits_8020/Bandits8020Bot.cs` (1555 / 3 / 1100), `ema_pullback/EMAPullbackBot.cs` (1545 / 3 / 1530) |
+| **Bot** | `bandits_8020/Bandits8020Bot.cs` (1555 / 3 / 1100) |
 
-`EMAPullbackBot` differs from the frozen defaults only in `LatestEntry`, which is
-no longer a frozen field — it may simply lose its inventory line once B1–B5 have
-settled what a normalised bot looks like. `Bandits8020Bot`'s `LatestEntry = 1100`
-is a deliberate morning-only window.
+`Bandits8020Bot`'s `LatestEntry = 1100` is a deliberate morning-only window.
+
+✅ **`EMAPullbackBot` (1545 / 3 / 1530) already left the inventory on 2026-09-05.**
+It differed from the frozen defaults only in `LatestEntry`, which stopped being a
+frozen field when entries became unrestricted, so the shrink-only inventory
+dropped its line and `known_bot_divergences.py` records why. This ticket
+described that as still pending until 2026-09-05 — the inventory is the machine
+half and it had moved on; **read it rather than this paragraph** if the two ever
+disagree again.
 
 **Do these last.** They are the least informative, and doing them first would
 mean deciding the convention on the cases that matter least.
@@ -188,12 +214,18 @@ groups on them, and a rename shifts every historical comparison silently.
 
 ### The measurement that settles it
 
-`AddSecondaryTimeframe` is a property of `RiskManagerBase`. **Ten bots set it and
-eight of them set it to `false`:**
+`AddSecondaryTimeframe` is a property of `RiskManagerBase`. **Eleven bots set it
+and nine of them set it to `false`** (re-counted 2026-09-05 —
+`grep -rn AddSecondaryTimeframe scripts/ninjatrader/strategies/`; the first
+version of this table said eight of ten and had dropped `VWAPReclaimBot`):
 
-| Sets it `true` | Sets it `false` |
+| Sets it `true` (2) | Sets it `false` (9) |
 |---|---|
-| `BBMRReversionBot`, `ICTFVGCISDBot` | `Bandits8020Bot`, `EMAPullbackBot`, `FailedAuctionBot`, `IBFadeBot`, `IBStrategyBase`, `STTrendBot`, `Strat212ContinuationBot`, `Strat22RevStratBot` |
+| `BBMRReversionBot`, `ICTFVGCISDBot` | `Bandits8020Bot`, `EMAPullbackBot`, `FailedAuctionBot`, `IBFadeBot`, `IBStrategyBase`, `STTrendBot`, `Strat212ContinuationBot`, `Strat22RevStratBot`, `VWAPReclaimBot` |
+
+⚠️ `IBStrategyBase.cs:303` carries a *comment* reading
+`AddSecondaryTimeframe=true` immediately above the line that sets it `false`.
+A regex over these files will mis-count it; count the assignments.
 
 A feature in a base class that **most of its users must switch off** is in the
 wrong layer. And it is not one property — it leaks into the base in seven places:
@@ -335,6 +367,14 @@ six rules; section 3.4 defines GovernedStrategy and what it already supplies.
 5. RE-RUN the workflow and diff the two promotion checklists. Report what
    changed and why. A changed backtest is expected; an UNEXPLAINED change is the
    failure.
+
+   WARNING: the BEFORE run must be one YOU took in step 1. A stored run record
+   from before 2026-09-05 is not a valid baseline -- the execution policy
+   changed that day (1 contract not 2, $0.62 not $1.40, 1 tick not 0, no entry
+   cut-off rather than 09:45-15:30, lunch reported rather than filtered out,
+   15:45 flatten, no daily trade cap), and the search now scores under the same
+   engine as the report. Diffing across that boundary attributes the policy
+   change to your edit.
 
 6. Run .\.venv\Scripts\python.exe tools\ci_local.py and paste the summary.
 

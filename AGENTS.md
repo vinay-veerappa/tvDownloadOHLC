@@ -105,9 +105,11 @@ measured · **2** = a required stage raised.
 Do not re-derive these. `docs/architecture/BOT_FIX_BACKLOG.md` carries tickets
 B1–B9 with a loop prompt; `scripts/trading_framework/tests/known_bot_divergences.py`
 is its machine-readable half and a test fails if the two drift apart. The one to
-know: **`BBMRReversionBot` allows 99 trades/day where the Python `mean_reversion`
-that predicts it allows 3**, so that pair cannot be compared at the trade-set
-layer.
+know: **`BBMRReversionBot` allows 99 trades/day and the Python `mean_reversion`
+that predicts it now allows no cap at all** (`risk.maxTradesPerDay: null` since
+2026-09-05 — it enforced 3 before that), so that pair still cannot be compared at
+the trade-set layer. **And the DEPLOYED copy of that bot still flattens at 16:15**,
+past ADR-020's hard exit, while the repo source says 1600.
 
 ## Everything else
 

@@ -193,12 +193,15 @@ engine (via `config/defaults.py`), the C# bot, and the NT8 Strategy Analyzer.
 > Measured across the twelve bots: **five** different flatten times and **six** different
 > daily trade caps, every one hand-set, none compared to the Python engine that predicts
 > its trades. One was a real ADR-020 violation — `BBMRReversionBot` flattened at **16:15**
-> — and was fixed rather than recorded. The rest are inventoried in
-> `tests/known_bot_divergences.py`, which freezes the spread so it cannot grow: a bot not
-> in it must match, a bot in it may only move *toward* the frozen value, and one that now
-> agrees must lose its line. **`BBMRReversionBot` still allows 99 trades a day where
-> `mean_reversion` allows 3** — that pair is not comparable at the trade-set layer, and
-> until 2026-09-05 no report said so.
+> — and was fixed in the repo rather than recorded. ⚠️ **The DEPLOYED copy is still 16:15**
+> (§11 item 20), so fixing a source file is not the same as fixing a bot. The rest are
+> inventoried in `tests/known_bot_divergences.py`, which freezes the spread so it cannot
+> grow: a bot not in it must match, a bot in it may only move *toward* the frozen value,
+> and one that now agrees must lose its line — `EMAPullbackBot` lost its line on
+> 2026-09-05, which is the mechanism working. **`BBMRReversionBot` still allows 99 trades
+> a day where `mean_reversion` now caps at nothing at all** (it enforced 3 until
+> 2026-09-05, when the engine started taking the cap from `risk.maxTradesPerDay: null`) —
+> that pair is not comparable at the trade-set layer either way.
 
 *Enforcers*: `config/defaults.py::resolve_instrument` **raises** on an unknown
 ticker rather than defaulting; `assert_sessions_partition` refuses a window set
