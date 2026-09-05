@@ -8,8 +8,19 @@
 #
 # Install (once per clone):  git config core.hooksPath .githooks
 # Deliberate override:       ALLOW_BIG_FILES=1 git commit ...
+#                            SKIP_STRATEGY_GATES=1 git commit ...
 
-BLOCKED_EXT='\.(parquet|m4a|mp3|mp4|wav|webm|mkv|mov|avi|flac|ogg|aac|wma)$'
+# A CLOSED STDERR MUST NOT DISARM THIS HOOK.
+# Measured 2026-09-05: `git commit 2>&1 | head -3` closes the pipe while the
+# hook is still writing its diagnosis, SIGPIPE kills it before it reaches
+# `exit 1`, and THE COMMIT LANDS. Verified by hash: blocked without the pipe,
+# not blocked with it. Any wrapper that truncates git's output -- a pager, a
+# CI log tail, an agent piping to `head` -- silently disarmed every check
+# below. Ignoring SIGPIPE means the diagnosis may be truncated; the refusal
+# is not.
+trap '' PIPE 2>/dev/null || true
+
+BLOCKED_EXT='"\.(parquet|m4a|mp3|mp4|wav|webm|mkv|mov|avi|flac|ogg|aac|wma)$'
 MAX_BYTES=52428800   # 50 MB -- GitHub warns here and hard-rejects at 100 MB
 
 if [ "$ALLOW_BIG_FILES" = "1" ]; then
@@ -44,6 +55,42 @@ if [ -n "$big" ]; then
     echo "" >&2
     printf '%s\n' "$big" | sed 's/^/    /' >&2
     fail=1
+fi
+
+# 3. The strategy gates, when python or the canonical doc is in the commit.
+#
+# A CI RUN CANNOT DO THIS JOB. It happens after the push: it notifies, it does
+# not block. This is the only place that refuses the commit itself.
+#
+# THE TRIGGER IS AS WIDE AS THE GATE'S SCAN REGION. It first listed only
+# trading_framework/ + strategies/ + parity/, while the runner gate scans ALL of
+# scripts/ -- and 17 of the 32 frozen runners live in scripts/analysis/. A new
+# runner planted there did not arm the hook and the probe commit went straight
+# through. Any staged python under scripts/ arms it now.
+#
+# Fast suites only (~4s). Full sweep: tools/ci_local.py
+touched=$(printf '%s\n' "$staged" | grep -E '^(scripts/.*\.py$|docs/architecture/STRATEGY_WORKFLOW\.md$|AGENTS\.md$|CLAUDE\.md$)')
+if [ -n "$touched" ] && [ "$SKIP_STRATEGY_GATES" != "1" ]; then
+    PY=./.venv/Scripts/python.exe
+    [ -x "$PY" ] || PY=./.venv/bin/python
+    if [ ! -x "$PY" ]; then
+        # A MISSING INTERPRETER MUST NOT READ AS A PASS. `dotnet test` on the
+        # sibling repo's csproj exits 0 having run nothing, which looks exactly
+        # like green. Refuse instead.
+        echo "BLOCKED: no .venv interpreter, so the strategy gates did not run." >&2
+        echo "  Create it, or override: SKIP_STRATEGY_GATES=1 git commit ..." >&2
+        fail=1
+    elif ! out=$("$PY" -m pytest \
+            scripts/trading_framework/tests/test_no_new_runners.py \
+            scripts/trading_framework/tests/test_workflow_checklist.py -q 2>&1); then
+        echo "BLOCKED: a strategy gate failed." >&2
+        echo "" >&2
+        printf '%s\n' "$out" | tail -25 | sed 's/^/    /' >&2
+        echo "" >&2
+        echo "  Full sweep:  ./.venv/Scripts/python.exe tools/ci_local.py" >&2
+        echo "  Override:    SKIP_STRATEGY_GATES=1 git commit ..." >&2
+        fail=1
+    fi
 fi
 
 if [ "$fail" -ne 0 ]; then
