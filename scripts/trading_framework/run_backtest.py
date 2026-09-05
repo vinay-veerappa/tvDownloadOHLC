@@ -362,32 +362,63 @@ def run_research_pipeline(args, rec=None, output_dir=None):
             # Read from session_risk, and let a missing field raise rather than
             # substituting a number nobody chose -- a default and an erasure are
             # indistinguishable once they are in a result.
+            # ONE DOCUMENT DECIDES THE EXECUTION POLICY. This block used to
+            # carry its own: 2 contracts, a 09:45-15:30 entry window, lunch
+            # filtered and a 15:55 flatten, all as literals, against a frozen
+            # document (section 1.3) saying 1 contract, NO entry cut-off, lunch
+            # REPORTED rather than deleted, and a 15:45 flatten. Neither cited
+            # the other, so the canonical document decided nothing and the
+            # result was produced under a policy no one had chosen.
+            #
+            # The two that were not cosmetic: `filter_lunch=True` deleted the
+            # NY_LUNCH session that `sessions.reportPerSession` exists to
+            # MEASURE, and a 15:30 cut-off forbids the NY_PM setup that
+            # BBMRReversionBot is built around -- the exact case `lastEntryEt:
+            # null` was written for.
+            from scripts.trading_framework.config.defaults import (
+                execution_policy, engine_max_trades_per_day)
+            policy = execution_policy()
             sr = config.session_risk
             engine_cfg = {
                 "account_size": config.account_risk.starting_equity,
-                "max_trades_per_day": sr.max_trades_per_day,
+                # `max_trades_per_day` has TWO claimants: sessions.yaml (a
+                # per-run engine setting) and the frozen document (which says
+                # a cap is an analysis OUTPUT, not an input). The frozen
+                # document wins, and sessions.yaml's value is recorded beside
+                # it so the disagreement is visible rather than resolved in
+                # silence.
+                "max_trades_per_day": engine_max_trades_per_day(
+                    policy["max_trades_per_day"]),
                 "max_consecutive_losers": sr.max_consecutive_losers,
                 "pause_minutes": sr.pause_after_consecutive_minutes,
                 "hard_stop_losers": sr.hard_stop_consecutive_losers,
                 "daily_max_loss": sr.daily_max_loss,
-                "contracts": 2,
+                "contracts": policy["contracts"],
+                "commission_per_contract_rt": policy["commission"],
+                "slippage_ticks": policy["slippage_ticks"],
             }
-            rec._doc.setdefault("executionPolicy", {}).update(engine_cfg)
             engine = NT8ParityBacktester(**engine_cfg)
             risk_dict = {
                 'ticker': args.ticker,
                 'queen_bps': 10.0,
                 'runner_bps': 30.0,
-                'earliest_entry_hhmm': 945,
-                'latest_entry_hhmm': 1530,
-                'flatten_hhmm': 1555,
-                'filter_lunch': True,
+                'earliest_entry_hhmm': policy["earliest_entry_hhmm"],
+                'latest_entry_hhmm': policy["latest_entry_hhmm"],
+                'flatten_hhmm': policy["flatten_hhmm"],
+                'filter_lunch': policy["filter_lunch"],
             }
-            # Recorded because these were hardcoded here and reached no
-            # artifact: a result produced under a 09:45-15:30 entry window with
-            # lunch filtered is not comparable to one without, and nothing said
-            # which had been used.
-            rec._doc.setdefault("executionPolicy", {}).update(risk_dict)
+            # RECORD THE POLICY AS RESOLVED, NOT AS PASSED. `max_trades_per_day`
+            # is reported as the null it is; the unreachable sentinel the engine
+            # needs never reaches an artifact, because "capped at 1000000000"
+            # and "uncapped" read differently to a human and only one is true.
+            rec._doc.setdefault("executionPolicy", {}).update(
+                {k: v for k, v in engine_cfg.items() if k != "max_trades_per_day"})
+            rec._doc["executionPolicy"].update(risk_dict)
+            rec._doc["executionPolicy"].update({
+                "max_trades_per_day": policy["max_trades_per_day"],
+                "maxTradesPerDaySessionsYaml": sr.max_trades_per_day,
+                "source": policy["_source"],
+            })
             result = engine.run(signals, df_report, risk_dict)
         else:
             engine = VectorizedBacktester()

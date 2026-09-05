@@ -38,7 +38,7 @@ import os
 import sys
 import traceback
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if PROJECT_ROOT not in sys.path:
@@ -541,6 +541,84 @@ def _capture_nt8(ctx: "Ctx") -> Optional[str]:
     return res.csv_path
 
 
+def _frozen_profile_hash() -> Tuple[Optional[str], str]:
+    """The hash of the frozen NT8 profile AS IT STANDS NOW.
+
+    Returns (hash, description). A None hash carries the reason in the second
+    element -- an unreadable profile is not the same as a mismatching one and
+    the two must not collapse into the same verdict.
+    """
+    try:
+        from scripts.parity.nt8_profile import (
+            load_profile, profile_hash, PROFILE_PATH)
+    except Exception as exc:                                # pragma: no cover
+        return None, "the frozen profile module would not import: {}".format(exc)
+    try:
+        return profile_hash(load_profile()), os.path.basename(str(PROFILE_PATH))
+    except Exception as exc:
+        return None, "the frozen profile would not read: {}".format(exc)
+
+
+def _nt8_evidence_unbound(ctx: Ctx, meta: Optional[Dict[str, Any]]) -> List[str]:
+    """Why this trade set is NOT attributable to this strategy under this profile.
+
+    An empty list means bound. THIS IS WHAT MAKES NT8 AUTHORITATIVE. "NT8 is
+    authoritative for behaviour" is a claim about a specific build running a
+    specific strategy under a specific Strategy Analyzer configuration; a CSV of
+    trades from an unknown one is not evidence, it is a number of the right
+    shape. `declare_nt8_profile()`/`require_nt8_profile()` have existed on the
+    run record since the beginning and NOTHING in the workflow called them, so
+    `profileHash` was read out of the fixture, filed in the record, and never
+    compared with anything -- a probe supplying `sha256:STALE` still scored
+    `nt8_ground_truth` PASS.
+
+    The strategy check is the same hazard the bridge already fixed on its own
+    side: the Strategy Analyzer window is REUSED, so a request for one strategy
+    could return whatever the window already had (CLAUDE.md, nt8-mcp-bridge).
+    A trade set from the wrong strategy is a confident, well-formed lie.
+    """
+    if meta is None:
+        return ["the fixture carries no .meta.json, so it names neither the "
+                "strategy that produced it nor the Strategy Analyzer profile it "
+                "ran under. Recapture with scripts/parity/capture_nt8.py, which "
+                "writes both."]
+
+    reasons: List[str] = []
+
+    declared = meta.get("profileHash")
+    current, described = _frozen_profile_hash()
+    if not declared:
+        reasons.append(
+            "the fixture's .meta.json declares no profileHash; it predates the "
+            "profile gate. The frozen profile decides slippage, fill policy and "
+            "the price basis, so trades captured under an unknown one cannot be "
+            "compared with a Python run that assumes the current one.")
+    elif current is None:
+        reasons.append(
+            "the fixture declares profileHash {} but {}, so the two cannot be "
+            "compared.".format(declared, described))
+    elif declared != current:
+        reasons.append(
+            "the fixture ran under profileHash {} and {} now hashes to {}. The "
+            "profile changed after the capture; either recapture or check out "
+            "the profile the evidence was taken under.".format(
+                declared, described, current))
+
+    # The bot the rest of this run is about. A fixture from another strategy
+    # answers a question nobody asked.
+    expected = (os.path.splitext(os.path.basename(ctx.bot_path))[0]
+                if getattr(ctx, "bot_path", None) else None)
+    got = meta.get("strategy")
+    if expected and got and got != expected:
+        reasons.append(
+            "the fixture was produced by NT8 strategy '{}' while this run is "
+            "about '{}' ({}). The Strategy Analyzer window is reused, so a "
+            "mismatch here is exactly the failure mode where a backtest returns "
+            "somebody else's trades.".format(got, expected, ctx.args.strategy))
+
+    return reasons
+
+
 def stage_nt8(ctx: Ctx) -> None:
     """Capture the authoritative trade set.
 
@@ -585,11 +663,24 @@ def stage_nt8(ctx: Ctx) -> None:
     meta_path = os.path.splitext(fixture)[0] + ".meta.json"
     tz = ctx.args.nt8_tz
     source = "--nt8-tz"
-    if tz is None and os.path.exists(meta_path):
+    meta: Optional[Dict[str, Any]] = None
+    # READ THE META WHETHER OR NOT THE ZONE WAS PASSED. This was `if tz is None
+    # and os.path.exists(...)`, so supplying `--nt8-tz` -- the careful thing to
+    # do -- skipped the whole block, and with it the barSeconds contradiction
+    # check below and the profile binding. A flag that turns off a gate as a
+    # side effect of being set is worse than the gate not existing.
+    if os.path.exists(meta_path):
         with open(meta_path, encoding="utf-8") as fh:
             meta = json.load(fh)
-        if meta.get("timestampsAreNaive") and meta.get("timestampZone"):
+        if tz is None and meta.get("timestampsAreNaive") and meta.get("timestampZone"):
             tz, source = meta["timestampZone"], os.path.basename(meta_path)
+        elif (tz is not None and meta.get("timestampsAreNaive")
+                and meta.get("timestampZone") and meta["timestampZone"] != tz):
+            raise ValueError(
+                "--nt8-tz {} contradicts the fixture's own timestampZone {}. "
+                "Read as the wrong zone every trade moves 4-5 hours to a "
+                "different entry bar and the join fails silently; the run will "
+                "not guess which is right.".format(tz, meta["timestampZone"]))
         ctx.rec.note("nt8FixtureMeta", {k: meta.get(k) for k in
                                         ("strategy", "instrument", "from", "to",
                                          "barSeconds", "effectiveGlobals",
@@ -617,10 +708,24 @@ def stage_nt8(ctx: Ctx) -> None:
             "does not declare barSeconds. It is the entry-bar join key; there is "
             "no honest default, for the same reason --nt8-tz has none.")
     ctx.nt8_tz = tz
-    ctx.check.set("nt8_ground_truth", PASS,
-                  "{} NT8 rows from {} (tz {} via {}, {}s bars)".format(
-                      len(ctx.nt8_trades), os.path.basename(fixture),
-                      tz or "declared-aware", source, ctx.args.bar_seconds))
+
+    # BIND THE EVIDENCE. Until this call the record had a `declare_nt8_profile`
+    # method that production never invoked.
+    ctx.rec.declare_nt8_profile((meta or {}).get("profileHash"),
+                                meta_path if meta else None)
+    shape = "{} NT8 rows from {} (tz {} via {}, {}s bars)".format(
+        len(ctx.nt8_trades), os.path.basename(fixture),
+        tz or "declared-aware", source, ctx.args.bar_seconds)
+    unbound = _nt8_evidence_unbound(ctx, meta)
+    if unbound:
+        # Parity still runs below: a mismatched profile makes the comparison
+        # UNATTRIBUTABLE, not uninteresting, and suppressing it would hide the
+        # diagnostic that says how far apart the two are.
+        ctx.check.set("nt8_ground_truth", FAIL,
+                      shape + " -- NOT attributable: " + " | ".join(unbound))
+    else:
+        ctx.check.set("nt8_ground_truth", PASS,
+                      shape + "; strategy and profileHash both match this run")
 
 
 def stage_trade_set_parity(ctx: Ctx) -> None:

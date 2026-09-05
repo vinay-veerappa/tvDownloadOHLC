@@ -22,7 +22,7 @@ import functools
 import json
 import pathlib
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 _PATH = pathlib.Path(__file__).with_name("trading_defaults.json")
 
@@ -166,6 +166,94 @@ def risk_defaults() -> dict:
 
 def nt8_defaults() -> dict:
     return dict(load_trading_defaults()["nt8"])
+
+
+def execution_defaults() -> dict:
+    return dict(load_trading_defaults()["execution"])
+
+
+#: `max_trades_per_day` is compared with `<` inside the engine loop, so "no cap"
+#: cannot be expressed as None there. It is expressed as a number no run can
+#: reach. The value is NEVER reported -- `execution_policy()` emits the null it
+#: came from -- because an artifact saying "capped at 1000000000" and one saying
+#: "uncapped" read differently to a human and only one of them is true.
+UNCAPPED = 1_000_000_000
+
+#: 00:00 and 23:59 as HHMM. The engine's entry window is an inclusive integer
+#: comparison, so an unrestricted window is the widest one, not a missing one.
+_NO_EARLIEST_HHMM = 0
+_NO_LATEST_HHMM = 2359
+
+
+def _hhmm(et: Optional[str], fallback: int) -> int:
+    """"15:45" -> 1545. A null means the frozen document declined to restrict."""
+    if not et:
+        return fallback
+    h, m = et.split(":")
+    return int(h) * 100 + int(m)
+
+
+def execution_policy(overrides: dict = None) -> dict:
+    """THE execution policy a backtest runs under, resolved from ONE document.
+
+    WHY THIS EXISTS. Measured 2026-09-05, a single sanctioned run carried three
+    execution policies. `trading_defaults.json` said 1 contract, 1 tick of
+    slippage, $0.62 round-trip, no entry cut-off, no daily trade cap and a 15:45
+    flatten. `NT8ParityBacktester.__init__` said 2 contracts, 0 ticks, $1.40 and
+    a 3-trade cap. `run_backtest.py` then passed 09:45-15:30 entries, lunch
+    filtered and a 15:55 flatten as literals. None of the three cited the
+    others, so the frozen document -- the thing §1.3 calls canonical -- was the
+    only one of the three that did not decide anything.
+
+    Two of those disagreements are not cosmetic. `filter_lunch=True` deletes the
+    NY_LUNCH session, which `sessions.reportPerSession` exists to MEASURE; the
+    run answered "is lunch worth trading?" by refusing to trade it. And a
+    09:45-15:30 window forbids the NY_PM setup BBMRReversionBot is built around,
+    which is precisely the reason `lastEntryEt` was set to null.
+
+    `overrides` is for a value a STRATEGY legitimately decides (its own stop
+    distance, its own target). It may not name a key in `risk.overridable`'s
+    complement -- ADR-020's `rthHardExitEt` above all -- and it is recorded, so
+    a result never carries a policy no artifact names.
+    """
+    ex = execution_defaults()
+    rk = risk_defaults()
+    cap = rk.get("maxTradesPerDay")
+    policy = {
+        "contracts": int(ex["defaultContracts"]),
+        "commission": float(ex["commissionPerContractRoundTrip"]),
+        "slippage_ticks": float(ex["slippageTicks"]),
+        # Reported as the null it is; converted at the engine boundary only.
+        "max_trades_per_day": cap,
+        "earliest_entry_hhmm": _NO_EARLIEST_HHMM,
+        "latest_entry_hhmm": _hhmm(rk.get("lastEntryEt"), _NO_LATEST_HHMM),
+        "flatten_hhmm": _hhmm(rk.get("flattenByEt"), None),
+        # The lunch session is REPORTED on, not filtered out. See above.
+        "filter_lunch": False,
+        "_source": "config/trading_defaults.json (frozen {})".format(
+            load_trading_defaults().get("frozenOn")),
+    }
+    hard = _hhmm(rk["rthHardExitEt"], None)
+    if policy["flatten_hhmm"] > hard:
+        raise ValueError(
+            "flattenByEt {} is after rthHardExitEt {}. ADR-020 has no "
+            "exemptions.".format(rk.get("flattenByEt"), rk["rthHardExitEt"]))
+    if overrides:
+        allowed = set(policy) - {"_source"}
+        unknown = sorted(set(overrides) - allowed)
+        if unknown:
+            raise ValueError(
+                "execution_policy() cannot override {}: it is not part of the "
+                "execution policy. Known: {}".format(
+                    ", ".join(unknown), ", ".join(sorted(allowed))))
+        policy.update(overrides)
+        policy["_source"] += " + caller override of " + ", ".join(sorted(overrides))
+    return policy
+
+
+def engine_max_trades_per_day(cap: Optional[int]) -> int:
+    """The engine boundary: a null cap becomes the unreachable number, once."""
+    return UNCAPPED if cap is None else int(cap)
 
 
 def tradeable_sessions() -> Tuple[str, ...]:

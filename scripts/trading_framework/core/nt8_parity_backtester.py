@@ -37,7 +37,8 @@ from scripts.trading_framework.core.backtest_engine import (
 from scripts.execution.nt8_parity_engine import NT8ParityEngine, NT8Trade
 
 
-from scripts.trading_framework.config.defaults import resolve_instrument
+from scripts.trading_framework.config.defaults import (
+    engine_max_trades_per_day, execution_policy, resolve_instrument)
 
 
 class NT8ParityBacktester(BaseBacktester):
@@ -48,24 +49,37 @@ class NT8ParityBacktester(BaseBacktester):
     def __init__(
         self,
         account_size: float = 50000.0,
-        commission_per_contract_rt: float = 1.40,
-        slippage_ticks: float = 0.0,
-        max_trades_per_day: int = 3,
+        commission_per_contract_rt: Optional[float] = None,
+        slippage_ticks: Optional[float] = None,
+        max_trades_per_day: Optional[int] = None,
         max_consecutive_losers: int = 2,
         pause_minutes: int = 30,
         hard_stop_losers: int = 3,
         daily_max_loss: float = 1500.0,
-        contracts: int = 2,
+        contracts: Optional[int] = None,
     ):
+        # THESE FOUR WERE A SECOND TABLE. They read $1.40 round trip, ZERO
+        # slippage, 3 trades a day and 2 contracts, against a frozen document
+        # (section 1.3) saying $0.62, ONE tick, no cap and 1 contract -- and the
+        # signature is where a caller who passes nothing lands, so the frozen
+        # values were the ones that never applied. A default and an erasure look
+        # identical once they are in a result; None here means "did not say",
+        # and what "did not say" resolves to is written down in one place.
+        _p = execution_policy()
         self.account_size = account_size
-        self.commission = commission_per_contract_rt
-        self.slippage_ticks = slippage_ticks
-        self.max_trades_per_day = max_trades_per_day
+        self.commission = (float(_p["commission"])
+                           if commission_per_contract_rt is None
+                           else float(commission_per_contract_rt))
+        self.slippage_ticks = (float(_p["slippage_ticks"]) if slippage_ticks is None
+                               else float(slippage_ticks))
+        self.max_trades_per_day = (
+            engine_max_trades_per_day(_p["max_trades_per_day"])
+            if max_trades_per_day is None else int(max_trades_per_day))
         self.max_consecutive_losers = max_consecutive_losers
         self.pause_minutes = pause_minutes
         self.hard_stop_losers = hard_stop_losers
         self.daily_max_loss = daily_max_loss
-        self.contracts = contracts
+        self.contracts = int(_p["contracts"]) if contracts is None else int(contracts)
 
         # NO TABLE HERE -- see config/trading_defaults.json. This one said
         # NQ1 = 20.0 (full-size mini) while ADR-009 had already decided micros,
@@ -227,6 +241,18 @@ class NT8ParityBacktester(BaseBacktester):
             slippage_ticks=risk_params.get("slippage_ticks", self.slippage_ticks),
         )
 
+        # THE ENTRY WINDOW IS NOT DECIDED HERE EITHER. These four were
+        # `.get("earliest_entry_hhmm", 945)`, `1530`, `1555`, `True` -- a THIRD
+        # copy of the execution policy, sitting one layer below the one in
+        # run_backtest.py and reached by every caller that did not restate it.
+        # `NT8ParityEngine`'s own signature defaults are a fourth; the
+        # assignments below mean the sanctioned path can never land on them,
+        # which is what test_execution_policy.py asserts.
+        _p = execution_policy()
+        _entry = {k: risk_params.get(k, _p[k]) for k in (
+            "earliest_entry_hhmm", "latest_entry_hhmm", "flatten_hhmm",
+            "filter_lunch")}
+
         queen_bps = risk_params.get("queen_bps", 10.0)
         runner_bps = risk_params.get("runner_bps", 30.0)
 
@@ -239,10 +265,7 @@ class NT8ParityBacktester(BaseBacktester):
                 queen_bps=queen_bps,
                 runner_bps=runner_bps,
                 stop_loss_bps=risk_params.get("stop_loss_bps", 2.5),
-                earliest_entry_hhmm=risk_params.get("earliest_entry_hhmm", 945),
-                latest_entry_hhmm=risk_params.get("latest_entry_hhmm", 1530),
-                flatten_hhmm=risk_params.get("flatten_hhmm", 1555),
-                filter_lunch=risk_params.get("filter_lunch", True),
+                **_entry,
             )
         else:
             df_trades = engine.simulate(
@@ -253,10 +276,7 @@ class NT8ParityBacktester(BaseBacktester):
                 queen_bps=queen_bps,
                 runner_bps=runner_bps,
                 order_timeout_bars=risk_params.get("order_timeout_bars", 6),
-                earliest_entry_hhmm=risk_params.get("earliest_entry_hhmm", 945),
-                latest_entry_hhmm=risk_params.get("latest_entry_hhmm", 1530),
-                flatten_hhmm=risk_params.get("flatten_hhmm", 1555),
-                filter_lunch=risk_params.get("filter_lunch", True),
+                **_entry,
             )
 
         if df_trades.empty:
