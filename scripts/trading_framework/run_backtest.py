@@ -29,6 +29,7 @@ if _current_dir.name == "scripts":
         sys.path.insert(0, _root_dir)
 
 from scripts.trading_framework.config.config_loader import load_config
+from scripts.trading_framework.config.defaults import resolve_instrument
 from scripts.libs_py.data.loader import DataLoader
 from scripts.trading_framework.strategies.registry import get_strategy
 from scripts.trading_framework.research.objective import (
@@ -438,7 +439,7 @@ def run_research_pipeline(args, rec=None, output_dir=None):
 
             pf_sim = PropFirmSimulator(
                 account_size=config.account_risk.starting_equity,
-                point_value=config.execution.point_value.get(args.ticker, 2.0),
+                point_value=resolve_instrument(args.ticker).point_value,
             )
 
             all_pf_results = {}
@@ -558,6 +559,16 @@ def run_research_pipeline(args, rec=None, output_dir=None):
 
         # Generate Tearsheet
         tearsheet = generate_tearsheet(perf_result)
+
+        # WHICH SESSIONS CARRY THE EDGE. Appended rather than folded into
+        # generate_tearsheet because that function is handed a MockResult whose
+        # trades are (pnl,) tuples with no timestamps -- the session has to come
+        # from the real trade frame.
+        from scripts.trading_framework.reporting.session_breakdown import (
+            render_session_breakdown,
+        )
+        _td = result.get('trades_detailed', pd.DataFrame())
+        tearsheet += "\n\n" + render_session_breakdown(_td)
     
         # Save Outputs
         # output_dir is the run-id'd directory created above; the old fixed path

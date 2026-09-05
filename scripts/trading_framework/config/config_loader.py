@@ -142,26 +142,37 @@ class AppConfig:
     prop_firm: PropFirmConfig
 
 
+from scripts.trading_framework.config.defaults import load_trading_defaults
+
+
 def load_config(path: str = "scripts/trading_framework/config/sessions.yaml") -> AppConfig:
     """Load and validate and scale Mini -> Micro (ADR-009)."""
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
-    # 1. Scaling logic (ADR-009)
+    # 1. Point values and tick sizes come from the FROZEN document, not from
+    #    this file and not from sessions.yaml.
+    #
+    #    This block used to hold its own `m_map` implementing ADR-009's
+    #    mini-to-micro scaling, which made it the THIRD table in the repo: it
+    #    said NQ = 2.0 while core/backtest_engine.py said NQ1 = 20.0, so one run
+    #    valued a point at $2 in the prop simulation and $20 in the P&L. The
+    #    scaling decision survives; the table does not. `NQ1` and `ES1` are the
+    #    DATA tickers and now resolve to the contracts actually traded (MNQ,
+    #    MES) instead of falling through a `.get(ticker, 2.0)` default.
     exec_data = raw["execution"].copy()
-    if exec_data.get("use_micro_multipliers", True):
-        m_map = {"ES": 5.0, "ES1!": 5.0, "MES": 5.0, 
-                 "NQ": 2.0, "NQ1!": 2.0, "MNQ": 2.0,
-                 "RTY": 5.0, "M2K": 5.0, 
-                 "YM": 0.5, "MYM": 0.5}
-        pv = exec_data.get("point_value", {}).copy()
-        for sym, val in m_map.items():
-            if sym in pv and pv[sym] > val:
-                pv[sym] = val
-            elif sym not in pv:
-                pv[sym] = val
-        exec_data["point_value"] = pv
-        exec_data["use_micro_multipliers"] = True
+    _defaults = load_trading_defaults()
+    _table = _defaults["instruments"]["table"]
+    _aliases = _defaults["instruments"]["aliases"]
+    exec_data["point_value"] = {
+        **{sym: spec["pointValue"] for sym, spec in _table.items()},
+        **{alias: _table[tgt]["pointValue"] for alias, tgt in _aliases.items()},
+    }
+    exec_data["tick_size"] = {
+        **{sym: spec["tickSize"] for sym, spec in _table.items()},
+        **{alias: _table[tgt]["tickSize"] for alias, tgt in _aliases.items()},
+    }
+    exec_data["use_micro_multipliers"] = True
 
     # 2. Instantiate dataclasses
     sessions = SessionConfig(**raw["sessions"])

@@ -1,0 +1,117 @@
+{
+  "_doc": [
+    "THE FROZEN DEFAULTS every strategy inherits. Only the trade setup varies.",
+    "See docs/architecture/STRATEGY_WORKFLOW.md section 1.3.",
+    "",
+    "ONE DOCUMENT, THREE CONSUMERS: the Python hunter/engine (via defaults.py),",
+    "the C# bot (generated into scripts/ninjatrader/shared/TradingDefaults.cs),",
+    "and the NT8 Strategy Analyzer (the nt8 block, cross-checked against",
+    "scripts/parity/backtest_profile.json). A value that appears in two of them",
+    "and disagrees is the drift this file exists to remove.",
+    "",
+    "WHY IT EXISTS. Measured 2026-09-05, a single --ticker NQ1 run valued a point",
+    "at $20 in the P&L (core/backtest_engine.py's own table) and at $2 in the",
+    "prop-firm simulation (config point_value fallback). A 10x disagreement",
+    "inside one run, and the $20 figure contradicted ADR-009, which had already",
+    "decided micros. Three tables, two answers, nothing reconciling them.",
+    "",
+    "DO NOT ADD A SECOND TABLE. tests/test_frozen_defaults.py scans for one."
+  ],
+
+  "schemaVersion": 1,
+  "frozenOn": "2026-09-05",
+
+  "instruments": {
+    "_doc": [
+      "A DATA TICKER AND A TRADED INSTRUMENT ARE DIFFERENT THINGS, and conflating",
+      "them is what produced the 10x error. `NQ1` names a PRICE SERIES (the",
+      "full-size continuous contract in data/NQ1_1m.parquet). `MNQ` names the",
+      "CONTRACT YOU TRADE. The prices are identical; only the multiplier differs.",
+      "So NQ1 price data traded as MNQ is correct and is the default here."
+    ],
+    "default": "MNQ",
+    "table": {
+      "MNQ": {"pointValue": 2.0,  "tickSize": 0.25, "tickValue": 0.50,  "class": "micro", "fullSize": "NQ"},
+      "MES": {"pointValue": 5.0,  "tickSize": 0.25, "tickValue": 1.25,  "class": "micro", "fullSize": "ES"},
+      "NQ":  {"pointValue": 20.0, "tickSize": 0.25, "tickValue": 5.00,  "class": "mini"},
+      "ES":  {"pointValue": 50.0, "tickSize": 0.25, "tickValue": 12.50, "class": "mini"}
+    },
+    "aliases": {
+      "NQ1": "MNQ", "NQ1!": "MNQ", "MNQ1!": "MNQ",
+      "ES1": "MES", "ES1!": "MES", "MES1!": "MES"
+    }
+  },
+
+  "sessions": {
+    "_doc": [
+      "A PARTITION of the 24-hour day in America/New_York: contiguous,",
+      "non-overlapping, and covering every minute exactly once. Asserted by",
+      "test_the_session_windows_tile_the_day_exactly_once -- an overlapping set",
+      "would let one trade count in two sessions and make the breakdown sum to",
+      "more than the total.",
+      "",
+      "SOURCE: nqstats.com/aln_sessions.html, the only session definition in this",
+      "repo carrying a source and a correction record (libs_py/nqstats/sessions.py,",
+      "'Corrected 2026-07-17: Asia 20:00 (not 18:00), London 02:00 (not 03:00)').",
+      "GLOBEX / NY_LUNCH / NY_PM and NY_AM ending at 11:00 are the user's",
+      "decision of 2026-09-05; nqstats has no lunch split and ends NY_AM at 12:00.",
+      "",
+      "Four OTHER session definitions exist in this repo and disagree with each",
+      "other -- config/sessions.yaml (RTH only), libs_py/data/session_tagger.py's",
+      "session_block, libs_py/ict_engine/core/sessions.py, and",
+      "context/compute_session_breakouts.py. This is the one to build on."
+    ],
+    "timezone": "America/New_York",
+    "windows": [
+      {"name": "GLOBEX",   "start": "18:00", "end": "20:00", "note": "post-close reopen"},
+      {"name": "ASIA",     "start": "20:00", "end": "02:00", "note": "crosses midnight"},
+      {"name": "LONDON",   "start": "02:00", "end": "08:00"},
+      {"name": "NY_PRE",   "start": "08:00", "end": "09:30"},
+      {"name": "NY_AM",    "start": "09:30", "end": "11:00"},
+      {"name": "NY_LUNCH", "start": "11:00", "end": "13:30"},
+      {"name": "NY_PM",    "start": "13:30", "end": "16:00"},
+      {"name": "CLOSED",   "start": "16:00", "end": "18:00", "note": "daily maintenance; no entries"}
+    ],
+    "tradeable": ["GLOBEX", "ASIA", "LONDON", "NY_PRE", "NY_AM", "NY_LUNCH", "NY_PM"],
+    "reportPerSession": true
+  },
+
+  "risk": {
+    "_doc": [
+      "Sourced from config/sessions.yaml as it stood 2026-09-05 so this file",
+      "changes nothing on adoption; riskPerTradeFraction is derived from that",
+      "file's daily_max_loss / max_trades_per_day = 400/3 on a 50k account."
+    ],
+    "riskPerTradeFraction": 0.00267,
+    "maxContractsPerTrade": 1,
+    "maxConcurrentPositions": 1,
+    "maxTradesPerDay": 3,
+    "lastEntryEt": "14:30",
+    "flattenByEt": "15:45",
+    "rthHardExitEt": "16:00",
+    "primaryPropProfile": "apex_50k",
+    "ruinFraction": 0.20
+  },
+
+  "execution": {
+    "slippageTicks": 1,
+    "commissionPerContractRoundTrip": 0.62,
+    "defaultContracts": 1,
+    "calculate": "OnBarClose"
+  },
+
+  "nt8": {
+    "_doc": [
+      "The subset that must match scripts/parity/backtest_profile.json.",
+      "requireGlobals are ASSERTED, never written: they are machine-global NT8",
+      "settings, and MergeBackAdjusted silently rescales every price."
+    ],
+    "globalMergePolicy": "MergeNonBackAdjusted",
+    "isTickReplayEnabled": false,
+    "orderFillResolution": "High",
+    "includeCommission": true,
+    "calculate": "OnBarClose",
+    "isExitOnSessionCloseStrategy": true,
+    "exitOnSessionCloseSeconds": 30
+  }
+}

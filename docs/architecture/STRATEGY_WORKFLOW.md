@@ -153,6 +153,52 @@ Registry key is `snake_case`; the bot class is `PascalCaseBot`. One key ↔ one 
 Nothing checks that a key has a bot or a bot has a key. A Python-only strategy is a
 research artifact, not a strategy, and must not be reported as one.
 
+### 1.3 The frozen defaults — every strategy inherits these 🟢 ENFORCED
+
+`scripts/trading_framework/config/trading_defaults.json` is the ONE document for
+everything that is not the trade setup. One source, three consumers: the Python
+engine (via `config/defaults.py`), the C# bot, and the NT8 Strategy Analyzer.
+
+| Group | Frozen value |
+|---|---|
+| **Instrument** | default **MNQ**; micros are the traded class (ADR-009). `MNQ` $2/pt, `MES` $5/pt, `NQ` $20, `ES` $50. Tick 0.25 throughout |
+| **Data ticker vs contract** | `NQ1` → **MNQ**, `ES1` → **MES**. A data ticker names a *price series*; an instrument names the *contract you trade* |
+| **Sessions** | `GLOBEX 18:00` · `ASIA 20:00` · `LONDON 02:00` · `NY_PRE 08:00` · `NY_AM 09:30` · `NY_LUNCH 11:00` · `NY_PM 13:30` · `CLOSED 16:00–18:00`, ET. Every session but `CLOSED` is tradeable |
+| **Risk** | 1 contract, 1 concurrent position, 3 trades/day, last entry 14:30, flatten 15:45, hard exit 16:00 (ADR-020), primary prop profile `apex_50k`, ruin fraction 0.20 |
+| **Execution** | 1 tick slippage, $0.62/contract round trip, `OnBarClose` |
+| **NT8** | `MergeNonBackAdjusted`, tick replay off, `OrderFillResolution High`, commission on |
+
+*Enforcers*: `config/defaults.py::resolve_instrument` **raises** on an unknown
+ticker rather than defaulting; `assert_sessions_partition` refuses a window set
+that is not a partition; `tests/test_frozen_defaults.py` (30 tests) scans for a
+second point-value table, checks both engines agree, and cross-checks the `nt8`
+block against `parity/backtest_profile.json`.
+
+> **What this replaced, and what it cost.** There were **three** point-value
+> tables. `core/backtest_engine.py` said `NQ1: 20.0`, `core/nt8_parity_backtester.py`
+> said `NQ1: 20.0`, and `config_loader.py`'s ADR-009 scaler said `NQ: 2.0` — while
+> `run_backtest.py` asked `point_value.get("NQ1", 2.0)`, and **`NQ1` was not a key
+> in either config table**, so it took the fallback. The result: *one run valued a
+> point at $20 in the P&L and $2 in the prop-firm simulation.* Measured on
+> `mean_reversion`/NQ1 the correction moved net P&L **$1,520 → $112** and the Apex
+> 50K pass rate **22.4% → 0.0%**. It is not a 10× rescale: commission is unchanged
+> per contract, so on a micro it bites ten times harder — which is the whole point
+> of grading on the instrument you actually trade. **The 22.4% was a fiction**
+> produced by feeding mini-sized dollars to a micro point value.
+>
+> Two silent defaults were removed alongside it: `backtest_engine.py` valued an
+> unrecognised ticker at **$1/pt** (`.get(ticker, 1.0)`), and
+> `nt8_parity_backtester.py` chose its tick size by **substring** —
+> `0.25 if ("NQ" in ticker or "ES" in ticker ...) else 0.01`, which worked for
+> `MES` only because "MES" contains "ES".
+
+> **The legacy session labels are still there.** `session_tagger`'s `session` and
+> `session_block` columns are RTH-only — GLOBEX, ASIA and LONDON all collapse into
+> `pre_market`, so three of the six sessions the bot trades were *unlabelled*, not
+> merely unreported. `session_name` is the frozen partition and the one to build
+> on. The legacy columns are deliberately untouched, because changing them would
+> silently change every existing strategy's behaviour; migrating them is §11.
+
 ---
 
 ## 2. Step 1 — Write the Python hunter
@@ -234,6 +280,7 @@ Reuse before writing. A second implementation of a rule is the drift problem at 
 | IB statistics, profiler | `scripts/libs_py/nqstats/`, `profiler/` | |
 | Reusable entry/exit filters | `trading_framework/strategy_lib/filters.py` | inline copies |
 | Risk primitives | `scripts/libs_py/risk/` | ad-hoc sizing |
+| Point value, tick size, sessions, risk defaults | `trading_framework/config/defaults.py` | **a table of your own.** There were three, and they disagreed (§1.3) |
 | Walk-forward folds | `trading_framework/ml/walk_forward.py::sequential_evaluation_folds` | `walk_forward_split` — **DEPRECATED** |
 | Prop-firm viability | `trading_framework/ml/prop_firm_simulator.py` | `prop_eval_mc.py`, `06_prop_sim.py`, `simulate_prop_pass.py` — **frozen legacy** (ADR-021) |
 | Load / merge / enrich a frame | `scripts/libs_py/data/loader.py::DataLoader.load_enriched` | `pd.read_parquet` in a hunter — that breaks pillar 2 (§1.1) |
@@ -288,9 +335,14 @@ defect: `run_optimization` hardcoded BoxReversion's parameter keys regardless of
 The hunter hands the engine a signal list; the engine returns a metrics dict. Both sides
 of that contract are fixed.
 
-**`risk_params` MUST carry `ticker`** 🟢 — the engine selects the point-value multiplier
-from it ($20/pt NQ, $50/pt ES, $2/pt MNQ). It was omitted, and the engine silently applied
-its **NQ1** multiplier to every instrument. Every P&L figure produced that way was wrong by
+**`risk_params` MUST carry `ticker`** 🟢 — the engine resolves the instrument from it
+through `config/defaults.py::resolve_instrument` (§1.3).
+
+> ⚠️ **This marker was false until 2026-09-05.** Both engines read
+> `risk_params.get('ticker', 'NQ1')`, so a caller that omitted it got NQ1's multiplier
+> applied to whatever it was actually trading — the exact failure the paragraph claimed
+> was enforced against. Both now raise. *Enforcer*:
+> `test_frozen_defaults.py::test_both_engines_refuse_a_run_that_did_not_declare_its_ticker`. Every P&L figure produced that way was wrong by
 the ratio of the two multipliers and nothing said so.
 
 The metrics dict carries at least: `total_return_%`, `win_rate_%`, `avg_mae_%`,
@@ -756,6 +808,7 @@ test, but a different **contract** changes which trades exist at all.
 | Where did the trades leave money? | `reporting/mfe_mae_report.py` |
 | Which arm won and by how much? | `reporting/optimization_summary.py` |
 | Is the risk profile survivable? | `reporting/risk_profiler.py` |
+| **Which sessions carry the edge?** | `reporting/session_breakdown.py` — appended to every tearsheet, keyed on the §1.3 partition |
 
 ### 7.2 Metric definitions 🟢 ENFORCED (one implementation, spec-tested)
 
@@ -998,6 +1051,8 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | 5 | Reports from the run record (§7.3) | code |
 | ~~6~~ | ~~Freeze the bespoke runners with a gate~~ — **DONE 2026-09-05.** `tests/test_no_new_runners.py` + `frozen_runners.txt`, matched on behaviour with three negative controls (§4.1) | done |
 | 7 | `box_reversion` raises `TypeError: Invalid comparison between dtype=datetime64[s] and Timestamp` when window-filtered | code |
+| 8 | **Migrate strategies off the legacy `session_block`** onto §1.3's `session_name`. The legacy labels are RTH-only and every existing strategy reads them, so this changes results and must land through a recorded run per strategy | code |
+| 9 | **Generate `TradingDefaults.cs` from `trading_defaults.json`** so the C# bot reads the same numbers instead of its own consts. The JSON is authoritative today for Python and for the SA profile check; the bot side is still hand-maintained | code |
 
 ### 11.1 The remaining build order
 

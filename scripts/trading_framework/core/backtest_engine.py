@@ -115,6 +115,9 @@ def validate_signal_geometry(signals: pd.DataFrame, risk_params: Dict[str, Any],
     return signals[keep].copy(), report
 
 
+from scripts.trading_framework.config.defaults import resolve_instrument
+
+
 class VectorizedBacktester(BaseBacktester):
     """
     High-performance Vectorized / Semi-Vectorized Backtesting Engine.
@@ -126,17 +129,13 @@ class VectorizedBacktester(BaseBacktester):
         self.slippage_pct = slippage_pct
         self.account_size = account_size
         
-        # Standard Institutional Multipliers
-        self.tick_multipliers = {
-            'NQ1': 20.0,
-            'NQ': 20.0,
-            'MNQ': 2.0,
-            'ES1': 50.0,
-            'ES': 50.0,
-            'MES': 5.0,
-            'CL': 1000.0,
-            'GC': 100.0
-        }
+        # NO TABLE HERE. Point values come from config/trading_defaults.json
+        # via `resolve_instrument`, which is the only one in the repo.
+        #
+        # This class carried its own, saying NQ1 = 20.0 while ADR-009 and the
+        # config layer said 2.0 -- so one run valued a point at $20 in the P&L
+        # and $2 in the prop-firm simulation. The lookup below it defaulted an
+        # unrecognised ticker to 1.0, which is not a contract that exists.
 
     @staticmethod
     def _standard_signal_columns() -> List[str]:
@@ -372,7 +371,16 @@ class VectorizedBacktester(BaseBacktester):
         all_mfe_wick = []
         all_mfe_close = []
 
-        ticker = risk_params.get('ticker', 'NQ1')
+        # §2.7 says this is ENFORCED. It was not: this read
+        # `.get('ticker', 'NQ1')`, so a caller that forgot got NQ1's multiplier
+        # applied to whatever it was actually trading, silently.
+        ticker = risk_params.get('ticker')
+        if not ticker:
+            raise ValueError(
+                "risk_params must carry 'ticker': the engine selects the "
+                "point-value multiplier from it and there is no honest default. "
+                "See STRATEGY_WORKFLOW.md section 2.7.")
+        instrument = resolve_instrument(ticker)
 
         for i in range(0, n_sigs, CHUNK_SIZE):
             c_indices = entry_indices[i : i + CHUNK_SIZE]
@@ -460,7 +468,7 @@ class VectorizedBacktester(BaseBacktester):
         trade_returns = ((exit_prices - entry_prices) / entry_prices) * direction_vec
         
         # Apply Institutional Multipliers and Costs
-        multiplier = self.tick_multipliers.get(ticker, 1.0)
+        multiplier = resolve_instrument(ticker).point_value
         
         # BL-5 FIX: Apply per-contract commission as % of notional
         # commission is $ per round-turn per contract (default $2.05 for Micros)

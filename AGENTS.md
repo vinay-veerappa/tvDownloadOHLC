@@ -37,7 +37,7 @@ figure). Full table: §0.1.
 Exit **0** = every criterion PASSED · **1** = something FAILED *or* was never
 measured · **2** = a required stage raised.
 
-## Eight rules that are not negotiable
+## Nine rules that are not negotiable
 
 1. **Never write a new backtest runner.** 32 already exist, they are frozen, and
    a 33rd fails `tests/test_no_new_runners.py` — which matches on *behaviour*
@@ -54,12 +54,19 @@ measured · **2** = a required stage raised.
    trade management, no P&L, no data loading, no `iterrows`, no own backtest
    loop. There is no `StrategyBase` — a spec described one for months and no
    strategy ever implemented it (§13).
-6. **Reuse before writing** (§2.4). A second implementation of a rule is the
+6. **Never hardcode a point value, tick size, session window or risk default.**
+   They are frozen in `scripts/trading_framework/config/trading_defaults.json` and
+   read through `config/defaults.py`. There were three point-value tables and they
+   disagreed by 10x inside one run; `tests/test_frozen_defaults.py` scans for a
+   fourth. Default instrument is **MNQ** (micros); `NQ1` resolves to MNQ, `ES1` to
+   MES. Sessions are GLOBEX / ASIA / LONDON / NY_PRE / NY_AM / NY_LUNCH / NY_PM,
+   and every report breaks down by them.
+7. **Reuse before writing** (§2.4). A second implementation of a rule is the
    drift problem at birth.
-7. **Never promote a 🟢/🟡/🔴 marker without naming the enforcer in the same
+8. **Never promote a 🟢/🟡/🔴 marker without naming the enforcer in the same
    edit**, and never quote a count you did not just measure. Both rules have
    already caught wrong claims in that document.
-8. **Do not create another strategy document.** Extend §-numbered sections of
+9. **Do not create another strategy document.** Extend §-numbered sections of
    `STRATEGY_WORKFLOW.md` instead. Two sources of truth is the failure this repo
    spent a week undoing.
 

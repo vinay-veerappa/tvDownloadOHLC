@@ -37,6 +37,9 @@ from scripts.trading_framework.core.backtest_engine import (
 from scripts.execution.nt8_parity_engine import NT8ParityEngine, NT8Trade
 
 
+from scripts.trading_framework.config.defaults import resolve_instrument
+
+
 class NT8ParityBacktester(BaseBacktester):
     """
     NinjaTrader 8 Parity Backtester for the Statistical Trading Framework.
@@ -64,13 +67,9 @@ class NT8ParityBacktester(BaseBacktester):
         self.daily_max_loss = daily_max_loss
         self.contracts = contracts
 
-        self.multipliers = {
-            "NQ1": 20.0, "NQ": 20.0, "MNQ": 2.0,
-            "ES1": 50.0, "ES": 50.0, "MES": 5.0,
-            "RTY": 50.0, "M2K": 5.0,
-            "CL": 1000.0, "MCL": 100.0,
-            "GC": 100.0, "MGC": 10.0,
-        }
+        # NO TABLE HERE -- see config/trading_defaults.json. This one said
+        # NQ1 = 20.0 (full-size mini) while ADR-009 had already decided micros,
+        # and it disagreed with the config layer inside the same run.
 
     # ------------------------------------------------------------------
     # Signal input shapes
@@ -194,9 +193,20 @@ class NT8ParityBacktester(BaseBacktester):
         """
         Execute trades matching NinjaTrader 8 RiskManagerBase state machine.
         """
-        ticker = risk_params.get("ticker", "NQ1").upper()
-        pt_val = self.multipliers.get(ticker, 20.0)
-        tick_sz = 0.25 if ("NQ" in ticker or "ES" in ticker or "RTY" in ticker) else 0.01
+        # §2.7 says this is ENFORCED. It was not -- `.get("ticker", "NQ1")`
+        # applied NQ1's multiplier to anything that forgot to say.
+        ticker = risk_params.get("ticker")
+        if not ticker:
+            raise ValueError(
+                "risk_params must carry 'ticker': the engine selects the "
+                "point-value multiplier from it and there is no honest default. "
+                "See STRATEGY_WORKFLOW.md section 2.7.")
+        # `tick_sz` was `0.25 if ("NQ" in ticker or "ES" in ticker ...) else 0.01`
+        # -- a SUBSTRING test. "MES" contains "ES" so it happened to work, and
+        # any symbol containing those letters would have inherited 0.25 whether
+        # or not it is a quarter-point instrument.
+        _inst = resolve_instrument(ticker)
+        pt_val, tick_sz = _inst.point_value, _inst.tick_size
 
         # See _prepare_series: this block used to assume a PER-BAR frame and
         # silently produced mismatched arrays for the canonical one-row-per-signal

@@ -143,3 +143,57 @@ def tag_sessions(df: pd.DataFrame, sessions: "SessionConfig") -> pd.DataFrame:
         is_rth.sum(), is_pre.sum(), is_post.sum(),
     )
     return df
+
+# --------------------------------------------------------------------------- #
+# The FROZEN session partition (STRATEGY_WORKFLOW.md section 1.3).
+#
+# `session` and `session_block` above are LEGACY and RTH-only: everything
+# outside 09:30-16:00 falls into pre_market/post_market, so GLOBEX, ASIA and
+# LONDON -- three of the six sessions this bot trades -- were not merely
+# unreported, they were unlabelled. They are left untouched here because
+# changing them would silently change every existing strategy's behaviour;
+# `session_name` is the one to build on and to report by.
+#
+# PILLAR 1 (section 1.1): this module may not read a file, so the windows are
+# passed in. `trading_framework.config.defaults.session_windows()` is the loader.
+# --------------------------------------------------------------------------- #
+
+def tag_session_windows(df: pd.DataFrame, windows) -> pd.DataFrame:
+    """Add `session_name`: exactly one frozen session per bar.
+
+    `windows` is a list of objects with `.name`, `.start_min`, `.end_min` and
+    `.wraps` (see config/defaults.py::SessionWindow). The partition is validated
+    at load time, so every bar gets exactly one label and the per-session
+    breakdown sums to the total.
+
+    WRAP-AROUND IS THE WHOLE DIFFICULTY. ASIA is 20:00-02:00, so the naive
+    `start <= t < end` is empty for it. A window whose end is at or before its
+    start is read as a union of two intervals instead.
+    """
+    if df.empty:
+        logger.warning("tag_session_windows called on empty DataFrame")
+        df["session_name"] = pd.Categorical([], categories=[w.name for w in windows])
+        return df
+
+    bar_minutes = df.index.hour * 60 + df.index.minute
+    names = [w.name for w in windows]
+    out = np.full(len(df), "", dtype=object)
+
+    for w in windows:
+        if w.wraps:
+            mask = (bar_minutes >= w.start_min) | (bar_minutes < w.end_min)
+        else:
+            mask = (bar_minutes >= w.start_min) & (bar_minutes < w.end_min)
+        out[np.asarray(mask)] = w.name
+
+    unlabelled = int((out == "").sum())
+    if unlabelled:
+        # Cannot happen for a validated partition; if it does, the windows and
+        # this function have drifted apart and a silent "" category would drop
+        # those trades out of every report while the total still looked right.
+        raise ValueError(
+            "{} bar(s) matched no session window -- the partition is broken"
+            .format(unlabelled))
+
+    df["session_name"] = pd.Categorical(out, categories=names, ordered=True)
+    return df
