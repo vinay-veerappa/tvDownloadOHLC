@@ -484,6 +484,28 @@ def run_research_pipeline(args, rec=None, output_dir=None):
 
         perf_result = MockResult(result, primary_det, primary_mc, pf_summary_md, config)
     
+        # RUIN BASIS. Decided 2026-09-04: ruin is the prop firm's TRAILING
+        # DRAWDOWN, not the account size. The old code used the whole account,
+        # which put ~200-400 in an exponent and made risk of ruin report 0.00%
+        # for every profitable system -- the spec's own bands were unreachable.
+        ruin_basis = None
+        try:
+            from scripts.trading_framework.reporting.institutional_metrics import (
+                ruin_basis_from_profile)
+            _profile = FIRM_PROFILES.get(pf_config.primary_profile)
+            _risk = config.session_risk.daily_max_loss / config.session_risk.max_trades_per_day
+            if _profile is not None:
+                ruin_basis = ruin_basis_from_profile(_profile, _risk)
+                rec.note("ruinBasis", ruin_basis.source)
+                print(f"  * Risk-of-ruin basis: {ruin_basis.source} "
+                      f"= {ruin_basis.units:.1f} losing trades")
+        except (ValueError, AttributeError, KeyError) as exc:
+            # Refuse quietly to the DEFAULT basis rather than to the account
+            # size, and say so -- an undeclared basis is what made the number
+            # meaningless before.
+            rec.warn(f"could not derive a ruin basis from the prop profile: {exc}")
+        perf_result.ruin_basis = ruin_basis
+
         # Generate Tearsheet
         tearsheet = generate_tearsheet(perf_result)
     

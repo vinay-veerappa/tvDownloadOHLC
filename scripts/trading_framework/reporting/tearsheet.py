@@ -6,101 +6,50 @@ and institutional metrics (Prop Pass Rate, Consecutive Losers).
 """
 import pandas as pd
 import numpy as np
+
+from scripts.trading_framework.reporting import institutional_metrics as _im
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import asdict
 
-def _grade_ev(ev: float) -> str:
-    if ev > 100: return 'A'
-    if ev >= 50: return 'B'
-    if ev >= 10: return 'C'
-    if ev > 0: return 'D'
-    return 'F'
+# The grade thresholds are the spec's and live with the formulas. Aliased rather
+# than re-stated: a second copy of a threshold is how the /100 vs /225 Combined
+# Edge scale error survived long enough to grade the spec's own A+ system as F.
+_grade_ev = _im.grade_ev
+_grade_pf = _im.grade_pf
+_grade_sqn = _im.grade_sqn
+_grade_drr = _im.grade_drr
+_grade_ce = _im.grade_ce
 
-def _grade_pf(pf: float) -> str:
-    if pf >= 1.8: return 'A'
-    if pf >= 1.4: return 'B'
-    if pf >= 1.2: return 'C'
-    if pf >= 1.0: return 'D'
-    return 'F'
 
-def _grade_sqn(sqn: float) -> str:
-    if sqn >= 3.0: return 'A'
-    if sqn >= 2.5: return 'B'
-    if sqn >= 2.0: return 'C'
-    if sqn >= 1.5: return 'D'
-    return 'F'
+def compute_institutional_metrics(trades: List[Any], equity_curve: pd.Series,
+                                  account_size: float = 50000.0,
+                                  risk_per_trade: float = 250.0,
+                                  ruin_basis=None) -> Dict[str, Any]:
+    """The Edge System metrics. Delegates -- the formulas live in ONE place.
 
-def _grade_drr(drr: float) -> str:
-    if drr < 4: return 'A'
-    if drr <= 6: return 'B'
-    if drr <= 8: return 'C'
-    if drr <= 10: return 'D'
-    return 'F'
+    This function used to hold its own copy of every formula, and
+    `risk_profiler.py` held a second copy. They agreed on the arithmetic and
+    disagreed on the UNITS of `ror` (fraction here, fraction*100 there) while
+    `optimization_summary.py` read the key expecting a percentage.
 
-def _grade_ce(ce: float) -> str:
-    if ce > 150: return 'A'
-    if ce >= 100: return 'B'
-    if ce >= 50: return 'C'
-    if ce >= 20: return 'D'
-    return 'F'
-
-def compute_institutional_metrics(trades: List[Any], equity_curve: pd.Series, account_size: float = 50000.0, risk_per_trade: float = 250.0) -> Dict[str, Any]:
-    """
-    Compute institutional risk grading metrics.
-    Replicates logic from RiskProfiler for standardizing results.
+    `ruin_basis` says what "ruin" means, and it is the single most important
+    input: the SAME trades score 0.00% against a 100%-of-account threshold and
+    ~20% against a prop firm's trailing drawdown. When it is not supplied the
+    default is a fraction of the account (NOT the whole account, which is the
+    defect that made this metric unable to report danger).
     """
     if trades is None or len(trades) == 0:
         return {}
-        
-    pnl_dollars = np.array([t.realized_pnl for t in trades])
-    wins = pnl_dollars[pnl_dollars > 0]
-    losses = pnl_dollars[pnl_dollars < 0]
-    n_trades = len(pnl_dollars)
-    
-    win_rate = len(wins) / n_trades if n_trades > 0 else 0
-    avg_win = wins.mean() if len(wins) > 0 else 0
-    avg_loss = abs(losses.mean()) if len(losses) > 0 else risk_per_trade
-    
-    # 1. Expected Value (EV)
-    ev_dollars = (win_rate * avg_win) - ((1 - win_rate) * avg_loss)
-    ev_r = ev_dollars / risk_per_trade
-    
-    # 2. Profit Factor (PF)
-    pf = wins.sum() / abs(losses.sum()) if len(losses) > 0 and losses.sum() != 0 else np.inf
-    
-    # 3. SQN (System Quality Number)
-    r_multiples = pnl_dollars / risk_per_trade
-    std_r = r_multiples.std()
-    sqn = (r_multiples.mean() * np.sqrt(n_trades)) / std_r if std_r > 0 else 0
-    
-    # 4. Combined Edge
-    combined_edge = ev_r * pf
-    
-    # 5. Risk of Ruin (RoR)
-    bankroll_losses = account_size / risk_per_trade
-    ce_safe = max(0, min(combined_edge, 0.99))
-    ror = 1.0
-    if ce_safe > 0:
-        ror = ((1 - ce_safe) / (1 + ce_safe)) ** bankroll_losses
-        
-    # 6. DRR (Drawdown Risk Rating)
+
+    pnl_dollars = np.array([t.realized_pnl for t in trades], dtype="float64")
+
     rolling_max = equity_curve.cummax()
-    max_dd_pct = ((equity_curve - rolling_max) / rolling_max).min() * 100
-    drr = abs(max_dd_pct) / ((risk_per_trade / account_size) * 100)
-    
-    return {
-        "ev": ev_dollars,
-        "ev_grade": _grade_ev(ev_dollars),
-        "pf": pf,
-        "pf_grade": _grade_pf(pf),
-        "sqn": sqn,
-        "sqn_grade": _grade_sqn(sqn),
-        "combined_edge": combined_edge,
-        "ce_grade": _grade_ce(combined_edge),
-        "ror": ror,
-        "drr": drr,
-        "drr_grade": _grade_drr(drr)
-    }
+    max_dd_pct = abs(float(((equity_curve - rolling_max) / rolling_max).min()) * 100.0)
+
+    return _im.compute(pnl_dollars, risk_per_trade=risk_per_trade,
+                       account_size=account_size, max_drawdown_pct=max_dd_pct,
+                       ruin_basis=ruin_basis)
+
 
 def compute_performance_metrics(equity_curve: pd.Series, risk_free_rate: float = 0.0) -> Dict[str, Any]:
     """
@@ -223,7 +172,12 @@ def generate_tearsheet(result: Any) -> str:
     starting_equity = result.account_summary.get('starting_equity', 50000.0)
     risk_per_trade = result.account_summary.get('risk_per_trade', 250.0)
     
-    inst = compute_institutional_metrics(result.combined_trades, result.combined_equity_curve, starting_equity, risk_per_trade)
+    # The caller may declare what ruin MEANS. Without it the module falls back
+    # to a fraction of the account -- never to the whole account.
+    inst = compute_institutional_metrics(
+        result.combined_trades, result.combined_equity_curve,
+        starting_equity, risk_per_trade,
+        ruin_basis=getattr(result, 'ruin_basis', None))
     
     report = f"""
 # Institutional Performance Tearsheet
@@ -244,7 +198,9 @@ def generate_tearsheet(result: Any) -> str:
 | **Combined Edge** | {inst.get('combined_edge', 0):.2f} | **{inst.get('ce_grade', 'F')}** |
 
 ### Risk Analysis
-- **Risk of Ruin (RoR)**: {inst.get('ror', 1)*100:.2f}% ({'Excellent' if inst.get('ror', 1) < 0.01 else 'Dangerous' if inst.get('ror', 1) > 0.1 else 'OK'})
+- **Risk of Ruin (RoR)**: {inst.get('ror', 1)*100:.2f}% ({inst.get('ror_grade', 'unknown')})
+  - *measured against*: {inst.get('ruin_basis', 'UNDECLARED')} = {inst.get('ruin_units', float('nan')):.1f} losing trades
+- **Max losing streak (expected)**: {inst.get('max_streak', 0)} trades
 - **Unit Risk (R)**: ${risk_per_trade:,.2f} ({ (risk_per_trade/starting_equity)*100:.2f}%)
 - **Starting Equity**: ${starting_equity:,.2f}
 

@@ -181,8 +181,8 @@ class OptimizationReporter:
                 <div class="card">
                     <div class="card-label">Risk of Ruin</div>
                     <div class="card-value">
-                        {risk_metrics.get('ror', 100):.2f}%
-                        <span class="badge { 'badge-success' if risk_metrics.get('ror', 100) < 1 else 'badge-warning' }">
+                        {risk_metrics.get('ror', 1.0) * 100:.2f}%
+                        <span class="badge { 'badge-success' if risk_metrics.get('ror', 1.0) < 0.01 else 'badge-warning' }">
                             {risk_metrics.get('ror_grade', 'Dangerous')}
                         </span>
                     </div>

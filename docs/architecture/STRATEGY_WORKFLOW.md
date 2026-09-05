@@ -597,7 +597,47 @@ test, but a different **contract** changes which trades exist at all.
 | Which arm won and by how much? | `reporting/optimization_summary.py` |
 | Is the risk profile survivable? | `reporting/risk_profiler.py` |
 
-### 7.2 Metric definitions 🟡 CONVENTION
+### 7.2 Metric definitions 🟢 ENFORCED (one implementation, spec-tested)
+
+The metric spec is **`docs/strategies/9_30_breakout/0930_AllDay/analysis/RISK_PROFILE_DEFINITIONS.md`**
+("The Edge System"), and `scripts/trading_framework/reporting/institutional_metrics.py`
+is its single implementation. `tearsheet.py` and `risk_profiler.py` both delegate to it;
+they used to hold two copies of every formula that disagreed on the units of `ror`.
+
+*Enforcer*: `tests/test_institutional_metrics.py` runs the spec's **own ten worked systems**
+(spec §13) through the grader. That is the only way to check a grader that would otherwise
+be checked against itself — and it is what found both defects below.
+
+> **Two corrections, decided 2026-09-04.**
+>
+> **Combined Edge is scale-free.** The spec contradicts itself: §5 gives `CE = EV_R × PF`,
+> while §13's P5 quotes CombinedEdge **357** for EV $146 / PF 2.44 — which is `EV$ × PF`.
+> The grading scale (A>150 … D>20) belongs to the dollar reading. The code took the
+> *formula* from one and the *grades* from the other, so **all ten spec systems graded F,
+> including its A+ exemplar**. Resolved to the normalised form, because the dollar form
+> grades the *account*: one strategy at EV_R 0.10 / PF 1.15 under a constant 1% risk policy
+> scores **D on $25k and A on $250k**. Thresholds are converted by ÷225, the spec's own
+> worked risk-per-trade — a units conversion, not a new opinion.
+>
+> **Ruin is the prop trailing drawdown, not the account.** §6 says "zero **or blowout
+> threshold**"; the code read only the first half and used `account_size / risk_per_trade`
+> as the exponent (~200–400). Any base < 1 raised to that underflows, so across the spec's
+> ten systems the distinct RoR values were exactly **{0.0, 1.0}** — the four bands
+> (<1% / 1–5% / 5–20% / >20%) were **unreachable**. The exponent is now
+> `max_trailing_drawdown / risk_per_trade` from the primary prop profile (Apex 50K:
+> $2,500 → ~11–19 units), and the bands separate.
+>
+> ⚠️ **Known limit, tested and pinned**: CombinedEdge is not a probability, so the closed
+> form clamps at 0.99 and **saturates** — every system at or above that reports the same
+> RoR. It stays discriminating where decisions are hard (marginal systems) and saturates
+> towards *safe* for systems already strong on CE and SQN. **Do not rank strong systems by
+> RoR**; use `PropFirmSimulator`.
+>
+> **Every risk of ruin must be printed with its basis.** The same trades read 0.00% against
+> the account and ~20% against a trailing drawdown. The tearsheet now prints
+> `measured against: <profile> = N losing trades`.
+
+#### The metric table 🟡 CONVENTION
 
 | Metric | Definition here | Watch out |
 |---|---|---|
