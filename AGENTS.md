@@ -54,6 +54,15 @@ measured · **2** = a required stage raised.
    trade management, no P&L, no data loading, no `iterrows`, no own backtest
    loop. There is no `StrategyBase` — a spec described one for months and no
    strategy ever implemented it (§13).
+5a. **A strategy reports the criteria it evaluated** (§5.5). Set
+   `self.last_decisions` from `GateRecorder` — masks, not a loop, and the
+   `hunt()` signature does not change. **Record every gate, not the first
+   failure** (`and` short-circuits, so a first-failure log reports the
+   implementation order as the cause), record the **value** and not just
+   pass/fail, and use `measure()` for a magnitude — a gate that cannot fail is a
+   green with no reachable red. **The gate roster is layer 0 of parity**: if the
+   two sides evaluate different criteria they are different strategies and no
+   recall number between them is interpretable.
 6. **Never hardcode a point value, tick size, session window or risk default.**
    They are frozen in `scripts/trading_framework/config/trading_defaults.json` and
    read through `config/defaults.py`. There were three point-value tables and they

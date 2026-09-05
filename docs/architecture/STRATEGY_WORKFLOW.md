@@ -696,12 +696,107 @@ naming the profile hash, contract month and price basis.
 exits** — the only exit type the real bots use. Until a corpus exists, no parity claim is
 reproducible.
 
+### 5.5 The decision log — why a trade was taken 🟢 ENFORCED (schema + generator)
+
+A trade list says **what** happened. It cannot say **why**, and **no MCP change can make
+it**: the criteria live in the strategy and are never handed to the platform. So the
+emitter has to be in the strategy, on both sides, writing one format.
+
+**The gate roster is the cheapest parity check there is, and it runs before any trade-set
+comparison.** Measured 2026-09-05 on `mean_reversion` / `BBMRReversionBot`, which §6 treats
+as one strategy:
+
+| | Criteria evaluated |
+|---|---|
+| Python `hunt()` | 2 conditions (close vs a Bollinger band), then `groupby('date').head(1)` |
+| C# `BBMRReversionBot` | 20 `[NinjaScriptProperty]` parameters; gates for RSI, ADX, squeeze, IB compression, lunch, MACD, Kaufman ER, a 2-bar hook, short-only |
+
+They are **not one strategy with a divergence — they are two different strategies**, and no
+recall number between them means anything. `compare_rosters` says so in one call. A
+trade-set comparison says "recall 11%" and invites a week of hunting a fill-model bug.
+
+#### How to instrument a hunter
+
+`GateRecorder` takes **masks**, because a zero-loop hunter (§2.2) has no per-decision loop —
+handing it a row-wise API guarantees it goes uninstrumented. Set `self.last_decisions`; the
+`hunt()` signature does **not** change. `HunterStrategyAdapter.last_decisions` forwards it,
+so one property instruments every registered hunter.
+
+```python
+self.last_decisions = (
+    GateRecorder(data.index, run_id="", strategy="mean_reversion")
+    .trigger(long_mask, "long").trigger(short_mask, "short")
+    .measure("band_excursion_atr", (data['close'] - band).abs() / data['atr'])
+    .gate("first_signal_of_day", is_first)
+    .to_frame(signal_prefix="mr_"))
+```
+
+The verdict is **computed from the gates** — `ENTRY` if all passed, `REJECTED` otherwise —
+so a hunter cannot record a verdict that disagrees with its own masks.
+
+#### Six rules, each one a failure mode of the dump this replaces
+
+`BBMRReversionBot` already writes 22 indicator columns for **every bar** to
+`%TEMP%/bbmr_diag_<guid>.csv` and prints the path only to the NT8 output window. The data
+exists and is unaddressable, which is indistinguishable from not having it.
+
+| # | Rule | Why |
+|---|---|---|
+| 1 | Log **decisions**, not bars | A per-bar state dump makes you re-implement the rule in your head. Rows are bounded by triggers × gates |
+| 2 | Record **every** gate, not the first failure | `&&` and `and` short-circuit, so a first-failure log reports the *implementation order* as the cause |
+| 3 | Record the **value**, not just pass/fail | "ADX passed" is not analysable. "ADX 18.2 vs 15" says the trade was marginal |
+| 4 | A rejection needs a **denominator** | `SKIP` counts bars that never triggered, or "gate X blocked 40 setups" has no scale |
+| 5 | **Long format**, one row per (decision, gate) | A wide format needs a column per gate, so adding one is a migration and two strategies cannot share a schema |
+| 6 | A **`gate`** is not a **`measure`** | A magnitude recorded as a gate has a structural 0% failure rate — a green that can never be red — and would sit at the top of every roster, inflating the set the parity diff runs over |
+
+**An `ENTRY` carrying a failed gate is refused at write time** on the Python side and
+**reported by the reader** for both sides (the C# emitter deliberately never throws into a
+running strategy). A log that can record a self-contradiction is worse than no log, because
+it looks like evidence.
+
+#### Transport — no bridge change needed
+
+`DecisionLog.cs` is **generated** from `decision_log.COLUMNS` by
+`scripts/utils/generate_decision_log.py` (`--check` fails a build on drift, exactly like
+`TradingDefaults.cs`). It writes `mcp_decisions_*.csv` into `Globals.UserDataDir` —
+precisely the filename shape the bridge's existing `nt_list_exports` / `nt_get_export` /
+`nt_delete_export` endpoints already serve behind their path-traversal gate.
+
+| Concern | How it is handled |
+|---|---|
+| SA optimisation runs many instances **concurrently** | `Interlocked.Increment` in the filename; two instances on one path is a truncated file, not an error |
+| A cancelled run loses the tail | Flush per **decision** (not per bar — see rule 1) |
+| A logging failure kills the backtest | It cannot: every write is wrapped. But it is **not silent** — `LastError` is set and `Banner()` says `DISABLED`, because a short file reads as "the strategy took no trades" |
+| A comma in a gate name | Quoted; otherwise every column shifts right |
+
+### 5.6 What the bridge was not sending 🟢 fields added, 🔴 not deployed
+
+`nt_backtest` iterates `SystemPerformance.AllTrades` with both `Execution` objects in hand
+and projected ten fields. Ten more were one line each. Added 2026-09-05
+(`nt8-mcp-bridge`, 706/0, **not deployed — a recompile wipes every static singleton in a
+live instance, which is the user's call**):
+
+| Field | Why it was the missing one |
+|---|---|
+| `maeCurrency` `maePoints` `mfeCurrency` `mfePoints` | Separates a bad **entry** (the loser never went your way) from a bad **exit** (it did, and was given back). No P&L column distinguishes those. Available **only** from a backtest `SystemPerformance` — the bridge's own account-level path carries a source note saying so |
+| `entryGroup` | Which rows are legs of **one** bracket. `ExtractBacktest` **already grouped by this key** to compute entry-level win rate and never emitted it, so the aggregate could not be reproduced or checked |
+| `entryName` | The **join key** to the decision log. Falls back to the entry order's `Name`, the same two-step the exit-reason tally already needed |
+| `entryQuantity` `exitQuantity` | Per-**leg** size. `Trade.Quantity` is the trade's; on a scale-out the executions differ from it and from each other, which is the whole content of the leg convention |
+| `tradeNumber` `commission` | Ordering, and the cost that bites 10× harder on micros (§1.3) |
+
+Property names were confirmed by **reflecting on `NinjaTrader.Core.dll`**, not assumed:
+`GetP` is reflection-based, so a wrong name returns `null` rather than failing to compile —
+it would have read as "this strategy has no MAE".
+
 ---
 
 ## 6. Step 5 — Compare
 
 Parity is checked at **three layers**. Lower layers name the *rule* that diverged; higher
 layers only tell you *that* something did.
+
+**Layer 0 is the gate roster (§5.5).** Run it first: it is free, it needs no NT8, and if the
+two rosters differ the layers below cannot be interpreted.
 
 ### 6.1 Layer 1 — Rule parity (no NT8 in the loop) 🟢 ENFORCED for 2 of 7 families
 
@@ -874,6 +969,34 @@ test, but a different **contract** changes which trades exist at all.
 | Is the risk profile survivable? | `reporting/risk_profiler.py` |
 | **Which sessions carry the edge?** | `reporting/session_breakdown.py` — appended to every tearsheet, keyed on the §1.3 partition |
 | **Where should the trade cap be?** | `reporting/trade_ordinal.py` — EV_R by trade ordinal, per day and per session, marginal and cumulative, with the sample size beside the suggestion |
+| **Why did it take these trades?** | `reporting/decision_log.py` — the gate roster, with `blocked_alone` as the diagnostic column and a `never_fails` flag (§5.5) |
+| **What separated winners from losers?** | `reporting/win_loss_attribution.py` — three questions, in order of what they are worth |
+
+#### 7.1a What the win/loss report actually asks
+
+Three questions, and **only the third can name a line to change**:
+
+| | Question | Needs |
+|---|---|---|
+| 1 | **Where** did the losses come from — session × exit reason | the trade list only; works on both sides today |
+| 2 | **How** did the losers behave — went against you at once (bad entry) or ran and came back (bad exit) | MAE/MFE (§5.6) |
+| 3 | **Which criterion** was wrong — gate values on winners vs losers, against the threshold | the decision log (§5.5) |
+
+A win rate tells you a strategy is bad. *"Winners entered with ADX median 24.8, losers with
+15.9, and the gate is set at 15"* tells you which line to change. Nothing derivable from a
+trade list can produce that sentence.
+
+**Three refusals, because a confident number from a dead column is worse than a gap.** Each
+was found by running the report on the live `mean_reversion` set, not imagined:
+
+| Refusal | What it found |
+|---|---|
+| An identically-zero excursion column is **dead, not measured** | `mae_points` and `mfe_points` are present and `0.0` on all 16 trades — including 11 that exited on a stop, which is impossible. "Median MAE 0.0" reads as a finding about the strategy; it is one about the pipeline |
+| A **stop-loss exit that booked a profit** is surfaced first | 3 of 16 trades did. A stop on the wrong side of entry fills immediately and pays; `signal_geometry` FAILS the same run with `stop_wrong_side=372`. Every figure below is computed over those rows too |
+| The **funnel gap** is named | The log records 3,188 hunter entries; the trade set has 16. A report showing both without explaining the 200:1 invites the reader to distrust the wrong one — see item 13 |
+
+A median is refused below 10 trades **per outcome side**; same reasoning as the cap
+threshold in `trade_ordinal.py`.
 
 ### 7.2 Metric definitions 🟢 ENFORCED (one implementation, spec-tested)
 
@@ -1119,8 +1242,12 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | 8 | **Migrate strategies off the legacy `session_block`** onto §1.3's `session_name`. The legacy labels are RTH-only and every existing strategy reads them, so this changes results and must land through a recorded run per strategy | code |
 | ~~9~~ | ~~Generate `TradingDefaults.cs`~~ — **DONE 2026-09-05.** `scripts/utils/generate_trading_defaults.py` emits it; `--check` fails a build when the JSON moves and the C# does not | done |
 | 10 | **Normalise the inventoried bot divergences** — tracked as tickets B1–B6 in [BOT_FIX_BACKLOG.md](BOT_FIX_BACKLOG.md), with a loop prompt. Deliberately a separate file: finalising the workflow must not be blocked on fixing twelve strategies | code |
-| 11 | **Capture SA *executions*, not just trades.** The trade-level capture is automated (§5.0) and the truncation trap is now a refusal, but `nt_backtest` returns entry/exit PAIRS, not fills — and per-fill data is what the leg convention needs. `BBMRReversionBot` already writes its own diagnostic CSV, which is the cheaper path than a bridge change | code |
-| 12 | **Win/loss attribution report** on both sides — what separates winners from losers (session, MAE before target, time-in-trade, exit reason) | code |
+| 11 | **Capture SA *executions*, not just trades** — 🟡 **mostly closed 2026-09-05.** `nt_backtest` still returns entry/exit PAIRS, but the fields that made a pair insufficient are now projected: `entryQuantity`, `exitQuantity`, `entryGroup`, `entryName`, MAE/MFE (§5.6). Per-leg size and the bracket key were the whole reason fills were needed. **Not deployed** — a recompile wipes every static singleton in a live instance. What genuinely still needs fills is a *partial* fill of one leg | **user** (deploy) |
+| ~~12~~ | ~~**Win/loss attribution report**~~ — **DONE 2026-09-05.** `reporting/win_loss_attribution.py`, three questions (§7.1a), works on either side, appended to every tearsheet. Three refusals rather than confident numbers over dead data | done |
+| 13 | **The engine's own gates are not instrumented.** The decision log records the **hunter's** criteria. `nt8_parity_backtester` applies its own — `earliest_entry_hhmm=945`, `latest_entry_hhmm=1530`, `max_trades_per_day`, a consecutive-loser pause, a daily loss limit — and none reaches the log. Measured: **3,188 hunter entries became 16 trades**, a 200:1 reduction the log cannot explain. The report *names* the gap (§7.1a) rather than hiding it, but until these emit `REJECTED` rows the funnel is only half explained. Same `GateRecorder`, applied in the engine loop | code |
+| 14 | **`mae_points` / `mfe_points` are identically zero** on every Python trade — present, dead, and previously reported as a measurement. The excursion stage is not populating the trade frame. Blocks question 2 of §7.1a on the Python side (the NT8 side is fixed by §5.6) | code |
+| 15 | **A bot's entry signal names must be unique per entry.** `entryName` is the join key from a fill to the decision log; a constant name makes every entry indistinguishable downstream. Not yet audited across the twelve bots — filed as **B7** in [BOT_FIX_BACKLOG.md](BOT_FIX_BACKLOG.md) | code |
+| 16 | **Instrument the twelve C# bots.** `DecisionLog.cs` is generated and committed but **no bot calls it yet**, so every roster diff is currently one-sided. Filed as **B8**; needs a recompile, which is the user's call | **user** (deploy) |
 
 ### 11.1 The remaining build order
 

@@ -573,6 +573,28 @@ def run_research_pipeline(args, rec=None, output_dir=None):
         )
         tearsheet += "\n\n" + render_session_breakdown(_td)
         tearsheet += "\n\n" + render_trade_ordinal(_td)
+
+        # WHY THESE TRADES. Only the strategy can say which criteria it
+        # evaluated, so an uninstrumented hunter leaves `last_decisions` unset
+        # and the report says NOT INSTRUMENTED -- a different statement from
+        # "no setups were rejected", and collapsing the two would turn a missing
+        # instrument into a claim about the strategy.
+        from scripts.trading_framework.reporting.decision_log import (
+            render_decision_log, write_frame,
+        )
+        from scripts.trading_framework.reporting.win_loss_attribution import (
+            render_win_loss,
+        )
+        _dec = getattr(strategy, "last_decisions", None)
+        if _dec is not None and not _dec.empty:
+            _dec = _dec.copy()
+            _dec["run_id"] = RUN_ID          # the recorder cannot know it
+            _dl = write_frame(_dec, os.path.join(output_dir, "decisions.csv"))
+            rec.add_artifact("decisionLog", str(_dl))
+            print(f"* Decision log: {_dl}")
+        tearsheet += "\n\n" + render_decision_log(
+            _dec if _dec is not None else pd.DataFrame())
+        tearsheet += "\n\n" + render_win_loss(_td, _dec)
     
         # Save Outputs
         # output_dir is the run-id'd directory created above; the old fixed path

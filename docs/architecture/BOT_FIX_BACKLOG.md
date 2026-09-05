@@ -140,6 +140,57 @@ mean deciding the convention on the cases that matter least.
 
 ---
 
+## B7 — no bot emits a unique entry signal name 🔴 blocks all attribution
+
+| | |
+|---|---|
+| **Bots** | all twelve |
+| **Found by** | building the decision-log join (STRATEGY_WORKFLOW.md §5.5) |
+
+`entryName` — `Execution.Name` on the entry fill — is the **join key** from an NT8 fill to
+the strategy's own decision log. A bot that names every entry `"long"` makes all its entries
+indistinguishable downstream, and the reporting falls back to a nearest-entry-time join that
+is approximate **by construction**: a decision is a *bar* time and a fill can be the next
+bar's open.
+
+Give each entry a unique name — `<tag>_<L|S>_<counter>` — and pass the same string to
+`DecisionBuilder.Entry(signalName)`. **Audit before editing**: some bots may already do this.
+
+⚠️ The exit-reason tally depends on exit order names; do not rename exits while doing this,
+or `exitName` grouping changes silently and every historical comparison shifts.
+
+---
+
+## B8 — no bot writes a decision log 🔴 every roster diff is one-sided
+
+| | |
+|---|---|
+| **Bots** | all twelve |
+| **Shared class** | `scripts/ninjatrader/shared/DecisionLog.cs` — **generated and committed, called by nothing** |
+
+Until a bot calls it, `compare_rosters` has a Python roster and an empty NT8 one, so the
+cheapest parity check in the workflow (§5.5) cannot run in the direction that matters —
+*which criteria does the bot evaluate that the hunter does not*.
+
+Per bot: construct in `State.DataLoaded`, `Print(log.Banner())` once, `Skip()` on a bar with
+no setup, `Decision(...).Gate(...).Entry(name)` / `.Reject()` at the decision, `Dispose()` in
+`OnTermination`. **Add every gate the bot already has**, including the ones behind a
+`Use*Gate` bool — a disabled gate that still gets recorded as passing is how you find out the
+flag was off.
+
+⚠️ **Read rules 2 and 6 in §5.5 before writing the calls.** `&&` short-circuits, so the gates
+must be evaluated deliberately rather than lifted out of the existing `if`; and a magnitude
+recorded as a `Gate` instead of a `Measure` has a structural 0% failure rate.
+
+**Start with `BBMRReversionBot`** — it is the bot in the pair that motivated all of this, and
+it already writes a per-bar dump (`%TEMP%/bbmr_diag_<guid>.csv`) whose 22 columns name most
+of the gates. **Delete that dump in the same edit**: it goes to a GUID path printed only to
+the output window, which is data that exists and cannot be addressed.
+
+⚠️ Needs a recompile. **Do not deploy** — say so and stop.
+
+---
+
 ## Not a bot defect, recorded here so it is not re-filed
 
 - **`FailedAuctionBot` and `VWAPReclaimBot` already match** the frozen defaults

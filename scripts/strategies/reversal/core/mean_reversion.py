@@ -3,6 +3,8 @@ import numpy as np
 from typing import Dict, Any, Optional
 from datetime import time
 
+from scripts.trading_framework.reporting.decision_log import GateRecorder
+
 class MeanReversionStrategy:
     """
     Tactical Mean Reversion Strategy (Vectorized ADR-017).
@@ -14,6 +16,11 @@ class MeanReversionStrategy:
     def __init__(self, ticker: str = "NQ1"):
         self.ticker = ticker
         self.output_cols = ['signal_time', 'direction', 'entry_price', 'stop_price', 'target1_price']
+        # Set by hunt(). The reporting layer picks this up if present, so
+        # instrumenting a hunter does not change the hunt() signature -- see
+        # STRATEGY_WORKFLOW.md section 5.1. None means "not instrumented",
+        # which the report states rather than treating as "no rejections".
+        self.last_decisions: Optional[pd.DataFrame] = None
         
     def hunt(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         """
@@ -68,6 +75,32 @@ class MeanReversionStrategy:
         # Select first signal per day
         combined['date'] = combined.index.normalize()
         first_sigs = combined.groupby('date').head(1).copy()
+
+        # 4b. Decision log (section 5.1). This strategy has ONE gate, and saying
+        # so is the point: the C# bot paired with it (BBMRReversionBot) gates on
+        # RSI, ADX, squeeze, IB compression, lunch, MACD and Kaufman ER, so the
+        # two rosters do not overlap and a trade-set recall between them is not
+        # interpretable. That is visible in one diff and invisible in a metrics
+        # table.
+        #
+        # `first_signal_of_day` is ALSO the real trade cap: `head(1)` is 1/day,
+        # while sessions.yaml says 3 and the bot allows 99. Three answers.
+        is_first = pd.Series(False, index=data.index)
+        is_first.loc[first_sigs.index] = True
+        band = np.where(long_mask, data['bb_lower'], data['bb_upper'])
+        self.last_decisions = (
+            GateRecorder(data.index, run_id="", strategy="mean_reversion")
+            .trigger(long_mask, "long")
+            .trigger(short_mask, "short")
+            # A magnitude, not a criterion: on a bar that triggered because the
+            # close is outside the band, "the close is outside the band" cannot
+            # fail. Recorded with measure() so it stays out of the roster and
+            # still reaches the winner/loser comparison.
+            .measure("band_excursion_atr",
+                     (data['close'] - band).abs() / data['atr'])
+            .gate("first_signal_of_day", is_first)
+            .to_frame(signal_prefix="mr_")
+        )
         
         # 5. Vectorized Price Calculation
         first_sigs['signal_time'] = first_sigs.index

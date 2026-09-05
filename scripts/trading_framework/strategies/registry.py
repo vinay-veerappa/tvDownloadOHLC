@@ -51,6 +51,19 @@ class HunterStrategyAdapter:
     def get_param_grid(self) -> Dict[str, Any]:
         return self._strategy.get_param_grid()
 
+    @property
+    def last_decisions(self):
+        """The wrapped hunter's decision log, or None if it is not instrumented.
+
+        Forwarded HERE rather than read off `._strategy` by the caller, because
+        every hunter reaches the engine through this adapter -- so one property
+        instruments all of them, and a reporting layer that reached through the
+        wrapper would work for exactly as long as the wrapper stayed one layer
+        deep. `None` means NOT INSTRUMENTED and is deliberately distinct from an
+        empty frame, which would mean "instrumented and nothing triggered".
+        """
+        return getattr(self._strategy, "last_decisions", None)
+
 
 STRATEGY_FACTORY_REGISTRY: Dict[str, Callable[[str], Any]] = {
     # ── Existing strategies ─────────────────────────────────────────────────

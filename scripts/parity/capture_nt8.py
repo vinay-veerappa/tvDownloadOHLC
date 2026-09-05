@@ -57,9 +57,35 @@ DEFAULT_MAX_TRADES = 5000
 # NT8's own field names, in the order the committed fixture uses. Written
 # UNCHANGED so `trade_set_parity.normalise_trades` keeps being exercised against
 # the real payload rather than a schema we tidied up.
+#: NT8's OWN field names, so `normalise_trades` keeps being exercised against
+#: the real payload rather than against a shape this file invented.
+#:
+#: The second group was added 2026-09-05 with the matching bridge change. Every
+#: one of them is needed by a report that could not be written without it:
+#:
+#:   entryName    the JOIN KEY to the strategy's decision log, which is the only
+#:                possible source of WHY a trade was taken -- the criteria live
+#:                in the strategy and never reach the platform
+#:   entryGroup   which rows are legs of ONE bracket. The bridge already grouped
+#:                by this key to report entry-level win rate and never emitted
+#:                it, so the aggregate could not be reproduced or checked
+#:   entry/exitQuantity  per-LEG size. Trade.Quantity is the trade's; on a
+#:                scale-out the executions differ from it and from each other,
+#:                which is the entire content of the leg convention
+#:   mae/mfe      separates a bad ENTRY (the loser never went your way) from a
+#:                bad EXIT (it did, and was given back). No P&L column can
+#:                distinguish those two
+#:
+#: A field the bridge does not send arrives EMPTY rather than absent, so an old
+#: bridge produces a readable file with blank columns -- and the reports refuse
+#: an all-blank excursion column rather than reporting a median of zero.
 TRADE_FIELDS = ("instrument", "marketPosition", "quantity", "entryPrice",
                 "exitPrice", "entryTime", "exitTime", "profitCurrency",
-                "profitPoints", "exitName")
+                "profitPoints", "exitName",
+                "entryName", "entryGroup", "tradeNumber",
+                "entryQuantity", "exitQuantity",
+                "maeCurrency", "maePoints", "mfeCurrency", "mfePoints",
+                "commission")
 
 
 class Nt8CaptureError(RuntimeError):

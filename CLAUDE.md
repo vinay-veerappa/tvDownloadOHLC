@@ -28,6 +28,15 @@ that defines "validated".
 
 `scripts/trading_framework/workflow.py` runs every stage under ONE run record and ends by printing the promotion checklist (§9) with each criterion PASS / FAIL / **NOT EVALUATED**. Exit 0 = all passed, 1 = a criterion failed, 2 = a required stage raised. It refuses to guess a price basis or a timezone, refuses `--optimize` without `--oos-start`, and records a skipped stage WITH ITS REASON rather than omitting it. **Do not assemble a pipeline by hand** — 35 bespoke `run_*` scripts already exist and are frozen.
 
+**A strategy must report the criteria it evaluated** (§5.5). A trade list says *what*
+happened; only the strategy can say *why*, and no MCP change can supply it. Python hunters
+set `self.last_decisions` from `GateRecorder`; the C# side uses the generated
+`DecisionLog.cs`, which writes `mcp_decisions_*.csv` where `nt_get_export` already serves it.
+**The gate roster is layer 0 of parity** — `mean_reversion` evaluates 2 conditions and its
+paired `BBMRReversionBot` has 20 parameters, so they are two strategies and no recall figure
+between them means anything. Record *every* gate (not the first failure), record the *value*,
+and use `measure()` for a magnitude.
+
 Three things to carry even if nothing else is read:
 * **NT8 is authoritative for behaviour.** When Python and NT8 disagree, presume Python is wrong.
 * **Parity is defined on the TRADE SET**, and judged on trade **geometry** (signed points travelled), not absolute price — a constant price offset *is* the adjustment basis, so back-adjustment is not a gate.
