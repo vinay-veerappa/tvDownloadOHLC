@@ -45,7 +45,7 @@ KNOWN_DIVERGENCES = {
     "scripts/ninjatrader/strategies/ib_breakout/IBStrategyBase.cs": (1550, 2, 1430),
     "scripts/ninjatrader/strategies/ifvg_cisd/ICTFVGCISDBot.cs": (1555, 3, 1530),
     "scripts/ninjatrader/strategies/keltner_channel/KeltnerChannelBot.cs": (1600, 4, 1530),
-    "scripts/ninjatrader/strategies/supertrend/STTrendBot.cs": (1555, 99, 1555),
+    "scripts/ninjatrader/strategies/supertrend/STTrendBot.cs": (1555, None, 1555),
     "scripts/ninjatrader/strategies/the_strat/Strat212ContinuationBot.cs": (1555, 6, 1530),
     "scripts/ninjatrader/strategies/the_strat/Strat22RevStratBot.cs": (1555, 6, 1530),
     # EMAPullbackBot left this list 2026-09-05: it differs only in LatestEntry,

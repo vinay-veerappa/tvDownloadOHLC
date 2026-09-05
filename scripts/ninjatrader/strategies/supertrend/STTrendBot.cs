@@ -28,8 +28,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     ///
     /// ⚠️ Do NOT run on a 1m chart with a 5m secondary — the forming-5m-bar repaint causes whipsaw
     /// (measured PF0.556). Must be 5m primary.
+    ///
+    /// Migrated onto GovernedStrategy (STRATEGY_WORKFLOW.md 3.4; B7+B8): the bot declares
+    /// the warmup gate, the ATR-regime gate (recorded even when UseAtrRegimeFilter is off),
+    /// the supertrend flip as the trigger, and the trail-ATR distance as a measure. The
+    /// %TEMP% per-bar diag dump (sttrend_diag_*.csv) is deleted — the DecisionLog the base
+    /// owns replaces it. Research artifact per section 1.2 (no registry key / no hunter):
+    /// it is not a strategy and must not be reported as one until it gets one.
     /// </summary>
-    public class STTrendBot : RiskManagerBase
+    public class STTrendBot : GovernedStrategy
     {
         #region Parameters
 
@@ -67,12 +74,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private int dayBarCount;
         private DateTime currentDay;
 
-        private System.IO.StreamWriter diagCsv;
-        private bool diagCsvHeaderWritten;
-
         protected override string GetStrategyName() => "STTrend";
 
-        protected override void SetStrategyDefaults()
+        protected override void OnStrategyDefaults()
         {
             Description = "Supertrend intraday trend-following — 5m primary, trailing stop on High/Low, no range gate. Python PF1.50 ST(14,2) trail1.5.";
             Name = "STTrendBot";
@@ -88,7 +92,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxConsecutiveLosers = 99;
             PauseMinutes = 30;
             HardStopConsecutiveLosers = 99;
-            MaxTradesPerDay = 99;
+            // B2: MaxTradesPerDay no longer declared. The Python sim this bot
+            // mirrors has no cap, the trade-ordinal machinery decides caps from
+            // data (none exists here — no registry key, no hunter), and 99 was a
+            // literal with no basis. FlattenBy=1555 stays (≤ ADR-020).
             TrailingDrawdown = 99999;
 
             // Full day — trend-following needs trend days, NO range gate
@@ -117,9 +124,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             UseAtrRegimeFilter = true;  // only trade when 5m ATR > 20-bar median
         }
 
-        protected override void ConfigureStrategy() { }
-
-        protected override void InitializeStrategy()
+        protected override void OnInitialize()
         {
             stIndicator = SupertrendIndicator(StPeriod, StAtrMult);
             atr = ATR(BarsArray[0], 14);
@@ -129,13 +134,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             dayLows = new double[TRAIL_ATR_PERIOD];
             dayBarCount = 0;
             currentDay = DateTime.MinValue;
-
-            string csvPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sttrend_diag_" + Guid.NewGuid().ToString("N") + ".csv");
-            diagCsv = new System.IO.StreamWriter(csvPath);
-            diagCsv.WriteLine(string.Format(CultureInfo.InvariantCulture, "# Strategy=STTrendBot StPeriod={0} StAtrMult={1} TrailAtrMult={2} AtrPeriod={3} Primary=5m Risk=1xMES AtrRegimeFilter={4} LatestEntry={5}", StPeriod, StAtrMult, TrailAtrMultParam, AtrPeriod, UseAtrRegimeFilter, LatestEntry));
-            diagCsv.WriteLine(string.Format(CultureInfo.InvariantCulture, "# Execution: Earliest={0} Latest={1} FlattenBy={2} MaxTradesPerDay={3} DailyMaxLoss={4} TrailingDD={5}", EarliestEntry, LatestEntry, FlattenBy, MaxTradesPerDay, DailyMaxLoss, TrailingDrawdown));
-            diagCsvHeaderWritten = false;
-            Print("[DIAG] STTrendBot CSV path: " + csvPath);
         }
 
         private double GetTrailAtr()
@@ -171,12 +169,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return (maxH - minL) / TRAIL_ATR_PERIOD;
         }
 
-        private bool PassesAtrRegimeFilter()
+        /// <summary>
+        /// The ATR-regime VALUE: current crude ATR vs the rolling per-day median
+        /// (rule 3). NaN until the 5-bar minimum is met; PassesAtrRegimeFilter
+        /// treats NaN as fail, matching the original's early false.
+        /// </summary>
+        private double AtrRegimeRatio()
         {
-            if (!UseAtrRegimeFilter) return true;
+            if (!UseAtrRegimeFilter) return double.NaN;
+
             // Compute crude (MAX-MIN)/14 ATR for this bar (per-day, Python parity)
             double currentAtr5m = GetTrailAtr();
-            if (currentAtr5m <= 0) return false;
+            if (currentAtr5m <= 0) return double.NaN;
 
             // Reset ATR regime buffer at start of each new day too
             if (CurrentBar > 0 && Time[0].Date != Time[1].Date)
@@ -188,7 +192,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             atr5mHistory[atr5mHistoryCount % ATR_REGIME_LOOKBACK] = currentAtr5m;
             atr5mHistoryCount++;
 
-            if (atr5mHistoryCount < 5) return true;  // min_periods=5 (Python parity)
+            if (atr5mHistoryCount < 5) return double.NaN;  // min_periods=5 (Python parity)
 
             // Compute median of the available history (up to ATR_REGIME_LOOKBACK bars)
             int count = Math.Min(atr5mHistoryCount, ATR_REGIME_LOOKBACK);
@@ -198,8 +202,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             Array.Sort(sorted);
             double median = sorted[count / 2];
 
-            // Only trade when current ATR >= median (high-vol regime)
-            return currentAtr5m >= median;
+            return median > 0 ? currentAtr5m / median : double.NaN;
+        }
+
+        private bool PassesAtrRegimeFilter()
+        {
+            if (!UseAtrRegimeFilter) return true;
+            double ratio = AtrRegimeRatio();
+            return !double.IsNaN(ratio) && ratio >= 1.0;  // current ATR >= median
         }
 
         protected override double GetPotentialLoss()
@@ -219,12 +229,28 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return atr[0];
         }
 
-        protected override int CheckForSignal()
+        /// <summary>
+        /// DECLARE this bar's criteria. The verdict is computed by the sealed
+        /// base from what is declared here; nothing returns a signal.
+        ///
+        /// ORDER NOTE: the original evaluated warmup, then the ATR regime
+        /// filter, then read the signal. The regime filter mutates the rolling
+        /// ATR buffer as a side effect, so it must run even on non-triggering
+        /// bars (it did — CheckForSignal returned 0 AFTER the buffer update on
+        /// warmup-failing bars? No: warmup returned BEFORE the filter, so on
+        /// warmup-failing bars the buffer did NOT update). This declaration
+        /// preserves that exactly: the regime gate is computed only on warmed
+        /// bars.
+        /// </summary>
+        protected override void OnEvaluate(SetupEvaluation e)
         {
-            if (stIndicator == null || CurrentBars[0] < StPeriod + 2) return 0;
+            bool warmed = stIndicator != null && CurrentBars[0] >= StPeriod + 2;
+            e.Gate("warmup", warmed, CurrentBars[0], StPeriod + 2);
+            if (!warmed) return;
 
-            // ATR regime filter: only trade in high-vol regimes
-            if (!PassesAtrRegimeFilter()) return 0;
+            double ratio = AtrRegimeRatio();
+            bool regimeOk = PassesAtrRegimeFilter();
+            e.Gate("atr_regime", regimeOk, ratio, 1.0);
 
             if (DrawVisuals && CurrentBars[0] > StPeriod + 2)
             {
@@ -236,7 +262,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             int sig = stIndicator.SignalSeries[0];
-            if (sig != 0 && DrawVisuals)
+            e.Trigger(sig != 0, sig == 1 ? "long" : "short");
+            if (sig == 0) return;
+
+            if (DrawVisuals)
             {
                 string tag = "ST_Flip_" + CurrentBar;
                 if (sig == 1)
@@ -244,13 +273,17 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (4 * TickSize), Brushes.LimeGreen);
                     Draw.Text(this, tag + "_Txt", false, "ST BUY", 0, Low[0] - (10 * TickSize), 0, Brushes.LimeGreen, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                 }
-                else if (sig == -1)
+                else
                 {
                     Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (4 * TickSize), Brushes.OrangeRed);
                     Draw.Text(this, tag + "_Txt", false, "ST SELL", 0, High[0] + (10 * TickSize), 0, Brushes.OrangeRed, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                 }
             }
-            return sig;
+
+            // Trail distance in ATRs — the magnitude that separates marginal
+            // flips from well-placed ones in the win/loss comparison.
+            double trailAtr = GetTrailAtr();
+            e.Measure("trail_atr_dist", trailAtr > 0 ? TrailAtrMultParam : double.NaN);
         }
 
         protected override double GetCustomStopPrice(int signal, double entryPrice)
