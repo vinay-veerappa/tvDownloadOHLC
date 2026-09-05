@@ -26,11 +26,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
     /// <summary>
     /// KeltnerChannelBot — Systematic Keltner Channel Strategy with Multi-Regime & MTF capabilities.
-    /// Inherits from RiskManagerBase for institutional risk controls, ATM profit brackets,
-    /// dynamic ATR stops, daily max loss circuit breakers, and execution logging.
+    /// Inherits GovernedStrategy for the workflow's governance (decision log, frozen defaults,
+    /// ADR-020 hard exit, unique entry names) on top of the inherited risk controls, ATM profit
+    /// brackets, dynamic ATR stops, daily max loss circuit breakers, and execution logging.
     /// Supports NQ, MNQ, ES, MES, and other futures instruments.
+    ///
+    /// Migrated onto GovernedStrategy (STRATEGY_WORKFLOW.md 3.4; B7+B8): the bot declares
+    /// the warmup gate and the mode's own criteria as gates/trigger per the mode switch.
+    /// The mode dispatch stays here — the criteria differ per mode and each is declared.
     /// </summary>
-    public class KeltnerChannelBot : RiskManagerBase
+    public class KeltnerChannelBot : GovernedStrategy
     {
         #region Parameters
 
@@ -105,7 +110,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override string GetStrategyName() => "KeltnerChannelBot";
 
-        protected override void SetStrategyDefaults()
+        protected override void OnStrategyDefaults()
         {
             Description                 = "Systematic Keltner Channel strategy with multi-regime adaptability, WaveTrend confluence, and institutional risk management.";
             Name                        = "KeltnerChannelBot";
@@ -115,6 +120,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxConsecutiveLosers        = 3;
             PauseMinutes                = 30;
             HardStopConsecutiveLosers   = 4;
+            // MaxTradesPerDay = 4 deliberately KEPT: no trade-ordinal measurement
+            // exists (no registry key, no hunter — a research artifact per §1.2),
+            // so the existing number stands until one is taken.
             MaxTradesPerDay             = 4;
             TrailingDrawdown            = 2000.0;
 
@@ -146,15 +154,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             HtfPeriodValue              = 15;
         }
 
-        protected override void ConfigureStrategy()
-        {
-            if (UseHtf)
-            {
-                AddDataSeries(BarsArray[0].Instrument.FullName, HtfPeriodType, HtfPeriodValue);
-            }
-        }
-
-        protected override void InitializeStrategy()
+        protected override void OnInitialize()
         {
             keltner = KeltnerChannelSignals(
                 UseHtf, HtfPeriodType, HtfPeriodValue,
@@ -179,10 +179,19 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return atr[0];
         }
 
-        protected override int CheckForSignal()
+        /// <summary>
+        /// DECLARE this bar's criteria. The verdict is computed by the sealed
+        /// base from what is declared here; nothing returns a signal. Every
+        /// gate is declared unconditionally within the mode branch the original
+        /// evaluated — the mode switch selects WHICH gates run, exactly as the
+        /// original's switch selected which conditions were checked.
+        /// </summary>
+        protected override void OnEvaluate(SetupEvaluation e)
         {
             int warmup = Math.Max(MovingAverageLength, 88) + TrendSlopePeriod + 5;
-            if (keltner == null || CurrentBars[0] < warmup) return 0;
+            bool warmed = keltner != null && CurrentBars[0] >= warmup;
+            e.Gate("warmup", warmed, CurrentBars[0], warmup);
+            if (!warmed) return;
 
             double kcMid     = keltner.KcBase[0];
             double kcTopMin  = keltner.KcTopMin[0];
@@ -197,6 +206,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             bool isTrendingUp   = slope > TrendSlopeThreshold;
             bool isTrendingDown = slope < -TrendSlopeThreshold;
             bool isRanging      = !isTrendingUp && !isTrendingDown;
+
+            // Regime — a magnitude with a threshold, and the mode dispatch's key
+            e.Measure("kc_slope", slope, TrendSlopeThreshold);
 
             int signal = 0;
 
@@ -239,8 +251,26 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     break;
             }
 
+            e.Trigger(signal != 0, signal == 1 ? "long" : "short");
+            if (signal == 0) return;
+
+            // Direction-conditional gates, declared AFTER the trigger so the
+            // roster shows them on decisions that carried a setup (the original
+            // computed them inside the same conditions).
+            if (StrategyMode == KeltnerStrategyMode.MeanReversion)
+            {
+                e.Gate("wavetrend_extreme", wt2 < -WaveTrendExtremeThreshold || wt2 > WaveTrendExtremeThreshold,
+                       wt2, WaveTrendExtremeThreshold);
+                e.Gate("slope_not_against", signal == 1 ? slope >= -TrendSlopeThreshold : slope <= TrendSlopeThreshold,
+                       slope, TrendSlopeThreshold);
+            }
+            else if (StrategyMode == KeltnerStrategyMode.AdaptiveHybrid && isRanging)
+            {
+                e.Gate("wavetrend_extreme", wt2 < -60.0 || wt2 > 60.0, wt2, 60.0);
+            }
+
             // Visual annotation on charts
-            if (signal != 0 && DrawVisuals)
+            if (DrawVisuals)
             {
                 string tag = "KC_Sig_" + CurrentBar;
                 if (signal == 1)
@@ -248,14 +278,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     Draw.ArrowUp(this, tag + "_Arr", false, 0, Low[0] - (4 * TickSize), Brushes.LimeGreen);
                     Draw.Text(this, tag + "_Txt", false, "KC BUY", 0, Low[0] - (10 * TickSize), 0, Brushes.LimeGreen, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                 }
-                else if (signal == -1)
+                else
                 {
                     Draw.ArrowDown(this, tag + "_Arr", false, 0, High[0] + (4 * TickSize), Brushes.OrangeRed);
                     Draw.Text(this, tag + "_Txt", false, "KC SELL", 0, High[0] + (10 * TickSize), 0, Brushes.OrangeRed, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                 }
             }
-
-            return signal;
         }
 
         protected override double GetCustomStopPrice(int signal, double entryPrice)
