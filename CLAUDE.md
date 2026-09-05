@@ -38,7 +38,18 @@ Every rule in that document is marked 🟢 ENFORCED (something fails — the enf
 the enforcer in the same edit.** Open decisions and known gaps are §11; do not silently
 work around one, and do not claim a strategy is validated while any 🔴 in §9 stands.
 
+**Never write a new backtest runner.** 32 exist, they are frozen, and a 33rd fails
+`scripts/trading_framework/tests/test_no_new_runners.py` — which matches on *behaviour*
+(names an engine + is executable), not on the filename. Only `workflow.py` and
+`run_backtest.py` are sanctioned. §4.1 has the reasoning.
+
+**Only `--strategy` is required**, and two defaults are traps: `--price-adjustment`
+defaults to `undeclared` (which FAILS `attributable`, by design) and `--ticker` defaults
+to `NQ1` (it picks the point-value multiplier). Full measured table: §0.1.
+
 ## Global Rules
+`AGENTS.md` at the repo root carries these same strategy rules for every other agent
+(Copilot, Codex, Cursor, Gemini, Antigravity) — keep the two in sync when either changes.
 See `.agents/AGENTS.md` for fail-fast error handling, GPU/hardware awareness, and repository directory organization standards. These apply to all agents (Copilot, Antigravity, Claude Code).
 
 ### Repository Directory & Script Organization Standard

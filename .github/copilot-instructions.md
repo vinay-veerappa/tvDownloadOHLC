@@ -4,6 +4,27 @@ applyTo: "**"
 
 # Copilot Chat Startup Protocol
 
+## STRATEGY WORK OUTRANKS THE STARTUP SEQUENCE BELOW
+
+If the task involves a trading strategy — writing, backtesting, validating in
+NT8, comparing, reporting on or promoting one — read
+[AGENTS.md](../AGENTS.md) and then
+[docs/architecture/STRATEGY_WORKFLOW.md](../docs/architecture/STRATEGY_WORKFLOW.md)
+**before** doing anything else, including before the startup sequence.
+
+`STRATEGY_WORKFLOW.md` is the ONLY strategy document; ten others were subsumed
+into it and deleted. Three things to carry even if you read nothing else:
+
+* **One entry point.** `python -m scripts.trading_framework.workflow --strategy
+  <key> --ticker <T> --price-adjustment <basis>`. **Never write a new backtest
+  runner** — 32 exist, they are frozen, and a 33rd fails
+  `scripts/trading_framework/tests/test_no_new_runners.py`.
+* **NT8 is authoritative.** When Python and NT8 disagree, presume Python is
+  wrong. Parity is judged on the **trade set**, per leg, on signed points.
+* **Never promote an ENFORCED marker without naming the enforcer**, and never
+  quote a count you did not just measure.
+
+
 **Purpose:** Mirror Antigravity's `using-superpowers` + `sync-trading-brain` startup
 chain so that GitHub Copilot Chat and Antigravity share the same startup sequence,
 the same memory store (`.agent/memory.db`), and the same skill catalog

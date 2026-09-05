@@ -66,6 +66,38 @@ raised, so the run is inconclusive rather than failed.
 > Any CI gate reading the status would have scored a run that measured nothing as a pass.
 > Pinned by `test_workflow_checklist.py::test_a_checklist_that_measured_nothing_does_not_exit_zero`.
 
+### The defaults 🟢 ENFORCED (measured from `build_parser()` 2026-09-05)
+
+**Only `--strategy` is required.** Re-derive this table rather than trusting it:
+`python -m scripts.trading_framework.workflow --help`.
+
+| Flag | Default | Read this before relying on it |
+|---|---|---|
+| `--strategy` | *required* | resolved through `STRATEGY_FACTORY_REGISTRY`; an unregistered key cannot run |
+| `--ticker` | `NQ1` | ⚠️ **selects the point-value multiplier** ($20/pt NQ, $50 ES, $2 MNQ). A wrong ticker scales every P&L figure and nothing says so (§2.7) |
+| `--price-adjustment` | `undeclared` | ⚠️ **there is no honest default, so the default is a refusal.** `undeclared` records honestly, warns, and **FAILS the `attributable` criterion** — pass one of `unadjusted` / `back_adjusted` / `ratio_adjusted` |
+| `--engine` | `nt8_parity` | the bracket/leg engine — the right default, since anything compared to NT8 needs it. `vectorized` is faster and not leg-aware |
+| `--config` | `config/sessions.yaml` | |
+| `--optimize` | off | |
+| `--trials` | `20` | the §0.1 example uses 200; 20 is a smoke-test budget |
+| `--oos-start` | none | **required with `--optimize`**, refused at parse time |
+| `--nt8` | off | adds the NT8 validation + trade-set parity stages |
+| `--nt8-trades` | none | the capture CSV |
+| `--nt8-tz` | none | ⚠️ no default. Read from the fixture's `.meta.json`, else the run refuses |
+| `--bar-seconds` | none | ⚠️ no default *since 2026-09-05*. It is the entry-bar join key; read from the fixture's `barSeconds`, and a flag that **contradicts** the fixture now raises instead of warning |
+| `--min-recall` / `--min-precision` | `0.95` / `0.95` | trade-set parity thresholds (§6.3) |
+| `--bot` | derived | PascalCase + `Bot` from the key, else `BOT_ALIASES` |
+| `--skip-rule-parity` | off | recorded as a SKIP **with its reason**, never as a pass |
+| `--allow-unattributable` | off | |
+
+> **Two of these were traps until 2026-09-05.** `--price-adjustment undeclared`
+> passed the `attributable` criterion whose own text reads *"and the price basis is
+> declared"* — it counted missing fields and refusals, and an undeclared basis is
+> only a *warning*. And `--bar-seconds` defaulted to `300`, so a 5-minute join key
+> against a 1-minute capture mis-buckets **every** trade while the run still prints
+> a parity verdict — a red meaning "wrong join", indistinguishable from a red
+> meaning "different trades".
+
 Everything below is the reference for what those stages do and why. **You should
 not need to run any other script.** If you find yourself assembling a pipeline by
 hand, that is the defect this file exists to prevent — see §4.1.
@@ -365,7 +397,7 @@ programming language.
 
 ## 4. Step 3 — Run the Python backtest
 
-### 4.1 The one entry point 🟢 EXISTS (🔴 not yet exclusive)
+### 4.1 The one entry point 🟢 ENFORCED — the population is frozen
 
 `scripts/trading_framework/workflow.py` (§0.1) is the entry point. It does not add
 a pipeline — it **orders** the ones that exist and holds them under a single run
@@ -385,15 +417,32 @@ Its stages, in order, each recorded with a verdict:
 `--optimize` may be passed only with `--oos-start`, and `--price-adjustment` has
 no default. Both are argument-level refusals, not warnings.
 
-**Still true: `run_*.py` scripts are everywhere and nothing forbids one more.** They
-are frozen — do not extend them, do not copy their pattern. This used to say "35", twice,
-and no denominator reproduced it (51 exist under `scripts/`; 2 under
-`trading_framework/`; the backtest-ish cluster is 38). **Count them, do not quote this
-line:**
+**A 33rd bespoke runner now fails a test.** 🟢
 
-```powershell
-Get-ChildItem scripts -Filter "run_*.py" -Recurse -File | Measure-Object
-```
+*Enforcer*: `tests/test_no_new_runners.py`, against the inventory in
+`tests/frozen_runners.txt`. **It matches on behaviour, not on the filename**: a module
+counts as a runner if it names a backtest engine (`VectorizedBacktester`,
+`NT8ParityBacktester`, `BacktestEngine`, `run_research_pipeline`) *and* is executable
+(`__main__` or an `ArgumentParser`). Two modules are sanctioned — `workflow.py` and
+`run_backtest.py`; **32** others are frozen. Deleting one is allowed: drop its line in the
+same commit, which `test_the_inventory_has_no_stale_entries` requires.
+
+> **Why not freeze `run_*.py`.** That was the obvious gate and it would have been nearly
+> vacuous. There are **51** `run_*.py` files under `scripts/`, of which only **6** drive
+> an engine — and **26** modules that *do* drive one are not named `run_*` at all
+> (`analysis/bb_grid_optim.py`, `research/verify_mtf_framework.py`, …). A filename gate
+> freezes 6 and lets 26 keep breeding under any name. This is also why the old "35 bespoke
+> `run_*` scripts" figure reproduced from no denominator: 35 was roughly the *behavioural*
+> count, attached to the *filename* description.
+>
+> **Three negative controls keep it non-vacuous**, because an absence gate passes silently
+> when the code it inspects moves — this repo has had four of those. The sanctioned pair
+> **must** be detected (a rotted pattern fails there first, loudly); a synthetic runner in
+> a temp tree must be detected; and a library that merely *imports* an engine must **not**
+> be, so the filter cannot match everything. Verified by planting a real file in
+> `scripts/analysis/` and watching the gate name it.
+
+Do not extend the frozen scripts, and do not copy their pattern.
  Making the entry point
 *exclusive* is plan §2.4 and needs a CI gate this repo does not yet have (§11).
 
@@ -939,7 +988,7 @@ computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based s
 | 3 | **No CI in this repo at all** — no `.github/workflows`, no `tools/ci_local.py`. Every gate above is green only when someone types `pytest`. | code |
 | 4 | Parameter document for the non-ICT families (§3.3) | code |
 | 5 | Reports from the run record (§7.3) | code |
-| 6 | Freeze the bespoke runners with a gate (§4.1); note an *absence* gate passes silently when code moves — give it a negative control | code |
+| ~~6~~ | ~~Freeze the bespoke runners with a gate~~ — **DONE 2026-09-05.** `tests/test_no_new_runners.py` + `frozen_runners.txt`, matched on behaviour with three negative controls (§4.1) | done |
 | 7 | `box_reversion` raises `TypeError: Invalid comparison between dtype=datetime64[s] and Timestamp` when window-filtered | code |
 
 ### 11.1 The remaining build order
@@ -950,7 +999,7 @@ Subsumed from the phased plan. Ordered by what unblocks what, not by size.
 |---|---|---|
 | **0.2/0.3** | adverse fills already default; **restate the existing prop-firm conclusions on them** — this is where optimism did the most damage, and published numbers may change | 🔴 |
 | **1.1** | rank-correlation calibration Python↔NT8 — tells you whether the screen has been lying, and by how much (§12.1: the ranking is what must be preserved) | 🔴 |
-| **2.4** | freeze the bespoke runners with a CI check. ⚠️ an *absence* gate passes silently when code moves — give it a negative control | 🔴 |
+| ~~**2.4**~~ | ~~freeze the bespoke runners with a CI check~~ — **DONE 2026-09-05** as a pytest gate; still not in CI, because there is no CI (item 3). ⚠️ an *absence* gate passes silently when code moves — give it a negative control | 🔴 |
 | **2.5** | arm ledger — log **every** arm ever tested, including abandoned ones. Deflated statistics need N, and the optimisation summary (§7.1) now emits the per-trial table | 🟡 partial |
 | **2.6** | reports generated from the run record only (§7.3) | 🔴 |
 | **3.1–3.3** | per-contract-month data on both sides; roll-warmup rule; bar-completeness precondition | 🔴 |

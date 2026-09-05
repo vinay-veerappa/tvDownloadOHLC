@@ -521,17 +521,33 @@ def stage_nt8(ctx: Ctx) -> None:
                                         ("strategy", "instrument", "from", "to",
                                          "barSeconds", "effectiveGlobals",
                                          "profileHash")})
-        if meta.get("barSeconds") and int(meta["barSeconds"]) != int(ctx.args.bar_seconds):
-            ctx.rec.warn(
-                "--bar-seconds {} disagrees with the fixture's own barSeconds {}; "
-                "the entry-bar join key is computed from --bar-seconds, so this "
-                "will mis-bucket every trade".format(
-                    ctx.args.bar_seconds, meta["barSeconds"]))
+        # SAME RULE AS THE TIMEZONE: the fixture knows, so ask it.
+        # This defaulted to 300 and only WARNED on a disagreement. The
+        # entry-bar join key is computed from it, so a 5-minute default against
+        # a 1-minute capture mis-buckets every trade and the run still reports a
+        # parity verdict -- a red that means "wrong join", indistinguishable
+        # from "different trades".
+        if meta.get("barSeconds"):
+            declared = int(meta["barSeconds"])
+            if ctx.args.bar_seconds is None:
+                ctx.args.bar_seconds = declared
+            elif int(ctx.args.bar_seconds) != declared:
+                raise ValueError(
+                    "--bar-seconds {} contradicts the fixture's own barSeconds "
+                    "{}. The entry-bar join key is computed from it, so one of "
+                    "these mis-buckets every trade. Fix the flag or the capture; "
+                    "the run will not guess which is right.".format(
+                        ctx.args.bar_seconds, declared))
+    if ctx.args.bar_seconds is None:
+        raise ValueError(
+            "--bar-seconds is required with --nt8 and the fixture's .meta.json "
+            "does not declare barSeconds. It is the entry-bar join key; there is "
+            "no honest default, for the same reason --nt8-tz has none.")
     ctx.nt8_tz = tz
     ctx.check.set("nt8_ground_truth", PASS,
-                  "{} NT8 rows from {} (tz {} via {})".format(
+                  "{} NT8 rows from {} (tz {} via {}, {}s bars)".format(
                       len(ctx.nt8_trades), os.path.basename(fixture),
-                      tz or "declared-aware", source))
+                      tz or "declared-aware", source, ctx.args.bar_seconds))
 
 
 def stage_trade_set_parity(ctx: Ctx) -> None:
@@ -644,8 +660,22 @@ def run_workflow(args) -> int:
                 break
             print("[!] stage '{}' failed but is not required; continuing.".format(name))
 
-    ctx.check.set("attributable", PASS if rec.attribution()["attributable"] else FAIL,
-                  "; ".join(rec.attribution().get("missingRequired", [])) or "")
+    # THE CRITERION SAYS "and the price basis is declared". It did not check.
+    # `--price-adjustment` DOES have a default -- `undeclared` -- which records
+    # honestly and warns, but `attribution()` counts only missing fields and
+    # refusals, so a run with an undeclared basis passed this criterion while
+    # carrying a warning that it "cannot be compared to an NT8 run". The whole
+    # point of the flag is that a back-adjusted series and an unadjusted one
+    # produce different trades; a run that cannot say which it used is not
+    # attributable in the sense §9 means.
+    att = rec.attribution()
+    basis = ((rec.doc.get("data") or {}).get("adjustment")) or UNDECLARED
+    missing = list(att.get("missingRequired", []))
+    if basis == UNDECLARED:
+        missing.append("data.adjustment (--price-adjustment not declared)")
+    ctx.check.set("attributable",
+                  PASS if (att["attributable"] and basis != UNDECLARED) else FAIL,
+                  "; ".join(missing) or "basis {}".format(basis))
 
     rec.note("promotionChecklist", ctx.check.to_dict())
     record = rec.finalize(output_dir, status="failed" if failed_hard else "complete")
@@ -730,7 +760,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "and silently destroys the entry-bar join.")
     p.add_argument("--python-tz", default=None,
                    help="same, for the Python trade list")
-    p.add_argument("--bar-seconds", type=int, default=300,
+    p.add_argument("--bar-seconds", type=int, default=None,
                    help="bar size of the compared run, for the entry-bar join key")
     p.add_argument("--min-recall", type=float, default=0.95)
     p.add_argument("--min-precision", type=float, default=0.95)
