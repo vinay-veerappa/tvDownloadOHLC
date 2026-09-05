@@ -78,7 +78,6 @@ UNINSTRUMENTED_BOTS = {
     "scripts/ninjatrader/strategies/ib_breakout/IBFadeBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBRetestBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBStrategyBase.cs",
-    "scripts/ninjatrader/strategies/ifvg_cisd/ICTFVGCISDBot.cs",
     "scripts/ninjatrader/strategies/the_strat/Strat212ContinuationBot.cs",
     "scripts/ninjatrader/strategies/the_strat/Strat22RevStratBot.cs",
 }

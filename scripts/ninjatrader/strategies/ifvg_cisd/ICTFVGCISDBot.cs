@@ -15,7 +15,26 @@ using NinjaTrader.NinjaScript.Strategies;
 
 namespace NinjaTrader.NinjaScript.Strategies.Vinay
 {
-    public class ICTFVGCISDBot : RiskManagerBase
+    /// <summary>
+    /// ICTFVGCISDBot — Institutional ICT CISD & FVG Strategy with 5m Structure +
+    /// 1m Precision Entry, Cover The Queen scale-out, and Confirmed Re-entry Protocol.
+    ///
+    /// Migrated onto GovernedStrategy (STRATEGY_WORKFLOW.md 3.4; B7+B8). All strategy
+    /// parameters come from the SHARED MANIFEST (Indicators.Vinay.IfvgCisdConfig.cs,
+    /// auto-generated from configs/strategies/ifvg_cisd.yaml) — never hand-tuned here.
+    ///
+    /// DECLARED CRITERIA: indicator presence, re-entry window (a time-boxed gate),
+    /// MTF warmup, single-TF warmup, and the risk-bps squeeze window on the wick
+    /// confirmation. The wick confirmation itself is the TRIGGER; the risk window is
+    /// the GATE that can block it — and when it blocks, the armed state is NOT reset
+    /// (the original retried on the next bar while still in wickState 2, and this
+    /// preserves that). State mutations (arming, wick tracking, re-entry arming)
+    /// remain here; the base computes the verdict and owns every order.
+    ///
+    /// OnExecutionUpdate stays overridden: re-entry arming on a losing round trip is
+    /// execution-bookkeeping, not a bar decision, and RiskManagerBase owns the hook.
+    /// </summary>
+    public class ICTFVGCISDBot : GovernedStrategy
     {
         #region Parameters
         [NinjaScriptProperty]
@@ -108,7 +127,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override string GetStrategyName() => "ICT_CISD";
 
-        protected override void SetStrategyDefaults()
+        protected override void OnStrategyDefaults()
         {
             Description = "Institutional ICT CISD & FVG Strategy with 5m Structure + 1m Precision Entry, Cover The Queen scale-out, and Confirmed Re-entry Protocol.";
             Name = "ICTFVGCISDBot";
@@ -158,7 +177,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
         }
 
-        protected override void InitializeStrategy()
+        protected override void OnInitialize()
         {
             if (AddSecondaryTimeframe && BarsArray.Length > 1)
             {
@@ -192,54 +211,72 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             isReentryTrade = false;
         }
 
-        protected override int CheckForSignal()
+        /// <summary>
+        /// DECLARE this bar's criteria. The verdict is computed by the sealed
+        /// base from what is declared here; nothing here returns a signal.
+        /// State mutation order matches the original CheckForSignal exactly:
+        /// re-entry evaluation first (its confirm short-circuits the bar), then
+        /// the MTF state machine, then the single-TF fallback.
+        /// </summary>
+        protected override void OnEvaluate(SetupEvaluation e)
         {
-            if (ictIndicator == null) return 0;
+            e.Gate("ict_indicator", ictIndicator != null);
+            if (ictIndicator == null) return;
 
             // ──────────────────────────────────────────────────────────
             // 0. CONFIRMED RE-ENTRY EVALUATION (If stopped out on initial 5 bps SL)
             // ──────────────────────────────────────────────────────────
-            if (EnableConfirmedReentry && reentryArmed && (CurrentBars[0] - reentryBar) <= 20)
+            if (EnableConfirmedReentry && reentryArmed)
             {
-                double c0 = Closes[0][0];
-                double o0 = Opens[0][0];
-                double h0 = Highs[0][0];
-                double l0 = Lows[0][0];
-                double h2 = Highs[0][2];
-                double l2 = Lows[0][2];
-
-                bool reconfirmed = false;
-                if (reentryDirection == 1 && (c0 > o0 && (l0 > h2 || c0 > Highs[0][1])))
-                    reconfirmed = true;
-                else if (reentryDirection == -1 && (c0 < o0 && (h0 < l2 || c0 < Lows[0][1])))
-                    reconfirmed = true;
-
-                if (reconfirmed)
+                int reentryAge = CurrentBars[0] - reentryBar;
+                e.Gate("reentry_window", reentryAge <= 20, reentryAge, 20);
+                if (reentryAge <= 20)
                 {
-                    int tradeDir = reentryDirection;
-                    reentryArmed = false;
-                    isReentryTrade = true;
+                    double c0 = Closes[0][0];
+                    double o0 = Opens[0][0];
+                    double h0 = Highs[0][0];
+                    double l0 = Lows[0][0];
+                    double h2 = Highs[0][2];
+                    double l2 = Lows[0][2];
 
-                    double entryP = c0;
-                    double slDist = entryP * (StopLossBps / 10000.0);
-                    customMtfLimit = double.NaN;
-                    customMtfStop = tradeDir == 1 ? entryP - slDist : entryP + slDist;
+                    bool reconfirmed = false;
+                    if (reentryDirection == 1 && (c0 > o0 && (l0 > h2 || c0 > Highs[0][1])))
+                        reconfirmed = true;
+                    else if (reentryDirection == -1 && (c0 < o0 && (h0 < l2 || c0 < Lows[0][1])))
+                        reconfirmed = true;
 
-                    if (DrawVisuals)
+                    e.Trigger(reconfirmed, reentryDirection == 1 ? "long" : "short");
+                    if (reconfirmed)
                     {
-                        string tag = "ReEntry_" + CurrentBar;
-                        if (tradeDir == 1)
-                            Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (4 * TickSize), Brushes.Cyan);
-                        else
-                            Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (4 * TickSize), Brushes.Orange);
-                    }
+                        int tradeDir = reentryDirection;
+                        reentryArmed = false;
+                        isReentryTrade = true;
 
-                    return tradeDir;
+                        double entryP = c0;
+                        double slDist = entryP * (StopLossBps / 10000.0);
+                        customMtfLimit = double.NaN;
+                        customMtfStop = tradeDir == 1 ? entryP - slDist : entryP + slDist;
+
+                        e.Measure("stop_bps", StopLossBps, StopLossBps);
+
+                        if (DrawVisuals)
+                        {
+                            string tag = "ReEntry_" + CurrentBar;
+                            if (tradeDir == 1)
+                                Draw.ArrowUp(this, tag + "_Arrow", false, 0, Low[0] - (4 * TickSize), Brushes.Cyan);
+                            else
+                                Draw.ArrowDown(this, tag + "_Arrow", false, 0, High[0] + (4 * TickSize), Brushes.Orange);
+                        }
+
+                        // The original returned here — the MTF block is skipped
+                        // on a re-entry bar.
+                        return;
+                    }
                 }
-            }
-            else if (reentryArmed && (CurrentBars[0] - reentryBar) > 20)
-            {
-                reentryArmed = false;
+                else
+                {
+                    reentryArmed = false;
+                }
             }
 
             // ──────────────────────────────────────────────────────────
@@ -247,7 +284,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // ──────────────────────────────────────────────────────────
             if (AddSecondaryTimeframe && BarsArray.Length > 1)
             {
-                if (CurrentBars[0] < 20 || CurrentBars[1] < 50) return 0;
+                bool mtfWarmed = CurrentBars[0] >= 20 && CurrentBars[1] >= 50;
+                e.Gate("mtf_warmup", mtfWarmed, Math.Min(CurrentBars[0], CurrentBars[1]), 20);
+                if (!mtfWarmed) return;
 
                 // Step 1 & 2: Check 5m CISD Signal & Displacement on secondary series (BarsArray[1])
                 if (CurrentBars[1] != lastArmed5mBar)
@@ -318,17 +357,24 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                         // 1m candle turns back in trend direction (Wick Formed!)
                         bool confirmed = (armedDirection == 1 && c0 > o0) || (armedDirection == -1 && c0 < o0);
 
+                        e.Trigger(confirmed, armedDirection == 1 ? "long" : "short");
                         if (confirmed)
                         {
                             double stopDist = Math.Abs(c0 - protectedSwing) + (1.0 * TickSize);
                             double riskBps = (stopDist / c0) * 10000.0;
 
                             // Squeeze filter: valid between MinRiskBps (2.0) and MaxRiskBps (15.0)
-                            if (riskBps >= MinRiskBps && riskBps <= MaxRiskBps)
+                            bool riskOk = riskBps >= MinRiskBps && riskBps <= MaxRiskBps;
+                            e.Gate("risk_bps_window", riskOk, riskBps, MinRiskBps);
+
+                            // NOTE: state is reset ONLY when the window passes —
+                            // the original left the setup armed to retry on the
+                            // next bar when the squeeze rejected it.
+                            if (riskOk)
                             {
                                 int tradeDir = armedDirection;
                                 customMtfLimit = double.NaN; // Market fill on 1m confirmation close
-                                
+
                                 // Strictly hard-cap stop loss at StopLossBps (5.0 bps) for Python parity
                                 double maxSlDist = c0 * (StopLossBps / 10000.0);
                                 double actualSlDist = Math.Min(stopDist, maxSlDist);
@@ -373,8 +419,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                                         Draw.Line(this, tag + "_TP2", false, 8, tp2, 0, tp2, Brushes.Magenta, DashStyleHelper.Solid, 2);
                                     }
                                 }
-
-                                return tradeDir;
                             }
                         }
                     }
@@ -385,13 +429,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     wickState = 0;
                 }
 
-                return 0;
+                return;
             }
 
             // ──────────────────────────────────────────────────────────
             // 2. SINGLE TIMEFRAME EXECUTION (5-Minute Direct)
             // ──────────────────────────────────────────────────────────
-            if (CurrentBar < 50) return 0;
+            bool stfWarmed = CurrentBar >= 50;
+            e.Gate("stf_warmup", stfWarmed, CurrentBar, 50);
+            if (!stfWarmed) return;
 
             if (DrawVisuals && CurrentBar > 50)
             {
@@ -404,6 +450,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
 
             int sig = ictIndicator.SignalSeries[0];
+            e.Trigger(sig != 0, sig == 1 ? "long" : "short");
+
             if (sig != 0 && DrawVisuals)
             {
                 string tag = "CISD_Strat_" + CurrentBar;
@@ -433,7 +481,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     Draw.Line(this, tag + "_TP2", false, 8, tp2, 0, tp2, Brushes.Magenta, DashStyleHelper.Solid, 2);
                 }
             }
-            return sig;
         }
 
         protected override double GetCustomLimitPrice(int signal, double currentPrice)
