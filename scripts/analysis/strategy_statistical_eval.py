@@ -5,7 +5,7 @@ Runs BB_RSI (E14 config) and Supertrend (S09 config) through:
   1. MFE/MAE excursion analysis (ADR-023) — percentiles, CDF, survival curves
   2. PropFirmSimulator (ADR-021) — deterministic + Monte Carlo across all profiles
   3. Trade-level statistics: hour, day-of-week, direction, R-multiple, regime
-  4. Bootstrap CI on per-session returns (NT8_PYTHON_PARITY_STANDARD §2.6)
+  4. Bootstrap CI on per-session returns (STRATEGY_WORKFLOW.md §6.4)
 
 Output: docs/research/STRATEGY_STATISTICAL_EVAL.md + data/derived/strategy_eval_*.csv
 """

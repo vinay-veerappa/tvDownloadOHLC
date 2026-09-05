@@ -22,7 +22,7 @@ class BoxReversionStrategy:
     Box Reversion Strategy (Vectorized ADR-017).
     Identifies institutional 'False Breakout' states and targets session mid-points.
     
-    Adheres to the STRATEGY_DESIGN_STANDARD.md (Zero-Loop).
+    Adheres to STRATEGY_WORKFLOW.md section 2 (the hunt() contract, Zero-Loop).
     """
     
     def __init__(self, ticker: str = "NQ1"):

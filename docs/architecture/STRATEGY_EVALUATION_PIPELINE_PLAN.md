@@ -3,7 +3,8 @@
 > **Status**: PROPOSED. Not started. No code changed as of 2026-09-04.
 >
 > **Design record and evidence**: [BACKTEST_PARITY_ARCHITECTURE.md](BACKTEST_PARITY_ARCHITECTURE.md)
-> **Trap checklist (still valid)**: [NT8_PYTHON_PARITY_STANDARD.md](NT8_PYTHON_PARITY_STANDARD.md)
+> **Trap checklist**: now [STRATEGY_WORKFLOW.md](STRATEGY_WORKFLOW.md) §6.4 and §10.1 (the
+> standalone parity standard was subsumed into it and deleted 2026-09-04)
 >
 > **Goal**: evaluate hundreds of strategy variants quickly, and know that the numbers are
 > right enough to decide on. Python is the screen, NT8 is the verifier, and every promotion

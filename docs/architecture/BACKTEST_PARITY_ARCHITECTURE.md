@@ -5,7 +5,8 @@
 >
 > **Created**: 2026-09-04 · **Last updated**: 2026-09-04
 >
-> **Relationship to [NT8_PYTHON_PARITY_STANDARD.md](NT8_PYTHON_PARITY_STANDARD.md)**: that
+> **Relationship to the deleted `NT8_PYTHON_PARITY_STANDARD.md`** (subsumed into
+> [STRATEGY_WORKFLOW.md](STRATEGY_WORKFLOW.md) §6.4 / §10.1 / §12 on 2026-09-04): that
 > document is the *checklist* accumulated from six sessions of IB debugging and remains
 > valid as a list of traps. This document argues the checklist treats symptoms, and asks
 > what structure generates them.

@@ -659,7 +659,7 @@ record. A duplicate source that nothing deploys today is one accidental sync pat
 | Python visualizer | `scripts/viz/viz_ib_retest_trades.py` |
 | Session 11 handover | `docs/architecture/SESSION_11_REGIME_KILLSWITCH_HANDOVER.md` |
 | NT8 framework constraints | `.agents/skills/nt8-framework-constraints/SKILL.md` |
-| Parity standard | `docs/architecture/NT8_PYTHON_PARITY_STANDARD.md` |
+| Parity procedure | `docs/architecture/STRATEGY_WORKFLOW.md` (the parity standard was subsumed into it and deleted 2026-09-04) |
 | RedTail indicators index | `scripts/ninjatrader/indicators/redtail/INDEX.md` |
 | RedTail full README | `scripts/ninjatrader/indicators/redtail/README.md` |
 | NT8 file organization | `docs/architecture/NT8_FILE_ORGANIZATION.md` |

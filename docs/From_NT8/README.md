@@ -266,7 +266,7 @@ To turn these 34 legacy scripts into an optimized, high-performing trading syste
 ## 🔗 Related Documentation & Links
 
 - **[System Architecture](file:///C:/Users/vinay/tvDownloadOHLC/docs/architecture/ARCHITECTURE.md)**
-- **[NT8 Python Parity Standard](file:///C:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_PYTHON_PARITY_STANDARD.md)**
+- **[Strategy Workflow](file:///C:/Users/vinay/tvDownloadOHLC/docs/architecture/STRATEGY_WORKFLOW.md)** (the parity standard was subsumed into it and deleted 2026-09-04)
 - **[NinjaTrader Risk Manager Suite](file:///C:/Users/vinay/tvDownloadOHLC/docs/strategies/ninjatrader/risk_manager_suite/README.md)**
 - **[Backtest Standards](file:///C:/Users/vinay/tvDownloadOHLC/docs/strategies/BACKTEST_STANDARDS.md)**
 - **[Second Brain Trading Rules](file:///C:/Users/vinay/tvDownloadOHLC/docs/SecondBrain_Trading.md)**

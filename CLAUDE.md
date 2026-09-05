@@ -5,8 +5,9 @@
 **Any task that writes, runs, backtests, validates, compares, reports on, or promotes a
 trading strategy is governed by [STRATEGY_WORKFLOW.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/STRATEGY_WORKFLOW.md).**
 Read it before starting, not after. It is the canonical procedure and supersedes, for
-procedure, `NT8_PYTHON_PARITY_STANDARD.md` and the workflow parts of
-`STRATEGY_DESIGN_STANDARD.md`. The user should never have to restate any of it.
+procedure, the deleted `NT8_PYTHON_PARITY_STANDARD.md` and
+`STRATEGY_DESIGN_STANDARD.md`, whose content it absorbed (its §12 records what moved
+where). The user should never have to restate any of it.
 
 It covers, end to end: what a strategy IS (Python hunter + C# bot + parameter document),
 the `hunt()` contract and the enforced signal geometry, which libraries to reuse, the one
@@ -68,7 +69,7 @@ See `.agents/AGENTS.md` for fail-fast error handling, GPU/hardware awareness, an
 * **Write a SKILL.md**: `.\.venv\Scripts\python.exe scripts\skill_writer.py --name <name> --source <draft.md>`
 
 ## Workspace Context Anchors (Inspect ONLY when required)
-* **⭐ Strategy Workflow (CANONICAL — read before any strategy task)**: [STRATEGY_WORKFLOW.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/STRATEGY_WORKFLOW.md) (write → backtest → NT8 validate → compare → report → store → promote; enforced vs convention vs not-built markers). Supporting: [BACKTEST_PARITY_ARCHITECTURE.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/BACKTEST_PARITY_ARCHITECTURE.md) is the *reasoning*, [STRATEGY_EVALUATION_PIPELINE_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/STRATEGY_EVALUATION_PIPELINE_PLAN.md) is the *build order*, [NT8_PYTHON_PARITY_STANDARD.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_PYTHON_PARITY_STANDARD.md) is now an *appendix of traps* (two of its claims are corrected in §12), [NT8_STRATEGY_OWNERSHIP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_STRATEGY_OWNERSHIP.md) is ADR-025 one-artifact-one-owner.
+* **⭐ Strategy Workflow (CANONICAL — read before any strategy task)**: [STRATEGY_WORKFLOW.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/STRATEGY_WORKFLOW.md) (write → backtest → NT8 validate → compare → report → store → promote; enforced vs convention vs not-built markers). Supporting: [BACKTEST_PARITY_ARCHITECTURE.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/BACKTEST_PARITY_ARCHITECTURE.md) is the *reasoning*, [STRATEGY_EVALUATION_PIPELINE_PLAN.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/STRATEGY_EVALUATION_PIPELINE_PLAN.md) is the *build order*, [NT8_STRATEGY_OWNERSHIP.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/NT8_STRATEGY_OWNERSHIP.md) is ADR-025 one-artifact-one-owner.
 * **Architectural Decisions**: [ADR.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/ADR.md) (Timezones, normalization, vectorized models, prop-firm liquidation)
 * **Harmonised Trading Architecture**: [HARMONISED_TRADING_ARCHITECTURE.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/architecture/HARMONISED_TRADING_ARCHITECTURE.md) (3-layer pattern, strategy wrapping adapters)
 * **Trading Domain Rules**: [SecondBrain_Trading.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/SecondBrain_Trading.md) (ALN sessions, NQ personalities, IB probabilities)

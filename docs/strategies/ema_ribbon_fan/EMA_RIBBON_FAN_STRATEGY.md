@@ -289,4 +289,4 @@ flowchart LR
 
 - Source: TradingView `X0F9OE4L` — "Gradient Ribbon | EMA Ribbon Slope-Acceleration System" (`blitz_locked`, open-source, 2026-08-25).
 - Harness: `BacktestEngine` (`scripts/analysis/range_strategy_comparison.py:509`), same as `STRATEGY_REVIEW_2026_08_27.md`.
-- Standards: `docs/architecture/STRATEGY_DESIGN_STANDARD.md` (ADR-017 `hunt()`), ADR-002, ADR-020.
+- Standards: `docs/architecture/STRATEGY_WORKFLOW.md` §2 (the `hunt()` contract, absorbed from the deleted design standard), ADR-002, ADR-020.

@@ -8,7 +8,7 @@ class MeanReversionStrategy:
     Tactical Mean Reversion Strategy (Vectorized ADR-017).
     Uses Bollinger Bands to identify overextended conditions.
     
-    Adheres to the STRATEGY_DESIGN_STANDARD.md (Zero-Loop).
+    Adheres to STRATEGY_WORKFLOW.md section 2 (the hunt() contract, Zero-Loop).
     """
     
     def __init__(self, ticker: str = "NQ1"):

@@ -33,7 +33,7 @@ The `--avwap-source` flag controls how the harness computes the AVWAP gate:
     without the feed-dependent AVWAP filter.
 
 Matching NT8 exactly requires loading NT8 raw contract bars into Python
-(future work — Option D in NT8_PYTHON_PARITY_STANDARD.md §8).
+(future work — Option D, recorded in SESSION_10_HANDOVER.md).
 
 ADR compliance:
   - ADR-001: explicit ET localization; parquet timestamps are UTC ms-epoch.

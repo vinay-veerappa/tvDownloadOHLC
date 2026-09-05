@@ -8,7 +8,7 @@ class NineThirtyStrategy:
     Unified 9:30 Breakout Hunter (Vectorized).
     Implements Versions V0 (Raw), V1 (Baseline), and V2 (Optimized).
     
-    Adheres to the STRATEGY_DESIGN_STANDARD.md.
+    Adheres to STRATEGY_WORKFLOW.md section 2 (the hunt() contract).
     """
     
     def __init__(self, variant: str = 'v2', ticker: str = "NQ1"):

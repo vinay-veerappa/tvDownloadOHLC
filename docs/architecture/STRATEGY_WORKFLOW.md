@@ -3,11 +3,10 @@
 > **Status**: CANONICAL PROCEDURE. This is the one document to read before building,
 > running, or judging a strategy in this repository.
 >
-> **Created**: 2026-09-04 · **Owner**: this file supersedes, *for procedure*, both
-> [NT8_PYTHON_PARITY_STANDARD.md](NT8_PYTHON_PARITY_STANDARD.md) (which remains valid
-> as an appendix of traps, §12) and the workflow fragments in
-> [STRATEGY_DESIGN_STANDARD.md](STRATEGY_DESIGN_STANDARD.md) (whose `hunt()` interface
-> is restated here in §2 and is now mechanically enforced).
+> **Created**: 2026-09-04 · **Owner**: this file **subsumed and replaced**
+> `NT8_PYTHON_PARITY_STANDARD.md` and `STRATEGY_DESIGN_STANDARD.md`, both deleted the same
+> day — see §12 for what moved where and what was dropped. There is no other procedure
+> document; if you find one, it is stale.
 > The *reasoning* behind these rules is in
 > [BACKTEST_PARITY_ARCHITECTURE.md](BACKTEST_PARITY_ARCHITECTURE.md); the *build order*
 > for what is still missing is in
@@ -150,10 +149,21 @@ Signals that fail are **dropped and counted**, attributed to the first rule they
 ### 2.3 What the hunter must NOT do 🟡 CONVENTION
 
 - **No trade management, no P&L, no position sizing.** It is a pure signal hunter; the
-  engine owns execution. (`STRATEGY_DESIGN_STANDARD.md`, "Hunters vs Execution".)
+  engine owns execution — "hunters vs execution", the rule the deleted design standard
+  was built around (§12).
 - **No data loading.** It receives a frame.
 - **No look-ahead.** Not "be careful" — the causality probe (§4.4) will demonstrate it.
 - **No own backtest loop.** 35 such scripts already exist and are frozen (§4.1).
+- **No row-by-row iteration.** `for _, row in df.iterrows()` and `for i in range(len(df))`
+  are forbidden — roughly 100× slower, and they make a 200-arm Optuna sweep impractical,
+  which is the entire reason the Python side exists. Use boolean masks:
+
+  ```python
+  signals['is_long']  = data['high'] > data['ib_high']
+  signals['is_short'] = data['low']  < data['ib_low']
+  ```
+
+  Compute every indicator as a **column on the frame first**, then hunt over columns.
 
 ### 2.4 Which libraries to use 🟡 CONVENTION
 
@@ -191,6 +201,24 @@ digest*.
 *Enforcer*: `research/objective.py::assert_grid_is_live`. It has already caught a real
 defect: `run_optimization` hardcoded BoxReversion's parameter keys regardless of
 `--strategy`, so the search across three other strategies could not change the answer.
+
+### 2.7 The engine contract 🟡 CONVENTION (one item 🟢 ENFORCED)
+
+The hunter hands the engine a signal list; the engine returns a metrics dict. Both sides
+of that contract are fixed.
+
+**`risk_params` MUST carry `ticker`** 🟢 — the engine selects the point-value multiplier
+from it ($20/pt NQ, $50/pt ES, $2/pt MNQ). It was omitted, and the engine silently applied
+its **NQ1** multiplier to every instrument. Every P&L figure produced that way was wrong by
+the ratio of the two multipliers and nothing said so.
+
+The metrics dict carries at least: `total_return_%`, `win_rate_%`, `avg_mae_%`,
+`num_trades`, `equity_curve`, `trades_detailed`, and `signal_alignment`.
+
+> ⚠️ **The two engines name the trade count differently** — `VectorizedBacktester` returns
+> `num_trades`, `NT8ParityBacktester` returns `total_trades`. Never read either key
+> directly; call `run_backtest.trade_count(result)`, which raises rather than defaulting.
+> A `.get('num_trades', 0)` refused a real run that had taken 38 trades.
 
 ---
 
@@ -490,7 +518,61 @@ parity against NT8's `exitName` is one of the checks this projection exists to e
 `min_recall`, `min_precision` are parameters, not constants, because the right bar differs
 by strategy family. State them in the run record; do not tune them to make a red go green.
 
-### 6.4 What a red means
+### 6.4 The parity checklist — what to line up BEFORE blaming the engine
+
+Six accumulated over six sessions of IB debugging. Every one has been the cause of a real
+divergence in this repository, and every one is cheaper to check than to discover.
+
+**Entry model.** NT8's `EnterLong()`/`EnterShort()` are **market orders** — they fill at
+the **next bar's open**, not at the signal bar's close and not at a boundary price. Python
+must model `entry = open[signal_idx + 1]`. Only use the signal-bar price when the bot
+places a *limit* order at exactly that price.
+
+> This one alone destroyed an edge: `IBFadeBot` entering at the IB boundary in Python
+> scored **E[R] +0.259**; modelled as next-bar-open it scored **−0.0024**. The "strongest
+> single strategy" was a measurement artifact.
+
+**Stop / target geometry.** Same formula, same base reference, same multipliers. A
+range-based stop (`StopRMult × range`) and an ATR-based stop (`StopAtrMult × atr`) differ
+by **8–16×**. Both sides must also use the same same-bar tie-break when stop and target sit
+inside one bar — **document which**, because a bar cannot tell you what arrived first
+(this repo's adverse-fill default is in `_resolve_ambiguity_policy`).
+
+**Exit / liquidation.** The flatten time must match exactly. NT8 `FlattenBy = 1550`
+flattens at 15:50 ET, so Python must exit on the close of the **15:49** bar — not 15:59.
+Five extra trades held to close came from exactly this. Neither side may carry overnight
+for an RTH strategy (ADR-020).
+
+**Session window.** RTH-only means Python's mask excludes pre-09:30 and post-16:00 ET, and
+NT8 has `EarliestEntry`/`LatestEntry` set to match. Both use ET for windows; the trading
+date is the **ET session date**, not the UTC date, or calendar filters land on the wrong
+days.
+
+**Filters.** Every NT8 gate is either ported to Python or explicitly marked NT8-only with a
+reason. **Audit the columns before porting** — TPO/VPOC/volume-profile inputs may simply
+not exist in an OHLCV parquet. Then ablate each filter individually: one that cuts trade
+count without lifting win rate is removing trades *at random* and adds no alpha.
+
+**Statistical significance.** ≥120 trades per configuration across ≥3 regimes before
+claiming an edge; validate out-of-sample on a **different contract or period** than the one
+searched. `IBBreakoutBot` held up (IS PF 1.489 → OOS 1.426); `IBFadeBot` did not (2-week PF
+1.295 → 3-month 0.742 — the edge was noise). For a marginal PF of 0.8–1.2, bootstrap a
+confidence interval on per-session returns; if it crosses zero there is no edge to deploy.
+
+> **Compute the breakeven win rate before tuning anything.** `IBBreakoutBot` ran a target of
+> 0.5×range against a stop of 2.0×range — a **1:2 risk-reward, which needs >66.7% WR just to
+> break even**. At its measured 55.6% the profit factor cannot exceed 1.0 no matter how the
+> filters are tuned. That is geometry, not parameters. Fix the geometry first.
+
+**Contract month.** Use the same contract on both sides. Different months have different
+price levels, so an IB boundary lands on a different value and a different set of days
+trades — which then reads as a logic divergence. This is *not* the same thing as the price
+basis: a constant offset is the adjustment basis and is invariant under §6.3's geometry
+test, but a different **contract** changes which trades exist at all.
+
+---
+
+### 6.5 What a red means
 
 | Symptom | Look here first |
 |---|---|
@@ -605,6 +687,51 @@ plainly is more useful than a number nobody can reproduce.
 - **`nt_list_strategies` used to read only the top level** of a folder NT8 compiles
   recursively. That is what made "your bots aren't deployed" look true when it wasn't.
 
+### 10.1 The NT8 silent-failure catalogue
+
+**A Strategy Analyzer backtest can return 0 trades with no error at all.** One measured
+chain had four independent causes at once:
+
+1. `BarsRequiredToTrade` set inside `OnBarUpdate` — NT8 throws "cannot be set from this
+   state" on bar 0 and silently disables the strategy. Set it in `State.Configure`.
+2. `RiskGatekeeper` blocking the Strategy Analyzer account, because the AddOn registers
+   SA's "Backtest" account with **live** risk limits. Bypass every gate when the account
+   name contains `backtest` or `Playback`.
+3. A percentage filter double-multiplied by 100, so a 0.5% range was compared against a
+   threshold of 1000 and blocked every session.
+4. `RequireDirectionBias = true` by default with no bias available, blocking both
+   directions.
+
+> ⚠️ **`Print()` output is invisible in a Strategy Analyzer backtest** — it goes to the SA
+> UI window only. `Log(msg, LogLevel.Information)` writes to
+> `Documents/NinjaTrader 8/log/log.YYYYMMDD.00000.txt`, which is the only way to trace SA
+> execution programmatically.
+
+**Over-estimated risk blocks entries on a funded account.** `RiskGatekeeper.potentialLoss`
+computed an ATR-based distance (~$143.75 for MNQ) where the actual range-based stop was
+~$18 — an **8× over-estimate**, enough to refuse entries against a tight daily loss limit.
+`GetPotentialLoss()` is virtual for this reason; each bot's
+`GetEstimatedRiskDistance()` must return its *actual* stop geometry.
+
+| Symptom | First check | Then | Then |
+|---|---|---|---|
+| 0 trades in SA | `BarsRequiredToTrade` in `OnBarUpdate` | gatekeeper blocking the SA account | `RequireDirectionBias` default |
+| Over-trading | `PotentialLoss` over-estimate | a percentage filter multiplied twice | `MaxTradesPerDay` unset |
+| PF collapses on a longer window | the short window was favourable noise — run OOS | filter over-restriction — ablate | entry-price inflation — check the fill model |
+| `Print()` shows nothing | it goes to the SA UI window only | use `Log(..., LogLevel.Information)` | read the NT8 log file, not the Output tab |
+| The bridge stops responding | repeated hot-swap compiles crash the SA AppDomain | restart NT8 to reset the SA window | retry |
+
+### 10.2 Diagnosing a divergence
+
+- **Run an empirical tracer before trusting any reasoned diagnosis.** A structured debate
+  once settled on same-bar stop/target resolution as the dominant cause; a tracer showed
+  NT8's first trade was at 06:34 ET — pre-open Globex — so the real cause was the session
+  filter. A plausible mechanism is not evidence that it fired.
+- **Ground every diagnosis in the code as it is now.** One diagnosis targeted a stop
+  formula the source had already stopped using.
+- **Rank the hypotheses rather than picking one**, which is what stops a plausible-but-wrong
+  answer from closing the question early.
+
 ---
 
 ## 11. Open decisions and known gaps
@@ -621,16 +748,28 @@ plainly is more useful than a number nobody can reproduce.
 
 ---
 
-## 12. Appendix — the trap list
+## 12. What this document replaced
 
-[NT8_PYTHON_PARITY_STANDARD.md](NT8_PYTHON_PARITY_STANDARD.md) remains valid **as a list of
-observed traps**, accumulated over six sessions of IB debugging. Read it as an appendix to
-this document, not as a competing procedure. Two corrections to it:
+Two documents used to state competing procedure. Both were **subsumed into this file and
+deleted** on 2026-09-04; `git log --follow` has them if a detail is ever wanted.
 
-- Its **Class E** treats contract month / price basis as a parity gate. Geometry-invariance
-  (§6.3) shows it is not: a constant offset *is* the adjustment basis. Contract month still
-  matters for **which trades exist** (different price levels → different IB boundaries), so
-  the trap is real — the framing is wrong.
-- Its status line reads "MANDATORY — all new strategies MUST comply before being declared
-  validated." Nothing enforced that then and nothing enforces it now. §9 above is the
-  checklist that replaces it, with each item marked by whether anything actually checks it.
+| Deleted | What moved here | What was dropped, and why |
+|---|---|---|
+| `NT8_PYTHON_PARITY_STANDARD.md` | the six-part parity checklist (§6.4), the NT8 silent-failure catalogue and debugging table (§10.1), the diagnosis rules (§10.2) | its sessions 8/9/10 logs — **duplicated** in `SESSION_9_HANDOVER.md` / `SESSION_10_HANDOVER.md`, which are dated records and the right home; its file-reference table — 2 of 4 sampled paths no longer existed after ADR-025 |
+| `STRATEGY_DESIGN_STANDARD.md` | the `hunt()` contract (§2.1), hunters-vs-execution (§2.3), the vectorization rules (§2.3), the engine contract and the `ticker` requirement (§2.7) | its ADR-017 verification gate, which named `lifecycle_runner` — **not** the sanctioned entry point (§0.1) |
+
+**Why they could not stay as appendices.** The parity standard opened with *"MANDATORY —
+all new strategies MUST comply with this standard before being declared validated"*, a
+claim nothing enforced, next to a checklist this file now supersedes. A reader arriving
+cold got the older answer because it was the one that said MANDATORY. Two of its framings
+were also wrong by the time it was deleted:
+
+- **Class E** treated contract month and price basis as one thing. They are not. A constant
+  price offset *is* the adjustment basis and is invariant under the geometry test (§6.3);
+  a different **contract month** changes which trades exist. The trap is real, the framing
+  was not — both halves are stated correctly in §6.4.
+- Its "validated" checklist had no enforcement and no way to fail. §9 replaces it, and
+  `workflow.py` evaluates it on every run.
+
+An appendix that contradicts the canonical document is not an appendix. It is a second
+source of truth with a lower profile, which is worse than an obvious one.
