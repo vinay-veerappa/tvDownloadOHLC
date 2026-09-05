@@ -1321,6 +1321,7 @@ result and must be reported as one.
 - [ ] Grid precheck passes — the search can move the answer (§2.6) 🟢
 - [ ] Causality probe passes **non-vacuously** (§4.4) 🟢
 - [ ] Optimised with `--oos-start`; reported numbers are out-of-sample (§4.1) 🟢
+- [ ] ≥120 out-of-sample trades, ≥3 regimes, bootstrap CI off zero (§8) 🟢
 - [ ] Run record is `attributable`, price basis declared (§4.3) 🟢
 - [ ] A C# bot exists, deployed by the sanctioned path, and compiles (§3.1, §5) 🟢
 - [ ] Layer 1 rule parity green for every shared primitive it uses (§6.1) 🟡
@@ -1342,6 +1343,23 @@ failure and still blocks `validated` and exit 0.
 > because the prop evaluation ran without being recorded. *Enforcer*:
 > `test_workflow_checklist.py::test_section_9_has_exactly_one_checkbox_per_evaluated_criterion`
 > parses **this list** and fails if the two ever disagree again.
+
+> **`out_of_sample` was checking that a split EXISTS, not that it proved anything.**
+> It asked whether `--oos-start` was passed. §8 has required **≥120 trades across ≥3
+> regimes**, and a bootstrap CI for a marginal profit factor, since this document was
+> written, and **nothing measured either** — so a run whose out-of-sample window
+> contained four trades, three of them winners, passed every criterion the checklist
+> had. `statistically_sufficient` (added 2026-09-05) measures all three and fails on a
+> sample that looks excellent: 6 trades and a 100% win rate is its first test.
+> *Enforcer*: `reporting/sufficiency.py` + `tests/test_sufficiency.py` (19 tests).
+> Two things it deliberately does **not** claim. The regime bucket is the **calendar
+> quarter (ET)** of the entry — a *proxy*, declared as one in the output, because this
+> repository has four session definitions and no volatility-regime one; it catches "all
+> the evidence came from one stretch of tape" and will not catch a year of uniformly
+> quiet market. And the bootstrap resamples trades **independently**, which understates
+> the interval when returns are serially dependent — so a CI that straddles zero is
+> decisive, and one that excludes it is the weaker of the two readings. Both are marked
+> for review rather than buried.
 
 The 🔴 items are why **no strategy in this repository is validated today**, and saying so
 plainly is more useful than a number nobody can reproduce.

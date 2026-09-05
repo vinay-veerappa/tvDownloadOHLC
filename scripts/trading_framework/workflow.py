@@ -63,6 +63,7 @@ CRITERIA = (
     ("grid_live", "the parameter grid can move the signal frame"),
     ("causal", "causality probe passes non-vacuously"),
     ("out_of_sample", "reported metrics are out-of-sample, or no search was run"),
+    ("statistically_sufficient", "enough trades, across enough regimes, with a CI off zero (section 8)"),
     ("attributable", "run record is attributable and the price basis is declared"),
     ("has_bot", "a paired C# bot exists in the canonical location"),
     ("rule_parity", "shared-core rules agree between C# and Python"),
@@ -245,6 +246,7 @@ def stage_python_research(ctx: Ctx) -> None:
                       "no search was run; the grid precheck applies to --optimize")
     _causality(ctx, stages)
     _out_of_sample(ctx)
+    _statistically_sufficient(ctx)
     _prop_viability(ctx, stages)
 
     _reports_attributed(ctx, doc)
@@ -357,6 +359,32 @@ def _out_of_sample(ctx: "Ctx") -> None:
                       else "optimised without --oos-start")
     else:
         ctx.check.set("out_of_sample", PASS, "no search was run; fixed parameters")
+
+
+def _statistically_sufficient(ctx: "Ctx") -> None:
+    """Section 8 has required 120 trades over 3 regimes since it was written.
+
+    `out_of_sample` only ever checked that `--oos-start` was PASSED -- that a
+    split exists, not that what landed on the far side of it can support a
+    conclusion. A run of four out-of-sample trades, three of them winners,
+    scored PASS on every criterion the checklist had.
+    """
+    from scripts.trading_framework.reporting.sufficiency import assess, render
+
+    trades = _python_trades(ctx)
+    if trades is None or len(trades) == 0:
+        ctx.check.set("statistically_sufficient", NOT_EVALUATED,
+                      "the run produced no trade list to assess")
+        return
+    a = assess(trades, out_of_sample=bool(getattr(ctx.args, "oos_start", None)))
+    ctx.rec.note("sufficiency", {k: v for k, v in a.items() if k != "breakeven"})
+    ctx.notes["sufficiencyReport"] = render(a)
+    print(render(a))
+    ctx.check.set("statistically_sufficient",
+                  PASS if a["sufficient"] else FAIL,
+                  "; ".join(a["reasons"]) if a["reasons"] else
+                  "{} out-of-sample trades over {} regimes, CI off zero".format(
+                      a["n_trades"], (a.get("regimes") or {}).get("n_regimes")))
 
 
 def _find_alignment(doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
