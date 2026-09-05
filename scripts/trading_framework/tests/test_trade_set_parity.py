@@ -566,3 +566,129 @@ def test_report_puts_geometry_above_absolute_price():
     assert "THIS is judged" in txt
     assert "not behaviour" in txt
     assert "VERDICT: PASS" in txt
+
+
+# ==========================================================================
+# EXIT REASON -- which RULE fired
+#
+# Exit reasons were recorded per pair and then dropped before the verdict. A
+# runtime probe comparing Python "Profit Target" against NT8 "Stop Loss" on
+# every matched trade returned a FULL PASS: the geometry agreed, so the parity
+# harness concluded the two implementations were the same strategy while they
+# were exiting on opposite rules.
+#
+# Geometry alone cannot prove equivalent stop, target, flatten and trailing
+# behaviour. Two engines can travel the same signed distance by opposite logic,
+# and on a wrongly-sided stop they demonstrably have (a stop that books a
+# profit, 76.3% -> 30.8% WR, recorded in the memory store).
+# ==========================================================================
+from scripts.parity.trade_set_parity import EXIT_UNMAPPED, exit_family
+
+
+@pytest.mark.parametrize("text,family", [
+    ("Profit Target", "TARGET"),
+    ("profit target", "TARGET"),
+    ("QueenTarget", "TARGET"),
+    ("RunnerTarget", "TARGET"),
+    ("Stop Loss", "STOP"),
+    ("Stop loss", "STOP"),
+    ("Trail Stop", "TRAIL"),
+    ("EOD Flat", "FLAT"),
+    ("Exit on close", "FLAT"),
+    ("Close position", "FLAT"),
+    ("", EXIT_UNMAPPED),
+    (None, EXIT_UNMAPPED),
+    ("Sell short", EXIT_UNMAPPED),
+])
+def test_the_two_vocabularies_map_onto_one_set_of_families(text, family):
+    """Python emits "Stop Loss"/"Profit Target"/"EOD Flat"; NT8 emits whatever
+    the bot named its exit. Comparing the strings would be a wrong red on every
+    run; comparing nothing is what let opposite logic pass."""
+    assert exit_family(text) == family
+
+
+def test_a_trailing_stop_is_not_read_as_a_stop_loss():
+    """Ordering matters: "Trail Stop" contains "stop", so a looser rule first
+    would collapse a trailing exit into a hard stop and hide the divergence
+    this comparison exists to find."""
+    assert exit_family("Trail Stop") == "TRAIL"
+    assert exit_family("Trailing stop loss") == "TRAIL"
+
+
+def test_the_probe_that_used_to_pass_now_fails():
+    """Identical geometry, opposite exit rule."""
+    r = _pair([("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "Profit Target")],
+              [("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "Stop Loss")])
+    s, v = r["summary"], r["verdict"]
+    assert s["matched"] == 1
+    assert s["matched_geometry_ok"] == 1.0, "the geometry really does agree"
+    assert s["matched_pnl_sign_ok"] == 1.0
+    assert s["matched_exit_reason_ok"] == 0.0
+    assert v["verdict"] == "FAIL"
+    assert any("EXIT REASON" in x and "TARGET->STOP" in x for x in v["reasons"]), \
+        v["reasons"]
+
+
+def test_agreeing_exit_reasons_across_the_two_vocabularies_pass():
+    """The negative control. "Profit Target" and "QueenTarget" are the same
+    rule under two names, and a gate that refused them would be unusable."""
+    r = _pair([("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "Profit Target")],
+              [("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "QueenTarget")])
+    assert r["summary"]["matched_exit_reason_ok"] == 1.0
+    assert r["verdict"]["verdict"] == "PASS", r["verdict"]["reasons"]
+
+
+def test_identical_text_agrees_even_when_no_family_recognises_it():
+    """A bot's own exit name, matching on both sides, is agreement. Scoring it
+    "could not be compared" was a wrong red on a run that agrees perfectly --
+    which is how this clause came to exist."""
+    r = _pair([("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "MySignal7")],
+              [("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "mysignal7")])
+    assert r["summary"]["exit_reason_unmapped"] == 0
+    assert r["summary"]["matched_exit_reason_ok"] == 1.0
+    assert r["verdict"]["verdict"] == "PASS", r["verdict"]["reasons"]
+
+
+def test_two_different_unrecognised_names_are_uncompared_not_agreed():
+    """Unreadable is not the same fact as wrong, and must not be averaged with
+    it -- otherwise an unrecognised vocabulary shrinks the denominator until
+    the agreement rate reads 100%."""
+    r = _pair([("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "Wobble")],
+              [("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "Flange")])
+    s, v = r["summary"], r["verdict"]
+    assert s["exit_reason_unmapped"] == 1
+    assert s["exit_reason_comparable"] == 0
+    assert s["matched_exit_reason_ok"] is None, \
+        "an uncomparable pair must not produce a rate at all"
+    assert v["verdict"] == "FAIL"
+    assert any("NOT compared" in x for x in v["reasons"])
+
+
+def test_an_empty_exit_reason_on_both_sides_is_not_agreement():
+    """Two blanks are two silences. Treating "" == "" as a match would make the
+    gate pass hardest on the runs that recorded the least."""
+    r = _pair([("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "")],
+              [("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "")])
+    assert r["summary"]["exit_reason_unmapped"] == 1
+    assert r["verdict"]["verdict"] == "FAIL"
+
+
+def test_a_caller_may_lower_the_exit_reason_threshold_deliberately():
+    """Every other threshold here is the caller's to state; this one too."""
+    r = _pair([("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "Profit Target"),
+               ("2026-01-05 09:41", "long", 100.0, 105.0, 500.0, "Profit Target")],
+              [("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "Stop Loss"),
+               ("2026-01-05 09:41", "long", 100.0, 105.0, 500.0, "Profit Target")],
+              min_matched_exit_reason=0.5)
+    assert r["summary"]["matched_exit_reason_ok"] == 0.5
+    assert r["verdict"]["verdict"] == "PASS", r["verdict"]["reasons"]
+    assert r["verdict"]["thresholds"]["min_matched_exit_reason"] == 0.5
+
+
+def test_the_report_prints_the_exit_reason_block():
+    r = _pair([("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "Profit Target")],
+              [("2026-01-05 09:31", "long", 100.0, 105.0, 500.0, "Stop Loss")])
+    text = format_report(r)
+    assert "EXIT REASON" in text
+    assert "TARGET->STOP" in text
+    text.encode("cp1252")

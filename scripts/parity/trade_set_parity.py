@@ -274,6 +274,10 @@ def compare_matched(m: Dict[str, Any], *, price_tol: float = 0.25,
             "py_points": py_points, "nt8_points": nt8_points, "d_points": d_points,
             "geometry_ok": bool(abs(d_points) <= price_tol) if np.isfinite(d_points) else False,
             "py_reason": pr["exit_reason"], "nt8_reason": nr["exit_reason"],
+            # Recorded per pair so the report can NAME the divergent trades
+            # rather than only counting them.
+            "py_exit_family": exit_family(pr["exit_reason"]),
+            "nt8_exit_family": exit_family(nr["exit_reason"]),
             "entry_ok": bool(abs(d_entry) <= price_tol) if np.isfinite(d_entry) else False,
             "exit_ok": bool(abs(d_exit) <= price_tol) if np.isfinite(d_exit) else False,
             "pnl_ok": bool(abs(d_pnl) <= pnl_tol) if np.isfinite(d_pnl) else False,
@@ -284,6 +288,46 @@ def compare_matched(m: Dict[str, Any], *, price_tol: float = 0.25,
                        if np.isfinite(d_pnl) else False,
         })
     return pd.DataFrame(rows)
+
+
+#: EXIT REASON FAMILIES. The two sides do not share a vocabulary and never will:
+#: the Python engine emits "Stop Loss" / "Profit Target" / "EOD Flat", while NT8
+#: reports whatever the bot named its exit -- "Close position", "Exit on close",
+#: "Profit target", or a custom `ExitLong(..., "QueenTarget", ...)` signal name.
+#: Comparing the strings would be a wrong red on every run; not comparing them
+#: at all is what let a PASS coexist with Python booking a target where NT8 took
+#: a stop. The families are what the comparison can honestly assert.
+#:
+#: ORDERED, AND THE ORDER IS LOAD-BEARING: the first family whose patterns match
+#: wins, so the SPECIFIC families come before the general ones. TRAIL is above
+#: STOP because "Trail Stop" contains "stop" -- with STOP first, a trailing exit
+#: collapses into a hard stop and the comparison hides exactly the divergence it
+#: exists to find. `test_a_trailing_stop_is_not_read_as_a_stop_loss` is what
+#: caught that in the first version of this list.
+EXIT_FAMILIES = (
+    ("TARGET", ("profit target", "target", "queen", "runner", "take profit",
+                "limit exit", "tp")),
+    ("TRAIL", ("trail",)),
+    ("STOP", ("stop loss", "stop", "sl")),
+    ("FLAT", ("eod flat", "exit on close", "close position", "flatten",
+              "end of day", "eod", "session close")),
+)
+
+#: An exit reason no family recognises. NOT a family: an unmapped name means the
+#: comparison could not be made, which is a different fact from a disagreement
+#: and must not be counted as either agreement or divergence.
+EXIT_UNMAPPED = "UNMAPPED"
+
+
+def exit_family(reason: Any) -> str:
+    """Map an exit reason onto the family both sides can be compared on."""
+    text = str(reason or "").strip().lower()
+    if not text:
+        return EXIT_UNMAPPED
+    for family, needles in EXIT_FAMILIES:
+        if any(nd in text for nd in needles):
+            return family
+    return EXIT_UNMAPPED
 
 
 def summary(m: Dict[str, Any], matched: pd.DataFrame) -> Dict[str, Any]:
@@ -321,6 +365,44 @@ def summary(m: Dict[str, Any], matched: pd.DataFrame) -> Dict[str, Any]:
         offset_spread = float(finite.max() - finite.min()) if finite.size else 0.0
         constant_offset = (float(np.median(finite))
                            if finite.size and offset_spread <= 1e-6 else None)
+        # EXIT REASON. Computed here and JUDGED in `verdict` -- it used to be
+        # recorded in the per-pair frame and then dropped, so a run in which
+        # Python booked a Profit Target on every trade NT8 closed at a Stop Loss
+        # returned a full PASS. Identical geometry can be reached by opposite
+        # logic, and "the same points travelled" does not mean "the same rule
+        # fired".
+        #
+        # Unmapped pairs are counted SEPARATELY and excluded from the
+        # denominator: a name neither family list recognises means the
+        # comparison could not be made, which is not the same fact as a
+        # disagreement and must not be averaged with one.
+        fam_py = matched["py_exit_family"].to_numpy()
+        fam_nt = matched["nt8_exit_family"].to_numpy()
+        # IDENTICAL TEXT AGREES whether or not a family recognises it. Without
+        # this clause a pair reading "PT" on both sides -- one bot's own exit
+        # name, matching on both engines -- was scored "could not be compared",
+        # which is a wrong red on a run that agrees perfectly. The family list
+        # is here to bridge two DIFFERENT vocabularies, not to be the only way
+        # two exit reasons are allowed to match.
+        txt_py = matched["py_reason"].astype(str).str.strip().str.lower().to_numpy()
+        txt_nt = matched["nt8_reason"].astype(str).str.strip().str.lower().to_numpy()
+        same_text = (txt_py == txt_nt) & (txt_py != "")
+        both_mapped = (fam_py != EXIT_UNMAPPED) & (fam_nt != EXIT_UNMAPPED)
+        comparable = both_mapped | same_text
+        agree = same_text | (both_mapped & (fam_py == fam_nt))
+        n_cmp = int(comparable.sum())
+        out.update({
+            "exit_reason_comparable": n_cmp,
+            "exit_reason_unmapped": int(len(matched) - n_cmp),
+            "matched_exit_reason_ok": (
+                float((agree[comparable]).mean()) if n_cmp else None),
+            "exit_reason_disagreements": {
+                "{}->{}".format(a, b): int(((fam_py == a) & (fam_nt == b)
+                                            & comparable & ~agree).sum())
+                for a, b in {(x, y) for x, y, ok in zip(fam_py, fam_nt, agree)
+                             if not ok}
+            },
+        })
         out.update({
             "constant_price_offset": constant_offset,
             "price_offset_spread": offset_spread,
@@ -340,13 +422,16 @@ def summary(m: Dict[str, Any], matched: pd.DataFrame) -> Dict[str, Any]:
                     "matched_geometry_ok": None, "max_abs_points_delta": None,
                     "constant_price_offset": None, "price_offset_spread": None,
                     "max_abs_entry_delta": None, "max_abs_exit_delta": None,
-                    "max_abs_pnl_delta": None})
+                    "max_abs_pnl_delta": None,
+                    "matched_exit_reason_ok": None, "exit_reason_comparable": 0,
+                    "exit_reason_unmapped": 0, "exit_reason_disagreements": {}})
     return out
 
 
 def verdict(s: Dict[str, Any], *, min_recall: float, min_precision: float,
             min_matched_pnl_sign: float = 1.0,
-            min_matched_geometry: float = 1.0) -> Dict[str, Any]:
+            min_matched_geometry: float = 1.0,
+            min_matched_exit_reason: float = 1.0) -> Dict[str, Any]:
     """PASS/FAIL against thresholds the CALLER states. No default thresholds.
 
     `min_recall` and `min_precision` are required arguments on purpose. A default
@@ -400,6 +485,30 @@ def verdict(s: Dict[str, Any], *, min_recall: float, min_precision: float,
             .format(s["matched_geometry_ok"], min_matched_geometry,
                     s.get("max_abs_points_delta") or float("nan")))
 
+    # EXIT REASON. Geometry alone cannot prove equivalent stop, target, flatten
+    # and trailing behaviour: two engines can travel the same signed distance by
+    # opposite logic. A probe comparing Python "Profit Target" against NT8
+    # "Stop Loss" on every matched pair returned a full PASS before this.
+    if (s.get("matched_exit_reason_ok") is not None
+            and s["matched_exit_reason_ok"] < min_matched_exit_reason):
+        worst = sorted((s.get("exit_reason_disagreements") or {}).items(),
+                       key=lambda kv: -kv[1])[:3]
+        reasons.append(
+            "{:.1%} of comparable matched trades agree on the EXIT REASON family "
+            "(< {:.1%}); worst {}. Identical geometry reached by opposite logic "
+            "is still a divergence."
+            .format(s["matched_exit_reason_ok"], min_matched_exit_reason,
+                    ", ".join("{} x{}".format(k, v) for k, v in worst) or "n/a"))
+    if s.get("exit_reason_unmapped"):
+        # NOT folded into the rate above: unreadable is not the same as wrong,
+        # and averaging the two would let an unrecognised vocabulary quietly
+        # shrink the denominator until the rate reads 100%.
+        reasons.append(
+            "{} of {} matched trades carry an exit reason neither side's family "
+            "list recognises, so their exit logic was NOT compared. Add the name "
+            "to EXIT_FAMILIES rather than leaving the pair uncounted."
+            .format(s["exit_reason_unmapped"], s.get("matched")))
+
     notes = []
     if s.get("constant_price_offset"):
         notes.append(
@@ -415,12 +524,14 @@ def verdict(s: Dict[str, Any], *, min_recall: float, min_precision: float,
             "thresholds": {"min_recall": min_recall,
                            "min_precision": min_precision,
                            "min_matched_pnl_sign": min_matched_pnl_sign,
-                           "min_matched_geometry": min_matched_geometry}}
+                           "min_matched_geometry": min_matched_geometry,
+                           "min_matched_exit_reason": min_matched_exit_reason}}
 
 
 def run_parity(py_trades: pd.DataFrame, nt8_trades: pd.DataFrame, *,
                bar_seconds: int, min_recall: float, min_precision: float,
                min_matched_geometry: float = 1.0,
+               min_matched_exit_reason: float = 1.0,
                price_tol: float = 0.25, pnl_tol: float = 1.0,
                assume_tz_python: Optional[str] = None,
                assume_tz_nt8: Optional[str] = None) -> Dict[str, Any]:
@@ -431,7 +542,8 @@ def run_parity(py_trades: pd.DataFrame, nt8_trades: pd.DataFrame, *,
     matched = compare_matched(m, price_tol=price_tol, pnl_tol=pnl_tol)
     s = summary(m, matched)
     v = verdict(s, min_recall=min_recall, min_precision=min_precision,
-                min_matched_geometry=min_matched_geometry)
+                min_matched_geometry=min_matched_geometry,
+                min_matched_exit_reason=min_matched_exit_reason)
     return {"summary": s, "verdict": v, "tolerances":
             {"price_tol": price_tol, "pnl_tol": pnl_tol},
             "matched_detail": matched, "match": m}
@@ -458,6 +570,17 @@ def format_report(result: Dict[str, Any], max_rows: int = 15) -> str:
     for k in ("matched_geometry_ok", "max_abs_points_delta", "matched_pnl_sign_ok"):
         val = s.get(k)
         L.append(f"{k:<26} {'n/a' if val is None else format(val, '.4f')}")
+    L.append("   EXIT REASON -- which RULE fired. Judged: identical geometry can be")
+    L.append("   reached by opposite logic.")
+    for k in ("matched_exit_reason_ok", "exit_reason_comparable",
+              "exit_reason_unmapped"):
+        val = s.get(k)
+        L.append(f"{k:<26} "
+                 + ("n/a" if val is None
+                    else format(val, '.4f') if isinstance(val, float) else str(val)))
+    for pair, n in sorted((s.get("exit_reason_disagreements") or {}).items(),
+                          key=lambda kv: -kv[1]):
+        L.append(f"   {'python -> nt8 ' + pair:<38} {n}")
     L.append("   ABSOLUTE PRICE -- diagnostic only; a constant offset here is the")
     L.append("   adjustment basis, not behaviour.")
     for k in ("constant_price_offset", "price_offset_spread",
