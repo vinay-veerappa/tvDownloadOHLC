@@ -361,12 +361,70 @@ class _Ctx:
         self.check = Checklist()
 
 
+def _viable(**over):
+    """A prop stage that SHOULD pass. Kept in one place so each red below
+    differs from it by exactly one field."""
+    d = dict(evaluator="PropFirmSimulator", passRatePct=71.0, grade="B",
+             primaryProfile="Apex 50k", passThresholdPct=65.0,
+             resampling="daily_block", historicalPassed=True,
+             historicalBlown=False)
+    d.update(over)
+    return _stage(**d)
+
+
 def test_prop_viability_passes_on_a_rate_above_the_threshold():
     ctx = _Ctx()
-    _prop_viability(ctx, _stage(evaluator="PropFirmSimulator", passRatePct=71.0,
-                                grade="B", primaryProfile="Apex 50k",
-                                passThresholdPct=65.0))
+    _prop_viability(ctx, _viable())
     assert ctx.check.items["prop_viability"].status == PASS
+
+
+def test_prop_viability_fails_when_the_historical_sequence_blew_the_account():
+    """The resampled rate is a statement about orderings that did not happen.
+
+    The deterministic path was computed on every run and read by nothing, so a
+    strategy whose ACTUAL trade order blew the account scored PASS on the
+    strength of its permutations.
+    """
+    ctx = _Ctx()
+    _prop_viability(ctx, _viable(historicalPassed=False, historicalBlown=True))
+    c = ctx.check.items["prop_viability"]
+    assert c.status == FAIL
+    assert "HISTORICAL" in c.detail and "blew" in c.detail
+
+
+def test_prop_viability_fails_when_the_historical_sequence_timed_out():
+    ctx = _Ctx()
+    _prop_viability(ctx, _viable(historicalPassed=False, historicalBlown=False))
+    c = ctx.check.items["prop_viability"]
+    assert c.status == FAIL
+    assert "did not reach the profit target" in c.detail
+
+
+def test_prop_viability_fails_when_no_deterministic_result_was_recorded():
+    """Absent is not "fine". Only resampled orderings would have been judged."""
+    ctx = _Ctx()
+    _prop_viability(ctx, _viable(historicalPassed=None, historicalBlown=None))
+    c = ctx.check.items["prop_viability"]
+    assert c.status == FAIL
+    assert "no deterministic" in c.detail
+
+
+def test_prop_viability_fails_when_the_rate_does_not_name_its_resampling():
+    """`iid` and `daily_block` disagreed by 22.8 points on the first frame they
+    were both run against, so a rate without its scheme is not comparable."""
+    ctx = _Ctx()
+    _prop_viability(ctx, _viable(resampling=None))
+    c = ctx.check.items["prop_viability"]
+    assert c.status == FAIL
+    assert "resampling scheme" in c.detail
+
+
+def test_prop_viability_reports_every_failure_not_just_the_first():
+    ctx = _Ctx()
+    _prop_viability(ctx, _viable(passRatePct=10.0, historicalBlown=True,
+                                 resampling=None))
+    d = ctx.check.items["prop_viability"].detail
+    assert "pass rate" in d and "HISTORICAL" in d and "resampling scheme" in d
 
 
 def test_prop_viability_fails_on_a_rate_below_the_threshold():

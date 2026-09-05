@@ -560,6 +560,17 @@ def run_research_pipeline(args, rec=None, output_dir=None):
                 blowRatePct=(primary_mc.blow_rate_pct if primary_mc else None),
                 grade=(primary_mc.grade if primary_mc else None),
                 passThresholdPct=65.0,
+                # THE SCHEME IS PART OF THE NUMBER. `iid` and `daily_block`
+                # answer different questions and disagree by tens of points;
+                # a pass rate whose artifact does not name the scheme cannot
+                # be compared with another run's.
+                resampling=(primary_mc.resampling if primary_mc else None),
+                # THE HISTORICAL SEQUENCE IS ONE PATH AND IT IS THE ONE THAT
+                # HAPPENED. It was computed on every run and read by nothing.
+                # A resampled pass rate above the threshold while the actual
+                # trade order blew the account is not a viable strategy.
+                historicalPassed=(primary_det.passed if primary_det else None),
+                historicalBlown=(primary_det.blown if primary_det else None),
                 skippedReason=(None if primary_mc else
                                "no trades_detailed, or no runnable firm profile"),
             )

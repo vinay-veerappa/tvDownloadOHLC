@@ -35,6 +35,19 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+#: HOW THE MONTE CARLO RESAMPLES. `iid` (independent permutation of trades) was
+#: the only scheme and was not named anywhere, so the pass rate the 65%
+#: threshold judged had a modelling assumption baked into it that no artifact
+#: recorded. Independent permutation destroys serial dependence, and clustered
+#: losses are the principal trailing-drawdown hazard -- so it is systematically
+#: OPTIMISTIC for exactly the strategies that fail in practice.
+#:
+#: `daily_block` resamples whole trading days with replacement. The day is the
+#: right block because every rule that can act -- daily loss limit, daily trade
+#: cap, consistency rule -- is evaluated per day.
+RESAMPLE_SCHEMES = ("daily_block", "iid")
+DEFAULT_RESAMPLE = "daily_block"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. PropFirmProfile — Rule Specification
@@ -252,6 +265,11 @@ class MonteCarloResult:
     p50_final_equity: float
     p90_final_equity: float
     avg_max_drawdown: float
+    #: THE SCHEME THE RATE WAS PRODUCED UNDER. A pass rate without it is not
+    #: interpretable: independent permutation and daily-block resampling answer
+    #: different questions and the difference is largest for exactly the
+    #: strategies whose losses cluster.
+    resampling: str = DEFAULT_RESAMPLE
     # Composite pass / fail grade (ADR-010)
     grade: str = field(init=False)
 
@@ -340,26 +358,74 @@ class PropFirmSimulator:
         daily = self._aggregate_daily(trades_detailed, dollar_pnls, profile)
         return self._simulate_path(daily, profile)
 
+    def _resample(self, pnl_arr: np.ndarray, day_key: np.ndarray,
+                  rng: np.random.Generator, mode: str) -> np.ndarray:
+        """One resampled P&L sequence under the declared scheme.
+
+        WHY THE DEFAULT CHANGED. `np.random.permutation` resamples trades
+        INDEPENDENTLY, which destroys serial dependence -- and clustered losses
+        are the principal trailing-drawdown hazard. A strategy whose losers
+        arrive in runs and a strategy whose losers are scattered have identical
+        permutation distributions and very different real pass rates, so the
+        figure the 65% threshold was compared against was systematically
+        optimistic for exactly the strategies that fail in practice.
+
+        `daily_block` resamples whole TRADING DAYS with replacement. A day is
+        the right block here and not an arbitrary choice: the daily loss limit,
+        the daily trade cap and the consistency rule are all evaluated per day,
+        so a resample that splits a day apart is not simulating anything the
+        rules can act on. It preserves within-day clustering; it does NOT
+        preserve dependence ACROSS days, so it remains a lower bound on the
+        clustering hazard rather than a full account of it.
+
+        `iid` is kept, named, and reportable -- so the old number can still be
+        produced deliberately and compared, instead of being the silent default.
+        """
+        if mode == "iid":
+            return rng.permutation(pnl_arr)
+        if mode != "daily_block":
+            raise ValueError(
+                "unknown resampling scheme {!r}; known: 'daily_block', 'iid'. "
+                "Refusing rather than falling back, because the scheme is what "
+                "the pass rate MEANS.".format(mode))
+
+        # Blocks are whole days, in their original order within the day.
+        order = np.argsort(day_key, kind="stable")
+        keys = day_key[order]
+        starts = np.flatnonzero(np.r_[True, keys[1:] != keys[:-1]])
+        blocks = np.split(order, starts[1:])
+        if len(blocks) < 2:
+            # One day, or none -- there is nothing to resample at day level.
+            return rng.permutation(pnl_arr)
+        pick = rng.integers(0, len(blocks), size=len(blocks))
+        return pnl_arr[np.concatenate([blocks[i] for i in pick])]
+
     def run_monte_carlo(
         self,
         trades_detailed: pd.DataFrame,
         profile: PropFirmProfile,
         n_simulations: int = 5_000,
+        resample: str = DEFAULT_RESAMPLE,
+        seed: Optional[int] = 0,
     ) -> MonteCarloResult:
-        """
-        Permutation-based Monte Carlo: shuffles the per-trade P&L sequence
-        N times, re-aggregating to daily and re-running the prop firm logic
-        each time. Returns pass rate, blow rate, and distribution stats.
+        """Resampled Monte Carlo over the prop firm rule set.
+
+        The scheme is `daily_block` by default and is RECORDED on the result,
+        because a pass rate means nothing without it -- see `_resample`.
         """
         dollar_pnls = self._to_dollar_pnl(trades_detailed, profile.account_size)
         if dollar_pnls.empty or len(dollar_pnls) < 2:
-            return self._null_mc(profile.name, n_simulations)
+            return self._null_mc(profile.name, n_simulations, resample=resample)
 
         # Build trade-level dollar P&L array for resampling
         pnl_arr = dollar_pnls.values
         # Map exit dates for daily grouping
         exit_dates = self._extract_exit_dates(trades_detailed)
+        day_key = (exit_dates.astype("int64").to_numpy()
+                   if exit_dates.notna().all()
+                   else np.zeros(len(pnl_arr), dtype="int64"))
 
+        rng = np.random.default_rng(seed)
         passes = 0
         blowups = 0
         timeouts = 0
@@ -368,7 +434,7 @@ class PropFirmSimulator:
         final_equity_list: List[float] = []
 
         for _ in range(n_simulations):
-            perm = np.random.permutation(pnl_arr)
+            perm = self._resample(pnl_arr, day_key, rng, resample)
             result = self._simulate_permuted_path(
                 perm, exit_dates, profile
             )
@@ -396,6 +462,7 @@ class PropFirmSimulator:
             p50_final_equity=float(np.percentile(eq_arr, 50)),
             p90_final_equity=float(np.percentile(eq_arr, 90)),
             avg_max_drawdown=float(np.mean(max_dd_list)),
+            resampling=resample,
         )
 
     # ── Formatting ────────────────────────────────────────────────────────────
@@ -708,13 +775,15 @@ class PropFirmSimulator:
             trades_skipped_daily_cap=0,
         )
 
-    def _null_mc(self, profile_name: str, n_sims: int) -> MonteCarloResult:
+    def _null_mc(self, profile_name: str, n_sims: int,
+                 resample: str = DEFAULT_RESAMPLE) -> MonteCarloResult:
         return MonteCarloResult(
             profile_name=profile_name,
             n_simulations=n_sims, pass_rate_pct=0.0, blow_rate_pct=0.0,
             timeout_rate_pct=100.0, avg_days_to_pass=None,
             median_days_to_pass=None, p10_final_equity=0.0,
             p50_final_equity=0.0, p90_final_equity=0.0, avg_max_drawdown=0.0,
+            resampling=resample,
         )
 
 

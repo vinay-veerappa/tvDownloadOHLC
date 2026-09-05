@@ -346,9 +346,31 @@ def _prop_viability(ctx: "Ctx", stages: Dict[str, Any]) -> None:
                       d.get("skippedReason") or "no pass rate was computed")
         return
     thresh = float(d.get("passThresholdPct") or 65.0)
-    detail = "{} pass rate {:.1f}% (grade {}), threshold {:.0f}%".format(
-        d.get("primaryProfile"), rate, d.get("grade"), thresh)
-    ctx.check.set("prop_viability", PASS if rate >= thresh else FAIL, detail)
+    detail = "{} pass rate {:.1f}% (grade {}), threshold {:.0f}%, resampling {}".format(
+        d.get("primaryProfile"), rate, d.get("grade"), thresh,
+        d.get("resampling") or "UNRECORDED")
+    fails = []
+    if rate < thresh:
+        fails.append("pass rate {:.1f}% < {:.0f}%".format(rate, thresh))
+    # THE HISTORICAL SEQUENCE HAS TO SURVIVE TOO. A resampled pass rate is a
+    # statement about orderings that did not happen; the deterministic path is
+    # the one that did. It was computed on every run and read by nothing, so a
+    # strategy whose actual trade order blew the account could still score
+    # PASS here on the strength of its permutations.
+    if d.get("historicalBlown"):
+        fails.append("the HISTORICAL trade sequence blew the account, whatever "
+                     "the resampled orderings do")
+    elif d.get("historicalPassed") is False:
+        fails.append("the HISTORICAL trade sequence did not reach the profit "
+                     "target within the evaluation window")
+    elif d.get("historicalPassed") is None:
+        fails.append("no deterministic (historical-sequence) result was recorded, "
+                     "so only resampled orderings were judged")
+    if d.get("resampling") is None:
+        fails.append("the pass rate does not name its resampling scheme; "
+                     "'iid' and 'daily_block' disagree by tens of points")
+    ctx.check.set("prop_viability", FAIL if fails else PASS,
+                  detail + ((" -- " + "; ".join(fails)) if fails else ""))
 
 
 def _out_of_sample(ctx: "Ctx") -> None:
