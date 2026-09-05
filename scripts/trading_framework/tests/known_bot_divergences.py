@@ -26,17 +26,20 @@ inventory freezes it so it cannot grow while the normalisation (section 11, item
   * a bot here whose values CHANGE fails, so a value can only move toward frozen
   * a bot here that now AGREES must lose its line
 
-THE MOST CONSEQUENTIAL ENTRY is still BBMRReversionBot: it allows 99 trades a day
-where the Python `mean_reversion` engine that predicts it allows 3. That pair
-cannot be compared at the trade-set layer until the two agree, and no report says
-so today.
+B1 CLOSED 2026-09-05: BBMRReversionBot no longer declares MaxTradesPerDay (the
+trade-ordinal report measured every trade at ordinal 1, so there is no sample for
+a cap and it refuses to suggest one), and the Python engine runs uncapped too --
+the pair is comparable at the trade-set layer again. Its remaining divergence is
+the overridable flattenByEt (1600 vs frozen 1545), deliberate for its NY_PM
+window and recorded as spread, not condemned.
 """
 
 # path -> (FlattenBy, MaxTradesPerDay, LatestEntry). None = not declared.
 KNOWN_DIVERGENCES = {
-    # flatten fixed 1615 -> 1600 (ADR-020). The 99-trade cap remains a real
-    # divergence from the Python side's 3 and is why this pair is not comparable.
-    "scripts/ninjatrader/strategies/bandits_8020/BBMRReversionBot.cs": (1600, 99, 1600),
+    # flatten fixed 1615 -> 1600 (ADR-020). The trade cap was removed 2026-09-05
+    # (B1 closed): the bot no longer declares one, matching the uncapped engine.
+    # FlattenBy=1600 remains the recorded overridable divergence from 1545.
+    "scripts/ninjatrader/strategies/bandits_8020/BBMRReversionBot.cs": (1600, None, 1600),
     "scripts/ninjatrader/strategies/bandits_8020/Bandits8020Bot.cs": (1555, 3, 1100),
     "scripts/ninjatrader/strategies/ib_breakout/IBFadeBot.cs": (1555, 2, 1555),
     "scripts/ninjatrader/strategies/ib_breakout/IBStrategyBase.cs": (1550, 2, 1430),

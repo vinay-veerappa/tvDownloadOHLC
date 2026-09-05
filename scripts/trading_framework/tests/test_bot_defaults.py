@@ -241,18 +241,26 @@ def test_the_inventory_has_no_stale_entries():
         "matching ticket in docs/architecture/BOT_FIX_BACKLOG.md: {}".format(stale))
 
 
-def test_the_worst_divergence_is_recorded_with_its_consequence():
-    """Pins the specific pair that cannot be compared, so it is not forgotten.
+def test_the_pair_that_motivated_the_backlog_is_now_comparable():
+    """Pins the specific pair B1 was filed over, in its CLOSED state.
 
-    mean_reversion (Python) flattens 15:45 and caps 3 trades/day.
-    BBMRReversionBot (its C# bot) flattens 16:15 and caps 99.
+    B1's original premise (bot 99 vs engine 3) stopped being true on
+    2026-09-05: the engine became uncapped (maxTradesPerDay null) and the bot
+    stopped declaring a cap (BOT_FIX_BACKLOG.md B1), so the pair is comparable
+    at the trade-set layer again. This asserts BOTH halves of that, so neither
+    can silently regress: a re-declared bot cap, or an engine cap, re-opens B1.
     """
     rel = "scripts/ninjatrader/strategies/bandits_8020/BBMRReversionBot.cs"
     assert rel in KNOWN_DIVERGENCES
-    flatten, mx, _latest = KNOWN_DIVERGENCES[rel]
+    _flatten, mx, _latest = KNOWN_DIVERGENCES[rel]
     risk = load_trading_defaults()["risk"]
-    assert flatten != _hhmm(risk["flattenByEt"])
-    assert mx != risk["maxTradesPerDay"]
+    assert mx is None, (
+        "BBMRReversionBot declares a trade cap again -- re-open BOT_FIX_BACKLOG "
+        "B1 or update this pin with the evidence that justifies it")
+    assert risk["maxTradesPerDay"] is None
+    text = (REPO / rel).read_text(encoding="utf-8", errors="replace")
+    assert not re.search(r"MaxTradesPerDay\s*=", text), (
+        "the bot declares MaxTradesPerDay; the B1 pin says it must not")
 
 
 @pytest.mark.parametrize("rel", sorted(KNOWN_DIVERGENCES))

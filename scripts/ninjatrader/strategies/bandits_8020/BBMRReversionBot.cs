@@ -2,7 +2,6 @@
 using System;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
-using System.Globalization;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Indicators;
 #endregion
@@ -15,12 +14,26 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     /// so it retains prop frequency. P1 in range_strategy_comparison.py.
     ///
     /// Logic (5m, NY 11:30-16:00):
-    ///   Long: close[1] < lower[1] && RSI[1] < 33  &&  close[0] > lower[0] && RSI[0] > RSI[1] && close[0] < middle[0] && RSI[0] < 50
-    ///   Short: mirror upper / RSI>67
-    ///   Filter: ADX(14) < AdxThreshold (25) — skip trending regime. Optional SqueezeOnly (BW percentile).
+    ///   Long: close[1] &lt; lower[1] &amp;&amp; RSI[1] &lt; 33  &amp;&amp;  close[0] &gt; lower[0] &amp;&amp; RSI[0] &gt; RSI[1] &amp;&amp; close[0] &lt; middle[0] &amp;&amp; RSI[0] &lt; 50
+    ///   Short: mirror upper / RSI&gt;67
+    ///   Filter: ADX(14) &lt; AdxThreshold (25) — skip trending regime. Optional SqueezeOnly (BW percentile).
     ///   Stop: band ± 1.5× 5m ATR (mirrors python 1.5*atr5m). Target: middle → opposite band.
+    ///
+    /// Migrated onto GovernedStrategy (STRATEGY_WORKFLOW.md 3.4; BOT_FIX_BACKLOG B7+B8): the
+    /// signal logic declares its criteria in OnEvaluate and the sealed base computes the
+    /// verdict, so a criterion the log does not carry cannot reach a trade. The old %TEMP%
+    /// per-bar dump (bbmr_diag_*.csv) is deleted — the DecisionLog the base owns replaces it,
+    /// and it is fetchable through the bridge (nt_get_export) rather than a GUID path printed
+    /// to the output window.
+    ///
+    /// B1 (2026-09-05): MaxTradesPerDay is deliberately NOT declared. The frozen document
+    /// leaves the cap analysis-derived (null); reporting/trade_ordinal.py measured every
+    /// trade at ordinal 1, so there is no sample for any cap and the report refuses to
+    /// suggest one. The Python engine that predicts this bot runs uncapped, so the pair is
+    /// comparable at the trade-set layer again. RiskManagerBase applies its own live default
+    /// only for registered accounts — backtests were never capped by the old 99.
     /// </summary>
-    public class BBMRReversionBot : RiskManagerBase
+    public class BBMRReversionBot : GovernedStrategy
     {
         #region Parameters
 
@@ -150,12 +163,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private bool ibComplete;
         private DateTime ibDate;
 
-        private System.IO.StreamWriter diagCsv;
-        private bool diagCsvHeaderWritten;
-
         protected override string GetStrategyName() => "BBMRReversion";
 
-        protected override void SetStrategyDefaults()
+        protected override void OnStrategyDefaults()
         {
             Description = "BB(20,2)+RSI(14) mean reversion — clean BB1 port. Squeeze gate optional. Prop-frequency tuned.";
             Name = "BBMRReversionBot";
@@ -171,7 +181,9 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxConsecutiveLosers = 99;
             PauseMinutes = 30;
             HardStopConsecutiveLosers = 99;
-            MaxTradesPerDay = 99;
+            // B1: MaxTradesPerDay intentionally NOT set — see the class doc. The frozen
+            // document's null cap must not be assigned (NoLimit would read as "no trades
+            // allowed" through RiskManagerBase's unguarded >= comparison).
             TrailingDrawdown = 99999;
 
             // Time — NY_PM only (matches Python v3: 13:30-16:00)
@@ -213,7 +225,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override void ConfigureStrategy() { }
 
-        protected override void InitializeStrategy()
+        protected override void OnInitialize()
         {
             bollinger = Bollinger(Closes[1], StdDev, BBPeriod);
             rsi = RSI(Closes[1], RsiPeriod, 3);
@@ -234,13 +246,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             last5mBarIdx = -1;
             rsi2barsAgo = close2barsAgo = lower2barsAgo = upper2barsAgo = 0;
 
-            string csvPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "bbmr_diag_" + Guid.NewGuid().ToString("N") + ".csv");
-            diagCsv = new System.IO.StreamWriter(csvPath);
-            diagCsv.WriteLine(string.Format(CultureInfo.InvariantCulture, "# Strategy=BBMRReversionBot BBPeriod={0} StdDev={1} RsiPeriod={2} AdxThr={3} UseAdx={4} SqueezeOnly={5} UseIbCompress={6} IbMaxAtrRatio={7} SkipLunch={8} UseMacdGate={9} UseKaufmanErRsi={10} Allow2BarHook={11} ShortOnly={12} ErPeriod={13} FastLen={14} SlowLen={15}", BBPeriod, StdDev, RsiPeriod, AdxThreshold, UseAdxGate, SqueezeOnly, UseIbCompress, IbMaxAtrRatio, SkipLunchHour, UseMacdGate, UseKaufmanErRsi, Allow2BarHook, ShortOnly, ErPeriod, KaufmanFastLen, KaufmanSlowLen));
-            diagCsv.WriteLine(string.Format(CultureInfo.InvariantCulture, "# Execution: Earliest={0} Latest={1} FlattenBy={2} MaxTradesPerDay={3} DailyMaxLoss={4} TrailingDD={5}", EarliestEntry, LatestEntry, FlattenBy, MaxTradesPerDay, DailyMaxLoss, TrailingDrawdown));
-            diagCsvHeaderWritten = false;
-            Print("[DIAG] BBMRReversionBot CSV path: " + csvPath);
-            Print(String.Format("[DIAG] Params UseKaufman={0} 2BarHook={1} ShortOnly={2}", UseKaufmanErRsi, Allow2BarHook, ShortOnly));
             ibHigh = ibLow = 0; ibComplete = false; ibDate = DateTime.MinValue;
         }
 
@@ -346,15 +351,21 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return atr5[0];
         }
 
-        private bool IsSqueeze()
+        /// <summary>
+        /// The Bollinger bandwidth percentile over SqueezeLookback bars — the VALUE
+        /// behind the squeeze gate (rule 3). NaN when the lookback is not warm or
+        /// the mid band is 0; IsSqueeze treats NaN as "not squeezed", matching the
+        /// original's unconditional false.
+        /// </summary>
+        private double SqueezeBwPercentile()
         {
-            if (CurrentBars[1] < BBPeriod + SqueezeLookback) return false;
+            if (CurrentBars[1] < BBPeriod + SqueezeLookback) return double.NaN;
             // Compute BW percentile on 5m
             int lookback = Math.Min(SqueezeLookback, CurrentBars[1]);
             double curUpper = bollinger.Upper[0];
             double curLower = bollinger.Lower[0];
             double curMid = bollinger.Middle[0];
-            if (curMid == 0) return false;
+            if (curMid == 0) return double.NaN;
             double curBW = (curUpper - curLower) / curMid;
 
             int narrowCount = 0;
@@ -367,116 +378,176 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 double bw = (up - lo) / mid;
                 if (bw <= curBW) narrowCount++;
             }
-            double pct = 100.0 * narrowCount / lookback;
-            return pct <= SqueezePct;
+            return 100.0 * narrowCount / lookback;
         }
 
-        protected override int CheckForSignal()
+        private bool IsSqueeze()
         {
-            // IB tracking on primary 1m (09:30-10:00)
+            double pct = SqueezeBwPercentile();
+            return !double.IsNaN(pct) && pct <= SqueezePct;
+        }
+
+        /// <summary>
+        /// DECLARE this bar's setup and every criterion behind it (section 5.5).
+        /// Every gate is recorded unconditionally — including the ones behind a
+        /// Use* flag, so a disabled gate shows up as an always-passing row — and
+        /// with its value, so a marginal trade is distinguishable from a badly
+        /// gated one. The verdict itself is computed by GovernedStrategy from
+        /// these gates; nothing here returns a signal.
+        ///
+        /// The 2-bar-hook state store reproduces the original method's reach-the-
+        /// bottom condition exactly: the values are stored only on bars that
+        /// passed warmup, squeeze, IB-compress, lunch and ADX AND produced no
+        /// final setup after the ShortOnly and HTF filters. A bar whose setup was
+        /// killed by the MACD gate returned before the store in the original and
+        /// still does not store here; a bar killed by ShortOnly or HTF fell
+        /// through to the store in the original and still does.
+        /// </summary>
+        protected override void OnEvaluate(SetupEvaluation e)
+        {
+            // IB tracking on primary 1m (09:30-10:00) — every bar, as before
             try { UpdateIb(); } catch { }
-            try { WriteDiagRow(); } catch { }
-            if (CurrentBars[1] < BBPeriod + 5) return 0;
-            if (SqueezeOnly && !IsSqueeze()) return 0;
-            // IB compress gate
-            if (UseIbCompress && ibComplete)
+
+            bool warmed = CurrentBars[1] >= BBPeriod + 5;
+            e.Gate("warmup", warmed, CurrentBars[1], BBPeriod + 5);
+
+            // The store condition needs every filter's outcome even on bars that
+            // never trigger, so they are computed once here and reused below.
+            bool squeezeOk = false, ibOk = false, lunchOk = false, adxOk = false;
+            bool htfLongOk = false, htfShortOk = false;
+            bool longRaw = false, shortRaw = false;
+            double rsi0 = double.NaN, rsi1 = double.NaN;
+
+            if (warmed)
             {
-                double ibRange = ibHigh - ibLow;
+                double close0 = Closes[1][0];
+                double close1 = Closes[1][1];
+                double upper0 = bollinger.Upper[0];
+                double lower0 = bollinger.Lower[0];
+                double upper1 = bollinger.Upper[1];
+                double lower1 = bollinger.Lower[1];
+                double mid0 = bollinger.Middle[0];
+
+                // RSI: use Kaufman ER RSI or Wilder RSI (same call order as the original)
+                if (UseKaufmanErRsi)
+                {
+                    rsi0 = ComputeKaufmanErRsi();
+                    rsi1 = rsi1Saved;  // properly saved from prior 5m bar
+                }
+                else
+                {
+                    rsi0 = rsi[0];
+                    rsi1 = rsi[1];
+                }
+
+                double adx0 = adx[0];
+
+                // Squeeze: recorded even when SqueezeOnly is off, so the flag's
+                // state is discoverable from the roster (rule: a disabled gate
+                // recorded as passing is how you find out it was off).
+                double bwPct = SqueezeBwPercentile();
+                squeezeOk = !SqueezeOnly || (!double.IsNaN(bwPct) && bwPct <= SqueezePct);
+                e.Gate("squeeze", squeezeOk, bwPct, SqueezePct);
+
+                // IB compress — same shape: recorded even when UseIbCompress is off
                 double dailyAtrProxy = atr5 != null && CurrentBars[1] >= 14 ? atr5[0] * 17.0 : 70.0; // 5m ATR * ~17 ≈ daily
-                if (ibRange >= IbMaxAtrRatio * dailyAtrProxy) return 0;
-            }
-            // Lunch skip
-            if (SkipLunchHour && Times[1][0].Hour == 13) return 0;
+                double ibRange = ibComplete ? ibHigh - ibLow : double.NaN;
+                double ibThr = IbMaxAtrRatio * dailyAtrProxy;
+                ibOk = !UseIbCompress || !ibComplete || (ibRange < ibThr);
+                e.Gate("ib_compress", ibOk, ibRange, ibThr);
 
-            double close0 = Closes[1][0];
-            double close1 = Closes[1][1];
-            double upper0 = bollinger.Upper[0];
-            double lower0 = bollinger.Lower[0];
-            double upper1 = bollinger.Upper[1];
-            double lower1 = bollinger.Lower[1];
-            double mid0 = bollinger.Middle[0];
+                // Lunch skip
+                lunchOk = !SkipLunchHour || Times[1][0].Hour != 13;
+                e.Gate("lunch", lunchOk);
 
-            // RSI: use Kaufman ER RSI or Wilder RSI
-            double rsi0, rsi1;
-            if (UseKaufmanErRsi)
-            {
-                rsi0 = ComputeKaufmanErRsi();
-                rsi1 = rsi1Saved;  // properly saved from prior 5m bar
-            }
-            else
-            {
-                rsi0 = rsi[0];
-                rsi1 = rsi[1];
-            }
+                // ADX regime gate — value vs threshold, so a marginal ADX is visible
+                adxOk = !UseAdxGate || adx0 < AdxThreshold;
+                e.Gate("adx", adxOk, adx0, AdxThreshold);
 
-            double adx0 = adx[0];
+                // RSI thresholds — use 33/67 for both Wilder and Kaufman
+                double rsiOsThreshold = 33;
+                double rsiObThreshold = 67;
 
-            if (UseAdxGate && adx0 >= AdxThreshold) return 0;
+                // 1-bar hook (standard)
+                bool longTouch1 = close1 < lower1 && rsi1 < rsiOsThreshold;
+                bool shortTouch1 = close1 > upper1 && rsi1 > rsiObThreshold;
 
-            // RSI thresholds — use 33/67 for both Wilder and Kaufman
-            double rsiOsThreshold = 33;
-            double rsiObThreshold = 67;
+                // 2-bar hook: touch was 2 bars ago, hook back on current bar.
+                // Stored values are 0 on the first eligible bars, so the check
+                // fails safely — exactly as in the original.
+                bool longTouch2 = false, shortTouch2 = false;
+                if (Allow2BarHook && CurrentBars[1] >= 3)
+                {
+                    longTouch2 = close2barsAgo < lower2barsAgo && rsi2barsAgo < rsiOsThreshold
+                              && close1 > lower1 && rsi1 > rsi2barsAgo;
+                    shortTouch2 = close2barsAgo > upper2barsAgo && rsi2barsAgo > rsiObThreshold
+                               && close1 < upper1 && rsi1 < rsi2barsAgo;
+                }
 
-            // 1-bar hook (standard)
-            bool longTouch1 = close1 < lower1 && rsi1 < rsiOsThreshold;
-            bool shortTouch1 = close1 > upper1 && rsi1 > rsiObThreshold;
-
-            // 2-bar hook: touch was 2 bars ago, hook back on current bar
-            bool longTouch2 = false, shortTouch2 = false;
-            if (Allow2BarHook && CurrentBars[1] >= 3)
-            {
-                // Use stored values from 2 bars ago (updated at end of each bar)
-                // For the first call, these are 0, so the check will fail safely.
-                longTouch2 = close2barsAgo < lower2barsAgo && rsi2barsAgo < rsiOsThreshold
-                          && close1 > lower1 && rsi1 > rsi2barsAgo;
-                shortTouch2 = close2barsAgo > upper2barsAgo && rsi2barsAgo > rsiObThreshold
-                           && close1 < upper1 && rsi1 < rsi2barsAgo;
-            }
-
-            bool longSetup = (longTouch1 || longTouch2)
+                longRaw = (longTouch1 || longTouch2)
                           && close0 > lower0 && rsi0 > rsi1
                           && close0 < mid0 && rsi0 < 50;
 
-            bool shortSetup = (shortTouch1 || shortTouch2)
+                shortRaw = (shortTouch1 || shortTouch2)
                            && close0 < upper0 && rsi0 < rsi1
                            && close0 > mid0 && rsi0 > 50;
 
-            // SHORT-only filter
-            if (ShortOnly) longSetup = false;
+                // HTF proximity filter (v3): require entry near PDH (for SHORT) or
+                // PDL (for LONG). UpdateHtfLevels ran on every warmed bar when the
+                // flag is on in the original and still does here.
+                if (UseHtfProximity) UpdateHtfLevels();
+                htfLongOk = !UseHtfProximity || double.IsNaN(pdl)
+                            || Math.Abs(close0 - pdl) <= HtfProximityPts;
+                htfShortOk = !UseHtfProximity || double.IsNaN(pdh)
+                             || Math.Abs(close0 - pdh) <= HtfProximityPts;
 
-            // HTF proximity filter (v3): require entry near PDH (for SHORT) or PDL (for LONG)
-            if (UseHtfProximity)
-            {
-                UpdateHtfLevels();
-                if (longSetup && !double.IsNaN(pdl))
+                // Magnitudes, not criteria (rule 6): the band excursion mirrors the
+                // Python hunter's measure, the RSI slope is the confirmation strength.
+                double band = longRaw ? lower0 : upper0;
+                double atr = atr5 != null && CurrentBars[1] >= AtrPeriod && atr5[0] > 0 ? atr5[0] : double.NaN;
+                e.Measure("band_excursion_atr", double.IsNaN(atr) ? double.NaN : Math.Abs(close0 - band) / atr);
+                e.Measure("rsi_slope", rsi0 - rsi1);
+
+                // A setup exists: declare it, then let the filters be gates. At most
+                // one raw direction can be true (rsi0 &lt; 50 vs rsi0 &gt; 50 are
+                // exclusive), so one trigger per bar.
+                if (longRaw || shortRaw)
                 {
-                    if (Math.Abs(close0 - pdl) > HtfProximityPts) longSetup = false;
+                    e.Trigger(longRaw ? "long" : "short");
+
+                    // SHORT-only filter — recorded even when ShortOnly is false
+                    e.Gate("long_allowed", !(ShortOnly && longRaw));
+
+                    double htfRef = longRaw ? pdl : pdh;
+                    double htfDist = double.IsNaN(htfRef) ? double.NaN : Math.Abs(close0 - htfRef);
+                    bool htfOk = longRaw ? htfLongOk : htfShortOk;
+                    e.Gate("htf_proximity", htfOk, htfDist, HtfProximityPts);
+
+                    // MACD histogram gate — direction-aware, recorded even when
+                    // UseMacdGate is off. In the original a MACD rejection returned
+                    // BEFORE the 2-bar-hook store; the store condition below
+                    // reproduces that.
+                    double diff0 = macd.Diff[0];
+                    double diff1 = macd.Diff[1];
+                    bool macdOk = !UseMacdGate || (longRaw ? diff0 > diff1 : diff0 < diff1);
+                    e.Gate("macd", macdOk, diff0 - diff1);
                 }
-                if (shortSetup && !double.IsNaN(pdh))
+
+                // Store 2-bars-ago values for the next bar's 2-bar hook check — on
+                // exactly the bars the original reached the bottom: all five
+                // pre-setup gates passed, and no setup survived the ShortOnly/HTF
+                // filters (a MACD-killed bar never stored; a ShortOnly/HTF-killed
+                // bar did).
+                bool longAfterFilters = longRaw && !ShortOnly && htfLongOk;
+                bool shortAfterFilters = shortRaw && htfShortOk;
+                if (squeezeOk && ibOk && lunchOk && adxOk && !longAfterFilters && !shortAfterFilters)
                 {
-                    if (Math.Abs(close0 - pdh) > HtfProximityPts) shortSetup = false;
+                    rsi2barsAgo = rsi1;
+                    close2barsAgo = close1;
+                    lower2barsAgo = lower1;
+                    upper2barsAgo = upper1;
                 }
             }
-
-            if (longSetup)
-            {
-                if (UseMacdGate && macd != null && macd.Diff[0] <= macd.Diff[1]) return 0;
-                return 1;
-            }
-
-            if (shortSetup)
-            {
-                if (UseMacdGate && macd != null && macd.Diff[0] >= macd.Diff[1]) return 0;
-                return -1;
-            }
-
-            // Store 2-bars-ago values for next bar's 2-bar hook check
-            rsi2barsAgo = rsi1;
-            close2barsAgo = close1;
-            lower2barsAgo = lower1;
-            upper2barsAgo = upper1;
-
-            return 0;
         }
 
         private void UpdateHtfLevels()
@@ -537,46 +608,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             }
         }
 
-        private void WriteDiagRow()
-        {
-            if (diagCsv == null) return;
-            if (CurrentBars[1] < 2) return;
-            if (!diagCsvHeaderWritten)
-            {
-                diagCsv.WriteLine("BarTime,BarIdx,Close0,Close1,Upper0,Lower0,Upper1,Lower1,Mid0,Rsi0,Rsi1,Adx0,Atr5,IsSqueeze,AdxGatePass,LongSetup,ShortSetup,Signal,IbHigh,IbLow,IbComplete,SkipLunch");
-                diagCsvHeaderWritten = true;
-            }
-            double close0 = Closes[1][0];
-            double close1 = Closes[1][1];
-            double upper0 = bollinger.Upper[0];
-            double lower0 = bollinger.Lower[0];
-            double upper1 = bollinger.Upper[1];
-            double lower1 = bollinger.Lower[1];
-            double mid0 = bollinger.Middle[0];
-            double rsi0 = rsi[0];
-            double rsi1 = rsi[1];
-            double adx0 = adx[0];
-            double atr = atr5 != null ? atr5[0] : 0;
-            bool isSq = IsSqueeze();
-            bool adxPass = !UseAdxGate || adx0 < AdxThreshold;
-            bool longSetup = close1 < lower1 && rsi1 < 33 && close0 > lower0 && rsi0 > rsi1 && close0 < mid0 && rsi0 < 50;
-            bool shortSetup = close1 > upper1 && rsi1 > 67 && close0 < upper0 && rsi0 < rsi1 && close0 > mid0 && rsi0 > 50;
-            int sig = 0;
-            bool lunchSkip = SkipLunchHour && Times[1][0].Hour == 13;
-            bool ibPass = !UseIbCompress || !ibComplete || (ibHigh - ibLow) < IbMaxAtrRatio * (atr * 17.0);
-            if (adxPass && (!SqueezeOnly || isSq) && !lunchSkip && ibPass)
-            {
-                if (longSetup) sig = 1;
-                else if (shortSetup) sig = -1;
-            }
-            var bt = Times[1][0];
-            diagCsv.WriteLine(string.Format(CultureInfo.InvariantCulture,
-                "{0:yyyy-MM-dd HH:mm:ss},{1},{2:G},{3:G},{4:G},{5:G},{6:G},{7:G},{8:G},{9:G},{10:G},{11:G},{12:G},{13},{14},{15},{16},{17},{18:G},{19:G},{20},{21}",
-                bt, CurrentBars[1], close0, close1, upper0, lower0, upper1, lower1, mid0, rsi0, rsi1, adx0, atr,
-                isSq ? 1 : 0, adxPass ? 1 : 0, longSetup ? 1 : 0, shortSetup ? 1 : 0, sig, ibHigh, ibLow, ibComplete ? 1 : 0, lunchSkip ? 1 : 0));
-            diagCsv.Flush();
-        }
-
         protected override double GetCustomStopPrice(int signal, double entryPrice)
         {
             if (atr5 == null || CurrentBars[1] < AtrPeriod) return double.NaN;
@@ -615,7 +646,5 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             else
                 return bollinger.Lower[0];  // SHORT runner target = lower band
         }
-
-        // diag flush is per-bar; no OnTermination needed — file closed on process exit
     }
 }
