@@ -77,7 +77,16 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         /// blocked 40 setups" cannot be scaled (rule 4).</summary>
         public bool HasTrigger { get { return !string.IsNullOrEmpty(Direction); } }
 
-        internal SetupEvaluation() { Direction = ""; }
+        /// <summary>The DECLARED queen-leg target for this setup, or NaN when
+        /// none was declared (section 11 item 19). Captured at arm time like
+        /// the limit and the stop; the base owns the right-side guard and the
+        /// bps fallback, so an invalid declaration falls back rather than
+        /// blocking, exactly like the Python engine.</summary>
+        public double DeclaredTarget { get; private set; }
+
+        internal bool HasDeclaredTarget { get { return !double.IsNaN(DeclaredTarget); } }
+
+        internal SetupEvaluation() { Direction = ""; DeclaredTarget = double.NaN; }
 
         /// <summary>A setup EXISTS on this bar. Call before any Gate.</summary>
         public SetupEvaluation Trigger(string direction)
@@ -88,6 +97,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         public SetupEvaluation Trigger(bool condition, string direction)
         { return condition ? Trigger(direction) : this; }
+
+        /// <summary>
+        /// DECLARE the payoff this setup promises (section 11 item 19): the
+        /// price at which the QUEEN leg should exit. Same declare-don't-act
+        /// shape as Trigger/Gate/Measure -- it cannot place an order or move
+        /// anything. NaN / absent means "no declaration" and behaves exactly
+        /// like the bps fallback; a WRONG-SIDE declaration (behind entry) is
+        /// refused by the base's guard and falls back to bps VISIBLY -- the
+        /// refusal is logged, never silent. Never blocks the trade.
+        /// </summary>
+        public SetupEvaluation DeclareTarget(double price)
+        { DeclaredTarget = price; return this; }
 
         /// <summary>A criterion that CAN BLOCK the setup. Enters the roster.
         ///
@@ -187,6 +208,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private DecisionLog decisions;
         private int         entrySeq;
         private string      pendingSignalName;
+        private double      pendingDeclaredTarget = double.NaN;
 
         protected DecisionLog Decisions { get { return decisions; } }
 
@@ -272,6 +294,42 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             if (!e.AllGatesPassed || !govOk) { d.Reject(); return 0; }
 
+            // Section 11 item 19: the declared queen-leg target, evaluated
+            // against the direction EXACTLY like the Python engine's fill-time
+            // guard. Logged either way -- a refusal that is silent is the same
+            // defect class as a refusal that never happened. A note never
+            // blocks, so recording it here cannot contradict the verdict.
+            bool longSide = !e.Direction.StartsWith("s", StringComparison.OrdinalIgnoreCase);
+            pendingDeclaredTarget = double.NaN;
+            if (e.HasDeclaredTarget)
+            {
+                double t = e.DeclaredTarget;
+                bool rightSide = longSide ? t > Close[0] : t < Close[0];
+                if (rightSide)
+                {
+                    d.Note("declared_queen_target", true, "used: " + t.ToString("G6", CultureInfo.InvariantCulture));
+                }
+                else
+                {
+                    // The geometry-defect class: a target behind entry would
+                    // fill instantly and pay a nonsense profit. Falls back to
+                    // bps, VISIBLY.
+                    d.Note("queen_bps_fallback", false, "declared target " +
+                        t.ToString("G6", CultureInfo.InvariantCulture) +
+                        " refused: wrong side of " + (longSide ? "long" : "short"));
+                }
+                // Hand the RAW declaration to the risk base either way; the
+                // base's own guard re-checks the side at fill time against the
+                // EFFECTIVE entry (which may be a limit price, not this close),
+                // so this note is the decision-time record and the base is the
+                // fill-time one.
+                pendingDeclaredTarget = t;
+            }
+            else
+            {
+                d.Note("queen_bps_fallback", true, "no target declared: " + TradingDefaults.QueenBps + " bps");
+            }
+
             // Named HERE and handed to GetSignalName, because RiskManagerBase
             // asks for the name after this returns. Recording the ENTRY before
             // the order is placed is deliberate: a rejected or unfilled order is
@@ -332,6 +390,21 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 SignalTag,
                 direction.StartsWith("s", StringComparison.OrdinalIgnoreCase) ? "S" : "L",
                 entrySeq);
+        }
+
+        // ---- the declared queen-leg target (section 11 item 19) ------------- //
+
+        /// <summary>
+        /// Arm-time capture, exactly like `GetCustomLimitPrice`: `CheckForSignal`
+        /// stashed what the subclass declared in `pendingDeclaredTarget`, and the
+        /// risk base consults this hook in its CoverTheQueen bracket path. The
+        /// base owns the FILL-TIME right-side guard and the bps fallback (it
+        /// knows the effective entry, which may be a limit price, not the close
+        /// this note was recorded against); NaN here means "no declaration".
+        /// </summary>
+        protected override double GetDeclaredQueenTarget(int signal, double entryPrice)
+        {
+            return pendingDeclaredTarget;
         }
 
         // ---- helpers -------------------------------------------------------- //

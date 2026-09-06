@@ -42,6 +42,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "Entry Proximity (ATR mult)", Order = 4, GroupName = "Failed Auction")]
         public double EntryProximity { get; set; }
 
+        /// <summary>Section 11 item 19: the queen-leg payoff as an R-multiple of
+        /// the stop distance -- the same number the paired Python hunter
+        /// failed_auction declares as target1_price (tp_r_mult, default 2.0).</summary>
+        [NinjaScriptProperty]
+        [Range(0.1, 10.0)]
+        [Display(Name = "Queen Target R-Mult", Order = 5, GroupName = "Failed Auction")]
+        public double QueenTargetRMult { get; set; }
+
         private Indicators.Vinay.FailedAuctionIndicator faIndicator;
 
         protected override string GetStrategyName() => "FailedAuction";
@@ -73,6 +81,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             FastMoveBars = 10;
             MaxWaitBars = 120;
             EntryProximity = 0.3;
+            QueenTargetRMult = 2.0;   // failed_auction twin: tp_r_mult default
 
             AddSecondaryTimeframe = false;
         }
@@ -94,6 +103,20 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             int sig = faIndicator.SignalSeries[0];
             e.Trigger(sig != 0, sig == 1 ? "long" : "short");
+
+            // Section 11 item 19: the DECLARED payoff, entry +/- risk x R --
+            // the same number the failed_auction twin declares. NaN stop = no
+            // declaration (bps fallback, logged).
+            if (sig != 0)
+            {
+                double stop = faIndicator.StopLossSeries[0];
+                if (!double.IsNaN(stop) && stop > 0)
+                {
+                    double risk = Math.Abs(Close[0] - stop);
+                    if (risk > 0)
+                        e.DeclareTarget(Close[0] + (sig > 0 ? risk : -risk) * QueenTargetRMult);
+                }
+            }
 
             if (sig == 0 || !DrawVisuals) return;
 

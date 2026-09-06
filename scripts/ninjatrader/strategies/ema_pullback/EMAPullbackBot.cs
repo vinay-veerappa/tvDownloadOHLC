@@ -49,6 +49,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "Use Engulfing Confirmation", Order = 5, GroupName = "EMA Pullback")]
         public bool UseEngulfingConfirmation { get; set; }
 
+        /// <summary>Section 11 item 19: the queen-leg payoff as an R-multiple of
+        /// the stop distance -- the same number the paired Python hunter
+        /// ema_pullback declares as target1_price (tp_r_mult, default 1.8).</summary>
+        [NinjaScriptProperty]
+        [Range(0.1, 10.0)]
+        [Display(Name = "Queen Target R-Mult", Order = 6, GroupName = "EMA Pullback")]
+        public double QueenTargetRMult { get; set; }
+
         private Indicators.Vinay.EMAPullbackIndicator emaIndicator;
 
         protected override string GetStrategyName() => "EMAPullback";
@@ -86,6 +94,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             PullbackProximity = 0.3;
             MinPullbackBars = 1;
             UseEngulfingConfirmation = true;
+            QueenTargetRMult = 1.8;   // ema_pullback twin: tp_r_mult default
 
             AddSecondaryTimeframe = false; // Self-contained on chart
         }
@@ -128,9 +137,20 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // Signal marker — same draw the original made on a signal bar
             if (DrawVisuals) DrawEmaSignalArrow(sig, "");
 
+            // Section 11 item 19: the DECLARED payoff, entry +/- risk x R --
+            // the same number the ema_pullback twin declares. Risk is the
+            // distance to the stop the indicator proposes; NaN stop = no
+            // declaration (the base falls back to bps, logged).
+            double stop = emaIndicator.StopLossSeries[0];
+            if (!double.IsNaN(stop) && stop > 0)
+            {
+                double risk = Math.Abs(Close[0] - stop);
+                if (risk > 0)
+                    e.DeclareTarget(Close[0] + (sig > 0 ? risk : -risk) * QueenTargetRMult);
+            }
+
             // The stop the indicator proposes, as a magnitude for the win/loss
             // comparison — not a criterion (it cannot fail).
-            double stop = emaIndicator.StopLossSeries[0];
             double stopAtrDist = double.IsNaN(stop) || stop <= 0
                 ? double.NaN
                 : Math.Abs(Close[0] - stop) / (AtrPeriod > 0 ? Math.Max(1.0, GetCustomAtr()) : 1.0);

@@ -515,6 +515,12 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 {
                     e.Trigger(longRaw ? "long" : "short");
 
+                    // Section 11 item 19: the DECLARED payoff -- the Bollinger
+                    // mid, exactly what the paired Python hunter mean_reversion
+                    // declares as target1_price. The base owns the right-side
+                    // guard and the bps fallback.
+                    e.DeclareTarget(mid0);
+
                     // SHORT-only filter — recorded even when ShortOnly is false
                     e.Gate("long_allowed", !(ShortOnly && longRaw));
 

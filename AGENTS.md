@@ -103,7 +103,7 @@ measured · **2** = a required stage raised.
 ## Known C# bot defects
 
 Do not re-derive these. `docs/architecture/BOT_FIX_BACKLOG.md` carries tickets
-B1–B9 with a loop prompt; `scripts/trading_framework/tests/known_bot_divergences.py`
+B1-B10 with a loop prompt; `scripts/trading_framework/tests/known_bot_divergences.py`
 is its machine-readable half and a test fails if the two drift apart. The one to
 know: **`BBMRReversionBot` allows 99 trades/day and the Python `mean_reversion`
 that predicts it now allows no cap at all** (`risk.maxTradesPerDay: null` since

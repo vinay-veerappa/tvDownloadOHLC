@@ -257,6 +257,10 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                         customMtfLimit = double.NaN;
                         customMtfStop = tradeDir == 1 ? entryP - slDist : entryP + slDist;
 
+                        // Section 11 item 19: the DECLARED payoff -- 1R of the
+                        // actual stop distance, the same number the ifvg_cisd
+                        // twin declares (r_mult_tp1 = 1.0).
+                        e.DeclareTarget(entryP + (tradeDir == 1 ? slDist : -slDist));
                         e.Measure("stop_bps", StopLossBps, StopLossBps);
 
                         if (DrawVisuals)
@@ -380,6 +384,11 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                                 double actualSlDist = Math.Min(stopDist, maxSlDist);
                                 customMtfStop = tradeDir == 1 ? c0 - actualSlDist : c0 + actualSlDist;
 
+                                // Section 11 item 19: the DECLARED payoff -- 1R
+                                // of the effective stop distance, matching the
+                                // ifvg_cisd twin (r_mult_tp1 = 1.0).
+                                e.DeclareTarget(c0 + (tradeDir == 1 ? actualSlDist : -actualSlDist));
+
                                 // Reset state
                                 armedDirection = 0;
                                 wickState = 0;
@@ -451,6 +460,15 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             int sig = ictIndicator.SignalSeries[0];
             e.Trigger(sig != 0, sig == 1 ? "long" : "short");
+
+            // Section 11 item 19: the DECLARED payoff for the single-TF path --
+            // 1R of the indicator's own stop, matching the ifvg_cisd twin.
+            if (sig != 0)
+            {
+                double sl = ictIndicator.StopLossSeries[0];
+                if (!double.IsNaN(sl) && sl > 0)
+                    e.DeclareTarget(Close[0] + (sig > 0 ? 1.0 : -1.0) * Math.Abs(Close[0] - sl));
+            }
 
             if (sig != 0 && DrawVisuals)
             {

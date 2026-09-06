@@ -38,6 +38,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         [Display(Name = "Signal Cooldown Bars", Order = 3, GroupName = "VWAP Reclaim")]
         public int CooldownBars { get; set; }
 
+        /// <summary>Section 11 item 19: the queen-leg payoff as an R-multiple of
+        /// the stop distance -- the same number the paired Python hunter
+        /// vwap_reclaim declares as target1_price (tp_r_mult, default 1.8).</summary>
+        [NinjaScriptProperty]
+        [Range(0.1, 10.0)]
+        [Display(Name = "Queen Target R-Mult", Order = 4, GroupName = "VWAP Reclaim")]
+        public double QueenTargetRMult { get; set; }
+
         private Indicators.Vinay.VWAPReclaimIndicator vwapIndicator;
 
         protected override string GetStrategyName() => "VWAPReclaim";
@@ -68,6 +76,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             ConfirmationBars = 2;
             MinPriorBars = 2;
             CooldownBars = 15;
+            QueenTargetRMult = 1.8;   // vwap_reclaim twin: tp_r_mult default
 
             AddSecondaryTimeframe = false;
         }
@@ -100,6 +109,20 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
             int sig = vwapIndicator.SignalSeries[0];
             e.Trigger(sig != 0, sig == 1 ? "long" : "short");
+
+            // Section 11 item 19: the DECLARED payoff, entry +/- risk x R --
+            // the same number the vwap_reclaim twin declares. NaN stop = no
+            // declaration (bps fallback, logged).
+            if (sig != 0)
+            {
+                double stop = vwapIndicator.StopLossSeries[0];
+                if (!double.IsNaN(stop) && stop > 0)
+                {
+                    double risk = Math.Abs(Close[0] - stop);
+                    if (risk > 0)
+                        e.DeclareTarget(Close[0] + (sig > 0 ? risk : -risk) * QueenTargetRMult);
+                }
+            }
 
             if (sig == 0 || !DrawVisuals) return;
 

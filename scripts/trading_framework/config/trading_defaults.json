@@ -188,7 +188,9 @@
     "slippageTicks": 1,
     "commissionPerContractRoundTrip": 0.62,
     "defaultContracts": 1,
-    "calculate": "OnBarClose"
+    "calculate": "OnBarClose",
+    "queenBps": 10.0,
+    "runnerBps": 30.0
   },
   "nt8": {
     "_doc": [

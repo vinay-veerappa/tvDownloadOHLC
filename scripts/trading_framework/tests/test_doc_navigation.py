@@ -92,7 +92,7 @@ def test_the_bot_worklist_range_matches_the_tickets_that_exist():
         body = _text(doc)
         # Only RANGE citations ("the worklist, B1-B6"). A prose reference to
         # B1-B6 as the EVIDENCE for a claim is correct and must not be rewritten.
-        for m in re.finditer(r"worklist[^\n]{0,40}?B1[–-]B(\d)", body):
+        for m in re.finditer(r"worklist[^\n]{0,40}?B1[–-]B(\d+)", body):
             assert int(m.group(1)) == highest, (
                 "{} advertises the worklist as B1-B{} but it goes to B{}"
                 .format(doc.name, m.group(1), highest))

@@ -291,6 +291,48 @@ still `private` there.
 
 ---
 
+## B10 — the queen leg must honour the strategy's DECLARED target ✅ DONE 2026-09-05
+
+| | |
+|---|---|
+| **Bots** | BBMRReversionBot, EMAPullbackBot, FailedAuctionBot, VWAPReclaimBot, ICTFVGCISDBot (the CoverTheQueen/FixedTP1TP2 five with a declaring Python twin) |
+| **Owner** | `nt8-riskguard` → `strategies/Vinay/RiskManagerBase.cs` (the bracket) + this repo (`GovernedStrategy` the declaration) |
+| **Found by** | the Python close of section 11 item 19 (option A, user-ratified): the sanctioned engine now exits the queen leg at the hunter's declared `target1_price`, so bot parity carried a NAMED divergence until the bots learned it |
+
+**What shipped.** `SetupEvaluation.DeclareTarget(price)` -- the same
+declare-don't-act shape as Trigger/Gate/Measure. `GovernedStrategy.CheckForSignal`
+(sealed, unchanged) reads the declaration, logs it either way
+(`declared_queen_target` used / `queen_bps_fallback` with the reason -- a
+refusal that is silent is the same defect class as one that never happened),
+and hands the raw declaration to the risk base through a new virtual hook
+`GetDeclaredQueenTarget(signal, entryPrice)`, captured at arm time exactly
+like `GetCustomLimitPrice`. `RiskManagerBase.EnterTrade`'s CoverTheQueen path
+applies the FILL-TIME guard against the EFFECTIVE entry (which may be a limit
+price, not the close the note was recorded against) and falls back to the
+frozen queen_bps on NaN / absent / wrong-side. The runner leg is UNCHANGED at
+runner_bps and the BE lock does not move: ADR-023 Cover-The-Queen is frozen.
+
+**Declarations, one per bot's Python twin**: BBMR -> the Bollinger mid;
+EMAPullback / FailedAuction / VWAPReclaim -> entry +/- (stop distance) x the
+twin's `tp_r_mult` (1.8 / 2.0 / 1.8, as a `QueenTargetRMult` parameter, not a
+literal); ICTFVGCISD -> 1R of its effective stop on all three paths (MTF
+confirm, single-TF, re-entry). Bots with no Python twin (KeltnerChannelBot,
+STTrendBot, Bandits8020Bot, the Strat pair -- FixedTP1TP2 already carries its
+own TP1) declare nothing, which behaves exactly like the bps fallback, logged.
+
+** queenBps / runnerBps moved into `trading_defaults.json` (execution block)
+and are emitted as `TradingDefaults.QueenBps` / `RunnerBps` -- the 0.0010
+literal in the risk base was a hand-set number nothing froze.**
+
+**Verification.** riskguard gates 17/17 + suite 3595/0 at `v1.68.0`
+(`1ebad82`); bridge pin bumped (`5093041`); NT8 compile green. Behaviour
+smoke on BBMRReversionBot: all 28 entries carry `declared_queen_target`
+notes naming the Bollinger mid, and Leg1 exits match the declared value
+(trade `..._L_00002_Leg1` exit 22029.00 vs logged `used: 22029.1`); runner
+legs, quantities and the 16:00 clamp unchanged.
+
+---
+
 ## The loop prompt
 
 Paste this with `<TICKET>` replaced by one ID above. Two things it deliberately

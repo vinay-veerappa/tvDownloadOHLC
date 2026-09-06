@@ -149,6 +149,11 @@ def render(raw: str) -> str:
     a("        public const int    SlippageTicks   = {};".format(execu["slippageTicks"]))
     a("        public const double CommissionRT    = {};".format(execu["commissionPerContractRoundTrip"]))
     a("        public const int    DefaultContracts = {};".format(execu["defaultContracts"]))
+    # Section 11 item 19: the CoverTheQueen bracket distances, bps of entry.
+    # The queen leg honours a DECLARED target when one is on the right side;
+    # these are the fallback the runner always carries.
+    a("        public const double QueenBps       = {};".format(execu["queenBps"]))
+    a("        public const double RunnerBps       = {};".format(execu["runnerBps"]))
     a("")
     a("        // ---- NT8 Strategy Analyzer (asserted, never written) -----------")
     a('        public const string GlobalMergePolicy = "{}";'.format(nt8["globalMergePolicy"]))

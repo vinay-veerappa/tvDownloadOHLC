@@ -19,7 +19,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     /// </summary>
     public static class TradingDefaults
     {
-        public const string SourceHash = "92c5427858251e03";
+        public const string SourceHash = "b631464a5c80e448";
         public const string FrozenOn   = "2026-09-05";
 
         // ---- Instrument (ADR-009: micros are the traded class) ----------
@@ -77,6 +77,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         public const int    SlippageTicks   = 1;
         public const double CommissionRT    = 0.62;
         public const int    DefaultContracts = 1;
+        public const double QueenBps       = 10.0;
+        public const double RunnerBps       = 30.0;
 
         // ---- NT8 Strategy Analyzer (asserted, never written) -----------
         public const string GlobalMergePolicy = "MergeNonBackAdjusted";
