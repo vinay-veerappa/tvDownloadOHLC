@@ -92,7 +92,7 @@ class StratComboDetector:
         min_rr_ratio: float = 0.0,
     ) -> list[StratSetup]:
         """Scan an OHLC DataFrame for all confirmed Strat setups."""
-        df_strat = classify_bars_df(df)
+        df_strat = classify_bars_df(df, tick_size=self.tick_size)
         cols = {c.lower(): c for c in df_strat.columns}
         h = df_strat[cols["high"]].values
         l = df_strat[cols["low"]].values

@@ -139,7 +139,7 @@ class StratSignalEngine:
         sig = _resample_ohlc(base, signal_tf)
         if len(sig) < 5:
             return pd.DataFrame(columns=OUTPUT_COLUMNS)
-        sig_cls = classify_bars_df(sig, wick_threshold=cfg.wick_threshold)
+        sig_cls = classify_bars_df(sig, wick_threshold=cfg.wick_threshold, tick_size=tick)
 
         # FTFC TF opens ffilled onto the signal index
         ftfc_tfs: list[str] = list(
@@ -169,7 +169,8 @@ class StratSignalEngine:
         # HTF trend bias series (60m strat type ffilled: 2U=+1, 2D=-1 else 0)
         htf_bias = pd.Series(0, index=sig.index, dtype=int)
         try:
-            htf = classify_bars_df(_resample_ohlc(base, _norm_tf(cfg.htf_trend_tf)))
+            htf = classify_bars_df(_resample_ohlc(base, _norm_tf(cfg.htf_trend_tf)),
+                                   tick_size=tick)
             st_htf = htf["strat_type"].reindex(sig.index, method="ffill").fillna(0)
             htf_bias = (
                 (st_htf == int(StratType.TWO_UP)).astype(int)
