@@ -6,37 +6,28 @@ together - never in only one side." That is a comment, and a comment cannot fail
 `scripts/parity/strat_core_parity.py` runs 874 cases through both languages; this
 is what makes the result binding.
 
-ONE DIVERGENCE IS KNOWN AND QUARANTINED, and the quarantine is deliberately
-narrow. `WickType` suppresses hammer/shooter on a bar whose range is at most one
-tick:
+ONE DIVERGENCE WAS KNOWN AND QUARANTINED -- and it CLOSED 2026-09-05, when the
+WickType range guard was decided (STRATEGY_WORKFLOW.md section 11 item 2). The
+quarantine had been narrow on purpose:
 
     C#      if (range <= tickSize) return 0;
     Python  if total_range > 1e-8:   ... classify wicks ...
 
-Measured: 24 of 309 wick cases disagree, every one of them on a bar with range
-<= 0.25, and nothing else in the core disagrees at all. It is reachable on real
+Measured: 24 of 309 wick cases disagreed, every one of them on a bar with range
+<= 0.25, and nothing else in the core disagreed at all. It is reachable on real
 NQ data, not only on synthetic input -- a one-tick bar that opens and closes at
-its high has a lower-wick ratio of 1.0, so Python calls it a HAMMER and C# calls
-it nothing.
+its high has a lower-wick ratio of 1.0, so Python called it a HAMMER and C# called
+it nothing. THE DECISION: adopt the C# rule. A one-tick bar has no wick structure
+to read -- the open and close sit on tick boundaries, so the "wick ratio" is a
+quantization artifact, always 0 or 1. Python now suppresses sub-tick bars too
+(`taxonomy.classify_bar(tick_size=...)`, `classify_bars_df(tick_size=...)`) and
+the parity harness passes the tick size to both sides. ALL 874 CASES NOW AGREE.
 
-THE TESTS BELOW DO NOT ASSERT THAT THE DIVERGENCE EXISTS. Asserting a defect is
-present is how a wrong test starts enforcing itself: someone fixes the rule, this
-goes red, and the fix gets reverted to make it green. They assert its SCOPE
-instead --
-
-    * nothing outside `wick` may diverge, at all;
-    * a `wick` divergence may only occur on a bar with range <= tick.
-
-so closing the divergence leaves these green, while ANY new divergence, in any
-function, on any other input, fails.
-
-WHICH SIDE IS RIGHT IS A DECISION, NOT A BUG FIX, which is why it is not made
-here. A one-tick bar has no wick structure to read: on a 0.25-tick instrument the
-open and close must both sit on tick boundaries, so the "wick ratio" of such a
-bar is a quantization artifact, always 0 or 1. Suppressing it (the C# rule) looks
-right, and adopting it would CHANGE existing Python backtest results for the_strat
--- which is exactly the sort of change that should land through a recorded run
-rather than quietly.
+THE TESTS BELOW DO NOT ASSERT THAT A DIVERGENCE EXISTS, AND NOW NONE DOES. The
+scope tests are kept because their value is the failing direction they still
+guard: any NEW divergence, in any function, on any input, fails. The positive
+tests pin the suppression itself on the Python side, so a revert of
+`tick_size` handling goes red here rather than only in the parity run.
 """
 import pytest
 
@@ -120,8 +111,8 @@ def test_the_only_divergence_is_wick_on_sub_tick_bars(divergences):
 def test_the_quarantined_divergence_is_the_range_guard_and_nothing_else(divergences):
     """Pins the CAUSE, so a different sub-tick divergence is not absorbed.
 
-    Every quarantined case must be one where C# returned 0 (suppressed by
-    `range <= tickSize`) while Python returned a real classification. A case where
+    Kept from the quarantined era: if the divergence ever REOPENS, every case
+    must still be one where C# suppressed (`range <= tickSize`). A case where
     C# returned a classification and Python returned 0 would be a DIFFERENT
     defect wearing the same shape.
     """
@@ -130,6 +121,67 @@ def test_the_quarantined_divergence_is_the_range_guard_and_nothing_else(divergen
         assert "cs='0'" in r["detail"], (
             "a sub-tick wick divergence where C# did NOT suppress -- this is not "
             "the known range-guard difference:\n" + _fmt([r]))
+
+
+# --------------------------------------------------------------------------- #
+# The CLOSED decision, pinned on the Python side
+# --------------------------------------------------------------------------- #
+
+def test_python_suppresses_the_wick_on_a_sub_tick_bar():
+    """The decision itself, on the Python side (C# always had it).
+
+    The motivating case: a one-tick bar that opens and closes at its high has
+    a lower-wick ratio of 1.0. Without the guard Python called that a HAMMER;
+    with it, both sides return NONE. `tick_size=None` deliberately keeps the
+    old behavior, so callers who cannot supply a tick size are not silently
+    re-decided.
+    """
+    from scripts.libs_py.the_strat.taxonomy import ActionableWickType, classify_bar
+
+    # The motivating case: a one-tick bar that OPENS AND CLOSES AT ITS HIGH.
+    # lower wick = 10.25 - 10.0 = full range, ratio 1.0.
+    o, c, h, l = 10.25, 10.25, 10.25, 10.0   # range == exactly one tick
+    suppressed = classify_bar(h, l, h, l, open_price=o, close_price=c,
+                              wick_threshold=0.65, tick_size=TICK)
+    assert suppressed.wick_type == ActionableWickType.NONE
+
+    legacy = classify_bar(h, l, h, l, open_price=o, close_price=c,
+                          wick_threshold=0.65, tick_size=None)
+    assert legacy.wick_type == ActionableWickType.HAMMER, (
+        "tick_size=None must keep the pre-decision behavior; if this fails the "
+        "guard has been made unconditional and callers that pass no tick size "
+        "silently changed meaning")
+
+    # The failing direction: a bar WIDER than one tick still classifies.
+    # classify_bar(high, low, prev_high, prev_low, ...): h=17.0, l=7.0.
+    wide = classify_bar(17.0, 7.0, 17.0, 7.0, open_price=16.5, close_price=17.0,
+                        wick_threshold=0.65, tick_size=TICK)
+    assert wide.wick_type == ActionableWickType.HAMMER
+
+
+def test_classify_bars_df_suppresses_the_wick_when_given_a_tick_size():
+    """The vectorized path carries the same decision, or the hunter and the
+    single-bar paths would disagree with each other."""
+    import numpy as np
+    import pandas as pd
+
+    from scripts.libs_py.the_strat.taxonomy import classify_bars_df
+
+    df = pd.DataFrame({
+        "open":   [10.25, 16.5],
+        "high":   [10.25, 17.0],   # row 0: one tick wide, o=c=h (ratio 1.0); row 1: wide hammer
+        "low":    [10.0, 7.0],
+        "close":  [10.25, 17.0],
+    })
+    out = classify_bars_df(df, wick_threshold=0.65, tick_size=TICK)
+    assert int(out["wick_type"].iloc[0]) == 0, (
+        "a one-tick bar must carry no wick")
+    assert int(out["wick_type"].iloc[1]) == 1, (
+        "a wide hammer must still classify -- the guard is not a blanket zero")
+
+    legacy = classify_bars_df(df, wick_threshold=0.65, tick_size=None)
+    assert int(legacy["wick_type"].iloc[0]) == 1, (
+        "tick_size=None must keep the pre-decision behavior")
 
 
 def _fmt(rows):

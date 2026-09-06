@@ -208,8 +208,10 @@ def python_result(case: Dict[str, Any]) -> List[str]:
 
     elif fn == "wick":
         o, c, h, l, thr = p[0], p[1], p[2], p[3], p[4]
+        # Section 11 item 2: both sides suppress sub-tick bars, so Python must
+        # see the same tick size the C# harness was handed (p[5]).
         info = classify_bar(h, l, h, l, open_price=o, close_price=c,
-                            wick_threshold=thr)
+                            wick_threshold=thr, tick_size=p[5])
         out[0] = str(int(info.wick_type))
 
     elif fn == "targets":

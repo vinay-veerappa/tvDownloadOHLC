@@ -7,6 +7,13 @@ Implements Rob Smith's "The Strat" candle numbering:
   - Type 3 (Outside Bar): High > Prev High and Low < Prev Low
 
 Also provides actionable wick classification (Hammer and Shooter definitions).
+
+WICK RANGE GUARD (decided 2026-09-05, STRATEGY_WORKFLOW.md section 11 item 2):
+a bar whose entire range is <= one tick carries no actionable wick. On such a
+bar every price position is quantized to the tick grid, so the wick ratio is a
+rounding artifact that reads as 0 or 1, and classifying it invents a setup from
+noise. C# StratCore.cs has always suppressed them; Python now agrees. This
+changes existing the_strat results and lands through a recorded run.
 """
 
 from __future__ import annotations
@@ -66,6 +73,7 @@ def classify_bar(
     open_price: float | None = None,
     close_price: float | None = None,
     wick_threshold: float = 0.65,
+    tick_size: float | None = None,
 ) -> StratBarInfo:
     """Classify a single candle according to The Strat taxonomy.
 
@@ -79,6 +87,10 @@ def classify_bar(
         Current candle open and close (needed for wick/body calculations).
     wick_threshold : float
         Proportion of total range required to qualify as hammer/shooter (default 0.65).
+    tick_size : float, optional
+        The instrument's tick size. A bar whose total range is <= this carries
+        no actionable wick (section 11 item 2); None keeps the old behavior,
+        which is why the parity harness passes it explicitly.
 
     Returns
     -------
@@ -103,6 +115,21 @@ def classify_bar(
 
     if open_price is not None and close_price is not None:
         total_range = high - low
+        # Section 11 item 2: suppress sub-tick bars, mirroring StratCore.cs.
+        # The caller supplies the instrument's tick size; when it is not known,
+        # callers pass the frame through classify_bars_df, which takes one too.
+        if tick_size is not None and total_range <= tick_size:
+            return StratBarInfo(
+                strat_type=st,
+                is_inside=(st == StratType.INSIDE),
+                is_directional_up=(st == StratType.TWO_UP),
+                is_directional_down=(st == StratType.TWO_DOWN),
+                is_outside=(st == StratType.OUTSIDE),
+                wick_type=ActionableWickType.NONE,
+                body_ratio=0.0,
+                upper_wick_ratio=0.0,
+                lower_wick_ratio=0.0,
+            )
         if total_range > 1e-8:
             body_top = max(open_price, close_price)
             body_bottom = min(open_price, close_price)
@@ -135,6 +162,7 @@ def classify_bar(
 def classify_bars_df(
     df: pd.DataFrame,
     wick_threshold: float = 0.65,
+    tick_size: float | None = None,
 ) -> pd.DataFrame:
     """Vectorized Strat classification for an OHLC DataFrame.
 
@@ -145,6 +173,10 @@ def classify_bars_df(
       - 'wick_type': int (1=Hammer, -1=Shooter, 0=None)
       - 'upper_wick_ratio': float
       - 'lower_wick_ratio': float
+
+    `tick_size` suppresses the wick classification on bars whose range is <=
+    one tick (section 11 item 2, mirroring C# StratCore.cs). None keeps the
+    old behavior.
 
     Returns
     -------
@@ -196,7 +228,8 @@ def classify_bars_df(
     if o_col and c_col:
         o = df_out[o_col].values
         c = df_out[c_col].values
-        tot_range = np.maximum(high - low, 1e-8)
+        raw_range = high - low
+        tot_range = np.maximum(raw_range, 1e-8)
         body_top = np.maximum(o, c)
         body_bottom = np.minimum(o, c)
         upper_wick = high - body_top
@@ -214,8 +247,12 @@ def classify_bars_df(
 
         wick_arr[hammer_mask] = ActionableWickType.HAMMER
         wick_arr[shooter_mask] = ActionableWickType.SHOOTER
-        if len(df_out) > 0:
-            wick_arr[0] = ActionableWickType.NONE
+
+        # Section 11 item 2: a sub-tick bar carries no actionable wick. The
+        # ratio on such a bar is a quantization artifact (0 or 1), exactly the
+        # case StratCore.cs suppresses with `range <= tickSize`.
+        if tick_size is not None:
+            wick_arr[raw_range <= tick_size] = ActionableWickType.NONE
 
         df_out["wick_type"] = wick_arr
 
