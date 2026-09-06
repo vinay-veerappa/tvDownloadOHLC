@@ -49,6 +49,7 @@ from scripts.libs_py.price_action.volatility_leading import (
     compute_bar_overlap,
 )
 from scripts.strategies.ifvg_cisd.core.config import load_config
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 
 def htf_completion_label(htf_index: pd.DatetimeIndex, freq_minutes: int) -> pd.DatetimeIndex:
@@ -379,6 +380,9 @@ class IFVGCISDStrategy:
     def __init__(self, ticker: str = "NQ1") -> None:
         self.ticker = ticker
         self.strategy_name = "5m IFVG CISD Distribution"
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt() on every path.
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(
         self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None
@@ -531,15 +535,49 @@ class IFVGCISDStrategy:
         sig_mask_long = time_mask & df["htf_long"]
         sig_mask_short = time_mask & df["htf_short"]
 
+        # The BASE trigger before the optional filters narrow it, so the
+        # filter gates can actually fail (section 5.5).
+        base_long, base_short = sig_mask_long.copy(), sig_mask_short.copy()
+
+        # Applied-filter ledger for the decision log.
+        applied_filters: list = []
+
         if use_ker_filter:
             ker_series = compute_kaufman_efficiency(df, length=10)
+            applied_filters.append(
+                ("ker_efficiency", ker_series >= ker_min, ker_series, ker_min))
             sig_mask_long = sig_mask_long & (ker_series >= ker_min)
             sig_mask_short = sig_mask_short & (ker_series >= ker_min)
 
         if use_barbwire_filter:
             overlap_series = compute_bar_overlap(df, length=5)
+            applied_filters.append(
+                ("not_barbwire", overlap_series <= max_bar_overlap,
+                 overlap_series, max_bar_overlap))
             sig_mask_long = sig_mask_long & (overlap_series <= max_bar_overlap)
             sig_mask_short = sig_mask_short & (overlap_series <= max_bar_overlap)
+
+        # Decision log (section 5.5). TRIGGER = the HTF CISD+iFVG state bar;
+        # gates: the entry window (RTH, ATR-known, lunch), the optional
+        # filters, and the daily trade cap -- the loop's `continue` is the
+        # cap's rejection and is the one criterion the loop hid. The log
+        # records which qualifying bars the cap REFUSED; the loop stays the
+        # authority on which bar trades.
+        _day = pd.Series([d.date() for d in df.index], index=df.index)
+        _qual = (sig_mask_long | sig_mask_short).astype(int)
+        _ordinal = _qual.groupby(_day).cumsum()
+        under_cap = _ordinal <= max_trades_per_day
+        rec = (
+            GateRecorder(df.index, run_id="", strategy="ifvg_cisd")
+            .trigger(base_long, "long")
+            .trigger(base_short, "short")
+            .gate("entry_window_rth_atr", time_mask)
+        )
+        for gname, gmask, gval, gthr in applied_filters:
+            rec = rec.gate(gname, gmask, value=gval, threshold=gthr)
+        rec = rec.gate("daily_trade_cap", under_cap,
+                       value=_ordinal, threshold=max_trades_per_day)
+        self.last_decisions = rec.to_frame(signal_prefix="ic_")
 
         # Signal Extraction & Daily Trade Throttling
         trades: list[dict[str, Any]] = []
@@ -695,6 +733,11 @@ class IFVGCISDStrategy:
         signal_rows: list[dict[str, Any]] = []
         last_signal_date: Optional[Any] = None
         daily_trades = 0
+        # Decision-log tallies for the loop's three refusals (section 5.5).
+        # The kernel fires at most one signal per HTF bar, so per-signal rows
+        # (not per-bar masks) are the honest shape here; a mask over 1m bars
+        # would re-describe what the kernel already narrowed.
+        _log_rows: list = []
 
         for j in range(len(sig_idx)):
             i = sig_idx[j]
@@ -711,16 +754,22 @@ class IFVGCISDStrategy:
                 last_signal_date = current_date
                 daily_trades = 0
             if daily_trades >= max_trades_per_day:
+                _log_rows.append((ts, direction, "daily_trade_cap", 0,
+                                  max_trades_per_day))
                 continue
 
             # Session window (ET) — from the shared manifest
             t = ts.time()
             hhmm = ts.hour * 100 + ts.minute
             if not (cfg.earliest_entry_hhmm <= hhmm <= cfg.latest_entry_hhmm):
+                _log_rows.append((ts, direction, "entry_window_rth", 0,
+                                  cfg.latest_entry_hhmm))
                 continue
             if cfg.lunch_filter_enabled and (
                 cfg.lunch_start_hhmm <= hhmm <= cfg.lunch_end_hhmm
             ):
+                _log_rows.append((ts, direction, "lunch_window", 0,
+                                  cfg.lunch_end_hhmm))
                 continue
 
             target1_price = entry_price + (risk * r_mult_tp1) if direction == "LONG" else entry_price - (risk * r_mult_tp1)
@@ -737,7 +786,35 @@ class IFVGCISDStrategy:
                 "risk_pts": risk,
                 "entry_mechanism": entry_mechanism,
             })
+            _log_rows.append((ts, direction, "", 1, None))
             daily_trades += 1
+
+        # Decision log (section 5.5): one row per kernel signal with its
+        # blocking gate named. Built directly because the per-row loop is
+        # the authority here; the schema is the shared COLUMNS.
+        from scripts.trading_framework.reporting.decision_log import COLUMNS
+        _n = len(_log_rows)
+        _df_log = pd.DataFrame({
+            "schema_version": [1] * _n,
+            "run_id": [""] * _n,
+            "side": ["python"] * _n,
+            "strategy": ["ifvg_cisd"] * _n,
+            "seq": list(range(1, _n + 1)),
+            "bar_time": [r[0].isoformat() if hasattr(r[0], "isoformat") else str(r[0]) for r in _log_rows],
+            "session": [""] * _n,
+            "direction": [r[1] for r in _log_rows],
+            "decision": ["REJECTED" if r[2] else "ENTRY" for r in _log_rows],
+            "signal_name": ["icv_{}".format(k + 1) for k in range(_n)],
+            "gate": [r[2] for r in _log_rows],
+            "kind": ["gate"] * _n,
+            "gate_pass": [r[3] for r in _log_rows],
+            "gate_value": ["" for _ in _log_rows],
+            "gate_threshold": [str(r[4]) if r[4] is not None else "" for r in _log_rows],
+            "detail": ["" for _ in _log_rows],
+        })
+        self.last_decisions = _df_log.reindex(columns=list(COLUMNS)) if _n else (
+            GateRecorder(pd.DatetimeIndex([]), run_id="",
+                         strategy="ifvg_cisd").to_frame(signal_prefix="ic_"))
 
         return pd.DataFrame(signal_rows, columns=self.OUTPUT_COLUMNS)
 

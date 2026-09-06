@@ -78,7 +78,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             CooldownBars = 15;
             QueenTargetRMult = 1.8;   // vwap_reclaim twin: tp_r_mult default
 
-            AddSecondaryTimeframe = false;
         }
 
         protected override void OnInitialize()

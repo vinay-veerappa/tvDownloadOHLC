@@ -139,7 +139,15 @@ class NQStatsEngine:
         
         # 1H Continuation (09:00-10:00) Anchor
         # Green 9AM -> 70.6% Green close
-        c_anchor = (self.sessions['ib_close'] > self.sessions['ib_open']).map({True: "BULLISH (70.6%)", False: "BEARISH"})
+        # ADR-026: ib_close/ib_open are NaN until the IB window closes, and
+        # the old (a > b).map({True: ..., False: ...}) coerced NaN to False --
+        # "BEARISH" on a comparison that had not happened. "Unknown" is the
+        # honest label until both inputs exist.
+        _ib_known = self.sessions['ib_close'].notna() & self.sessions['ib_open'].notna()
+        _ib_up = self.sessions['ib_close'] > self.sessions['ib_open']
+        c_anchor = pd.Series("Unknown", index=self.stats.index)
+        c_anchor.loc[_ib_known & _ib_up] = "BULLISH (70.6%)"
+        c_anchor.loc[_ib_known & ~_ib_up] = "BEARISH"
         self.stats['anchor'] = c_anchor
         
         self.stats['p12'] = p12

@@ -123,9 +123,13 @@ class NT8ParityBacktester(BaseBacktester):
     def _prepare_series(self, signals, data):
         """Normalise either accepted input shape to per-bar arrays.
 
-        Returns (signal, limit, stop, alignment_report). The alignment report is
-        the same structure `VectorizedBacktester` produces, so a run record can
-        store it and a caller can see how many signals actually landed.
+        Returns (signal, limit, stop, target, alignment_report). The target
+        array (section 11 item 19) carries the hunter's declared
+        `target1_price` per bar, NaN where none was declared; the engine
+        honours it for the queen leg and falls back to `queen_bps` on NaN.
+        The alignment report is the same structure `VectorizedBacktester`
+        produces, so a run record can store it and a caller can see how many
+        signals actually landed.
         """
         default_stop_long = data["close"] * (1 - 0.0005)
         default_stop_short = data["close"] * (1 + 0.0005)
@@ -139,7 +143,9 @@ class NT8ParityBacktester(BaseBacktester):
                     "would silently produce NaN rather than failing.".format(
                         len(signals.index), len(data.index)))
             sl = np.where(signals.to_numpy() == 1, default_stop_long, default_stop_short)
-            return (signals, data["close"], pd.Series(sl, index=data.index),
+            # No target column exists in this shape: all-NaN -> bps fallback.
+            tgt = pd.Series(np.nan, index=data.index)
+            return (signals, data["close"], pd.Series(sl, index=data.index), tgt,
                     {"inputShape": "per_bar_series", "signals_in": int((signals != 0).sum()),
                      "signals_kept": int((signals != 0).sum())})
 
@@ -159,9 +165,12 @@ class NT8ParityBacktester(BaseBacktester):
                   if "stop_price" in signals.columns
                   else pd.Series(np.where(sig.to_numpy() == 1, default_stop_long,
                                           default_stop_short), index=data.index))
-            return sig, lmt, sl, {"inputShape": "per_bar_frame",
-                                  "signals_in": int((sig != 0).sum()),
-                                  "signals_kept": int((sig != 0).sum())}
+            tgt = (pd.Series(signals["target1_price"].to_numpy(), index=data.index)
+                   if "target1_price" in signals.columns
+                   else pd.Series(np.nan, index=data.index))
+            return sig, lmt, sl, tgt, {"inputShape": "per_bar_frame",
+                                       "signals_in": int((sig != 0).sum()),
+                                       "signals_kept": int((sig != 0).sum())}
 
         # (c) the canonical one-row-per-signal frame -- expand it onto the bars
         if all(c in signals.columns for c in self._CANONICAL_COLS):
@@ -181,6 +190,9 @@ class NT8ParityBacktester(BaseBacktester):
             lmt = data["close"].astype("float64").copy()
             sl = pd.Series(np.where(np.zeros(len(data)) == 1, default_stop_long,
                                     default_stop_short), index=data.index)
+            # Item 19: the declared target1_price, expanded onto the bars.
+            # NaN where a signal declared none -> the engine's bps fallback.
+            tgt = pd.Series(np.nan, index=data.index)
             if len(placed):
                 dirs = np.where(
                     placed["direction"].astype(str).str.lower().to_numpy() == "long",
@@ -188,7 +200,9 @@ class NT8ParityBacktester(BaseBacktester):
                 sig.iloc[idx] = dirs
                 lmt.iloc[idx] = placed["entry_price"].to_numpy(dtype="float64")
                 sl.iloc[idx] = placed["stop_price"].to_numpy(dtype="float64")
-            return sig, lmt, sl, alignment
+                if "target1_price" in placed.columns:
+                    tgt.iloc[idx] = placed["target1_price"].to_numpy(dtype="float64")
+            return sig, lmt, sl, tgt, alignment
 
         raise ValueError(
             "unrecognised signal frame: {} rows against {} bars, columns {}. "
@@ -223,9 +237,9 @@ class NT8ParityBacktester(BaseBacktester):
         pt_val, tick_sz = _inst.point_value, _inst.tick_size
 
         # See _prepare_series: this block used to assume a PER-BAR frame and
-        # silently produced mismatched arrays for the canonical one-row-per-signal
+        # silently produce mismatched arrays for the canonical one-row-per-signal
         # frame that every registry strategy emits.
-        sig_series, lmt_series, sl_series, alignment = self._prepare_series(
+        sig_series, lmt_series, sl_series, tgt_series, alignment = self._prepare_series(
             signals, data)
 
         engine = NT8ParityEngine(
@@ -273,6 +287,7 @@ class NT8ParityBacktester(BaseBacktester):
                 signals=sig_series,
                 limit_prices=lmt_series,
                 stop_losses=sl_series,
+                target_prices=tgt_series,   # item 19: declared queen-leg target
                 queen_bps=queen_bps,
                 runner_bps=runner_bps,
                 order_timeout_bars=risk_params.get("order_timeout_bars", 6),

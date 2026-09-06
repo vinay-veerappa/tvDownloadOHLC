@@ -39,6 +39,7 @@ if _current_dir.name == "scripts":
         sys.path.insert(0, _root_dir)
 
 from scripts.libs_py.ict_engine import get_session_data, detect_swings
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 _COLS = ["signal_time", "direction", "entry_price", "stop_price", "target1_price"]
 _LAST_ENTRY_HOUR, _LAST_ENTRY_MIN = 14, 30
@@ -61,6 +62,9 @@ class ICTAsiaVolatilityStrategy:
     def __init__(self, ticker: str = "NQ1") -> None:
         self.ticker = ticker
         self.strategy_name = "ICT Asia Volatility / Judas Swing"
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt() on every path.
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(
         self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None
@@ -120,20 +124,22 @@ class ICTAsiaVolatilityStrategy:
             in_active_kz = np.ones(len(data), dtype=bool)
 
         # ── 3. Sweep detection (Judas Swing) ────────────────────────────────
+        # RAW sweep+recovery is the decision-log trigger; the range floor and
+        # the killzone are GATES so their rejections are visible (5.5).
         # A bullish Judas sweep: wick below Asian low then closes ABOVE it
         # → expect price to continue UP (stop hunt of sell-side liq.)
+        sweep_bull = (low < asian_lo) & (close > asian_lo)
         judas_long = (
-            (low < asian_lo)                      # wick below Asian low
-            & (close > asian_lo)                   # close recovers inside range
+            sweep_bull
             & (asian_range >= min_range)           # meaningful range only
             & in_active_kz
         )
 
         # A bearish Judas sweep: wick above Asian high then closes BELOW it
         # → expect price to continue DOWN (stop hunt of buy-side liq.)
+        sweep_bear = (high > asian_hi) & (close < asian_hi)
         judas_short = (
-            (high > asian_hi)                     # wick above Asian high
-            & (close < asian_hi)                   # close falls back inside range
+            sweep_bear
             & (asian_range >= min_range)
             & in_active_kz
         )
@@ -141,6 +147,30 @@ class ICTAsiaVolatilityStrategy:
         # Deduplicate: only first signal per day
         direction = np.where(judas_long, "long", np.where(judas_short, "short", None))
         mask = (direction == "long") | (direction == "short")
+
+        # Decision log (section 5.5): the sweep+recovery is the trigger; the
+        # gates are the Asian-range floor, the killzone window, and
+        # first-per-day. Recorded even when nothing sweeps.
+        is_first = pd.Series(False, index=idx)
+        if mask.any():
+            _dates = pd.Series(pd.to_datetime(idx).normalize(), index=idx)
+            first_mask = pd.Series(direction, index=idx).notna()
+            # first qualifying bar per day
+            _ord = first_mask.astype(int).groupby(_dates).cumsum()
+            first_bar = first_mask & (_ord == 1)
+            is_first |= first_bar
+        self.last_decisions = (
+            GateRecorder(idx, run_id="", strategy="ict_asia_volatility")
+            .trigger(pd.Series(sweep_bull, index=idx), "long")
+            .trigger(pd.Series(sweep_bear, index=idx), "short")
+            .gate("asian_range_floor",
+                  pd.Series(asian_range >= min_range, index=idx),
+                  value=pd.Series(asian_range, index=idx),
+                  threshold=min_range)
+            .gate("killzone_window", pd.Series(in_active_kz, index=idx))
+            .gate("first_signal_per_day", is_first)
+            .to_frame(signal_prefix="iav_")
+        )
 
         if not mask.any():
             return pd.DataFrame(columns=_COLS)

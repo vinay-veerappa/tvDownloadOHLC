@@ -5,6 +5,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Windows;
 using System.Windows.Media;
 using NinjaTrader.Cbi;
+using NinjaTrader.Data;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
@@ -165,21 +166,26 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             MaxRiskBps = Indicators.Vinay.IfvgCisdConfig.MaxRiskBps;
             EnableMidlineReclaims = Indicators.Vinay.IfvgCisdConfig.EnableMidlineReclaims;
 
-            AddSecondaryTimeframe = true;
+            // B9: the AddSecondaryTimeframe knob is gone. UseMtfExecution is the
+            // strategy's own decision and ConfigureStrategy() adds the 5m series
+            // itself (below).
             DebugMode = true;
         }
 
         protected override void ConfigureStrategy()
         {
+            // B9: the strategy owns its series. AddDataSeries is legal here --
+            // GovernedStrategy/RiskManagerBase call ConfigureStrategy() inside
+            // State.Configure. The 5m series is what the CISD indicator runs on.
             if (UseMtfExecution)
             {
-                AddSecondaryTimeframe = true;
+                AddDataSeries(BarsPeriodType.Minute, 5);
             }
         }
 
         protected override void OnInitialize()
         {
-            if (AddSecondaryTimeframe && BarsArray.Length > 1)
+            if (UseMtfExecution && BarsArray.Length > 1)
             {
                 // Run the 5-minute CISD indicator on BarsArray[1] (5m series).
                 // Signature parity contract: indicator params are
@@ -286,7 +292,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // ──────────────────────────────────────────────────────────
             // 1. MULTI-TIMEFRAME EXECUTION: 5m Structure + 1m Precision Entry
             // ──────────────────────────────────────────────────────────
-            if (AddSecondaryTimeframe && BarsArray.Length > 1)
+            if (UseMtfExecution && BarsArray.Length > 1)
             {
                 bool mtfWarmed = CurrentBars[0] >= 20 && CurrentBars[1] >= 50;
                 e.Gate("mtf_warmup", mtfWarmed, Math.Min(CurrentBars[0], CurrentBars[1]), 20);
@@ -503,7 +509,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetCustomLimitPrice(int signal, double currentPrice)
         {
-            if (AddSecondaryTimeframe && !double.IsNaN(customMtfLimit))
+            if (UseMtfExecution && !double.IsNaN(customMtfLimit))
                 return customMtfLimit;
 
             if (ictIndicator == null || CurrentBar < 50) return double.NaN;
@@ -515,7 +521,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         protected override double GetCustomStopPrice(int signal, double entryPrice)
         {
             double maxSlDist = entryPrice * (StopLossBps / 10000.0);
-            if (AddSecondaryTimeframe && !double.IsNaN(customMtfStop))
+            if (UseMtfExecution && !double.IsNaN(customMtfStop))
             {
                 double reqDist = Math.Abs(entryPrice - customMtfStop);
                 double actualDist = Math.Min(reqDist, maxSlDist);
@@ -535,7 +541,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetCustomProfitTarget(int signal, double entryPrice, double stopDistance)
         {
-            if (AddSecondaryTimeframe && !double.IsNaN(customMtfLimit))
+            if (UseMtfExecution && !double.IsNaN(customMtfLimit))
             {
                 double pts = customMtfLimit * (RunnerTargetBps / 10000.0);
                 return signal == 1 ? customMtfLimit + pts : customMtfLimit - pts;
@@ -555,7 +561,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
 
         protected override double GetPotentialLoss()
         {
-            if (AddSecondaryTimeframe && !double.IsNaN(customMtfStop))
+            if (UseMtfExecution && !double.IsNaN(customMtfStop))
             {
                 double dist = Math.Abs(Close[0] - customMtfStop);
                 return dist * GetPointValue() * Math.Max(1, DefaultQuantity);

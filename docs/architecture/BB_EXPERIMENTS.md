@@ -248,7 +248,7 @@ No Bollinger Bands remain. The BB entry was replaceable (E32), the midband targe
 - **Combined DD $218 < each single** ($694/$79) — true diversification, not just addition
 - ⚠️ ST daily PF 5.67 on daily-aggregated dollars is inflated by day-bucketing (per-trade PF was 3.01 points-only / 1.5 cost-adjusted in the original grid); treat as relative shape, not absolute
 
-### Prop sim on the combined portfolio (10×MES, honest convention)
+### Prop sim on the combined portfolio (10×MES, "honest convention" as of 2026-08-27)
 
 | Profile | Pass rate | Grade | Blow rate | Det-passed |
 |---|---|---|---|---|
@@ -256,7 +256,32 @@ No Bollinger Bands remain. The BB entry was replaceable (E32), the midband targe
 | Apex 50K | 76.2% | B | 6.2% | ✓ |
 | FTMO 50K | 52.8% | C | **0.0%** | ✓ |
 
-**This is the headline result of the entire review.** E22 alone: 0-47% pass (E27). Combined with the Supertrend engine: **85% TopStep / 76% Apex / 53% FTMO, all deterministic-passed, blow rates ≤15%.** The portfolio is fundable where the components are not.
+**This is the headline result of the entire review — AND IT DOES NOT SURVIVE
+THE CURRENT FROZEN POLICY.** E22 alone: 0-47% pass (E27). Combined with the
+Supertrend engine: 85% TopStep / 76% Apex / 53% FTMO, all deterministic-passed,
+blow rates ≤15% — the portfolio appeared fundable where the components are not.
+
+### ⚠️ RESTATEMENT (2026-09-05, STRATEGY_WORKFLOW §11.1 0.2/0.3)
+
+The E31 engine priced trades at **$0 commission / $0 slippage** (its own source:
+`range_strategy_comparison.py:713` — "NT8 parity: $0"). The execution policy
+frozen on 2026-09-05 says **$0.62/contract round-trip + 1 tick slippage**, and
+the adverse intrabar path is the default. Re-running the SAVED E31 trade series
+(`data/derived/bb_e31_*.csv`) through the same `PropFirmSimulator` with the
+real per-trade cost ($3.74 on the 2-contract pack):
+
+| Profile | As published | Restated (current policy) | Blow rate restated |
+|---|---|---|---|
+| TopStep 50K | 85.0% (A) | **44.6% (D)** | **54.3%** |
+| Apex 50K | 76.2% (B) | **40.3% (D)** | 31.4% |
+| FTMO 50K | 52.8% (C) | **24.2% (F)** | 2.7% |
+
+E22 net: +$1,130 → **+$233**. ST net: +$4,645 → **+$1,833**. The "fundable
+portfolio" was an artifact of free trading. The DIVERSIFICATION finding
+(−0.03 daily correlation, combined DD < each single) is real and survives —
+but the headline viability numbers are withdrawn. The E31 components must be
+re-validated under the current engine (adverse fills, declared targets, real
+costs) before any live evaluation, per the campaign verdict's own step (c).
 
 ### Campaign verdict (E01 → E33, 35 experiments)
 

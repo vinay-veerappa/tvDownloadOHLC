@@ -16,6 +16,7 @@ if _current_dir.name == "scripts":
         sys.path.insert(0, _root_dir)
 
 from scripts.utils.vectorized_indicators import VectorizedIndicators
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 class IBPullbackStrategy:
     """
@@ -50,6 +51,9 @@ class IBPullbackStrategy:
         self.fvg_end_time_override = fvg_end_time
         
         self.output_cols = ['signal_time', 'direction', 'entry_price', 'stop_price', 'target1_price']
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt().
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         """
@@ -250,15 +254,48 @@ class IBPullbackStrategy:
         # Construct Signal DF
         df['direction'] = np.nan
         df['direction'] = df['direction'].astype(object)
-        df.loc[long_trigger & entry_window & (df['bias'] == 'long'), 'direction'] = 'long'
-        df.loc[short_trigger & entry_window & (df['bias'] == 'short'), 'direction'] = 'short'
-        
+        bias_long_ok = (df['bias'] == 'long')
+        bias_short_ok = (df['bias'] == 'short')
+        df.loc[long_trigger & entry_window & bias_long_ok, 'direction'] = 'long'
+        df.loc[short_trigger & entry_window & bias_short_ok, 'direction'] = 'short'
+
         signals = df[df['direction'].notnull()].copy()
+        first_sigs = (signals.groupby('trading_date').head(1).copy()
+                      if not signals.empty else signals)
+        is_first = pd.Series(False, index=df.index)
+        if len(first_sigs):
+            is_first.loc[first_sigs.index] = True
+
+        # Decision log (section 5.5). TRIGGER = the pullback touch (the
+        # entry variant's own condition); the gates are everything that can
+        # still block it: the bias, the entry window, and first-per-day.
+        # The pullback depth is a measure (it cannot fail on a bar that
+        # triggered by pulling back). NOTE the IB levels themselves are
+        # day-stamped by this hunter (the REG-2 class) but the entry window
+        # only opens after the IB closes, so the consumer is window-gated;
+        # the causality probe is the arbiter of that claim.
+        bias_ok = (np.where(long_trigger, bias_long_ok, True)
+                   & np.where(short_trigger, bias_short_ok, True))
+        pullback_depth = pd.Series(0.0, index=df.index)
+        long_depth = (df['entry_long'] - df['low']).clip(lower=0)
+        short_depth = (df['high'] - df['entry_short']).clip(lower=0)
+        self.last_decisions = (
+            GateRecorder(df.index, run_id="", strategy="ib_pullback")
+            .trigger(long_trigger, "long")
+            .trigger(short_trigger, "short")
+            .gate("bias_aligned", pd.Series(bias_ok, index=df.index))
+            .gate("entry_window_after_ib", entry_window)
+            .gate("first_signal_per_trading_day", is_first)
+            .measure("pullback_depth_ib_frac",
+                     (long_depth + short_depth) / df['ib_range'])
+            .to_frame(signal_prefix="ibp_")
+        )
+
         if signals.empty:
             return pd.DataFrame(columns=self.output_cols)
-            
+
         # Select first signal per trading day
-        signals = signals.groupby('trading_date').head(1).copy()
+        signals = first_sigs
         
         # 10. Synthesize Entries, Stops & Take Profits
         signals['signal_time'] = signals.index

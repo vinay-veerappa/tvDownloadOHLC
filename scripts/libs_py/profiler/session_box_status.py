@@ -193,8 +193,95 @@ def compute_box_status(
         status_series.loc[first_l & ~has_h] = "ST"
         status_series.loc[first_l & has_h] = "SF"
 
-        # Map back to full index
-        results[f"{box_prefix}_status"] = status_series.reindex(groups.values).values
+        # ADR-026 (REG-2 option A): the status is knowable only as of the bar
+        # that determines it. Until 2026-09-05 the day's FINAL status was
+        # stamped onto every bar of the group from 18:00 the prior evening --
+        # the same-class lookahead the box_reversion causality probe caught in
+        # the range stamper. Three knowability bands, per group:
+        #   * before the classification window opens (classification bars are
+        #     those in the box's CLASS window, not eval): "None"
+        #   * during the window, before the break that settles the status has
+        #     occurred: "Pending" (the PineScript convention -- LT/SF are
+        #     PENDING states that can flip)
+        #   * from the settling break (or window close, if nothing broke)
+        #     onward: the final status
+        # The settling bar is max(first h-trigger, first l-trigger) when both
+        # exist (the second break makes it final), the single trigger when one
+        # exists, else the window's close.
+        settle_times = pd.Series(pd.NaT, index=unique_groups, dtype=object)
+        for g in unique_groups:
+            th = triggered_h.get(g)
+            tl = triggered_l.get(g)
+            cands = [t for t in (th, tl) if pd.notna(t)]
+            if cands:
+                settle_times.loc[g] = max(cands)
+        # object dtype -> datetime dtype matching the frame (aware or naive)
+        _st = pd.to_datetime(pd.Series(settle_times.values, index=unique_groups),
+                             errors="coerce")
+        if et_df.index.tz is not None and _st.dt.tz is None:
+            _st = _st.dt.tz_localize(et_df.index.tz)
+        settle_times = _st
+        # Classification windows (the PROFILER_BOX_CONFIG windows from
+        # nqstats.sessions, mirrored here because the config is not exported):
+        # the box forms here and its status is final when the window closes.
+        cls_windows = {
+            "asiabox":   (pd.Timestamp("18:00").time(), pd.Timestamp("19:31").time()),
+            "londonbox": (pd.Timestamp("02:30").time(), pd.Timestamp("03:31").time()),
+            "ny1box":    (pd.Timestamp("07:30").time(), pd.Timestamp("08:31").time()),
+            "ny2box":    (pd.Timestamp("11:30").time(), pd.Timestamp("12:31").time()),
+        }
+        cs, ce = cls_windows[box_prefix]
+        times = et_df.index.time
+        if cs < ce:
+            class_mask = (times >= cs) & (times < ce)
+        else:
+            class_mask = (times >= cs) | (times < ce)
+        cls_idx = et_df.index[class_mask]
+        cls_grp = groups[class_mask]
+        cls_last_per_group = (cls_idx.to_series()
+                              .groupby(cls_grp.values).max()
+                              .reindex(unique_groups))
+        cls_first_per_group = (cls_idx.to_series()
+                               .groupby(cls_grp.values).min()
+                               .reindex(unique_groups))
+        # groups whose window closed with no break settle at the close
+        no_break = settle_times.isna()
+        settle_times.loc[no_break] = cls_last_per_group[no_break]
+
+        # Per-bar: the FINAL status is visible only at/after the group's
+        # settle time; inside the window before the settle bar it is
+        # "Pending"; before the window opens it is "None". The comparisons
+        # are on the INDEX (bar timestamps), not on the frame's columns.
+        # pd.Series(numpy-values) strips tz, so rebuild each from a
+        # DatetimeIndex with the frame's tz and unit.
+        idx_series = pd.Series(et_df.index, index=et_df.index)
+
+        def _as_frame_indexed(per_group: pd.Series) -> pd.Series:
+            # Map per-GROUP times onto bars. No .values round trip: numpy
+            # datetime64 strips tz (UTC-naive), and tz_localize() then
+            # reinterprets the wall clock, shifting the boundary by the
+            # offset (09:53 ET settle -> 13:53 ET under pandas 3).
+            mapped = per_group.reindex(pd.Index(groups.values))
+            di = pd.to_datetime(mapped, errors="coerce")
+            di = pd.DatetimeIndex(di)
+            if di.tz is None and et_df.index.tz is not None:
+                di = di.tz_localize(et_df.index.tz)
+            elif di.tz is not None and et_df.index.tz is None:
+                di = di.tz_localize(None)
+            di = di.as_unit(et_df.index.unit)
+            return pd.Series(di, index=et_df.index)
+
+        bar_settle = _as_frame_indexed(settle_times)
+        bar_first_cls = _as_frame_indexed(cls_first_per_group)
+        final_vals = status_series.reindex(groups.values).values
+        settled = (bar_settle.notna()
+                   & (idx_series >= bar_settle)).values
+        pre_window = (bar_first_cls.isna()
+                     | (idx_series < bar_first_cls)).values
+        status_vals = np.where(settled, final_vals,
+                               np.where(pre_window, "None", "Pending"))
+
+        results[f"{box_prefix}_status"] = status_vals
 
     return results
 

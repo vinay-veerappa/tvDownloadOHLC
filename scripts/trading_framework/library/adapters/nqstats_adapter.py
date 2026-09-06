@@ -91,7 +91,15 @@ class NQStatsAdapter:
         # IMPORTANT: Use price from the ALIGNED 1m dataframe
         price_close = df_1m_et['close']
         for session in ['asia', 'london', 'ny1']:
-            mid_col = f'{session}_mid'
+            # The engine names the BOX mids '{session}box_mid' (the same
+            # convention as the '{session}box_status' columns read above);
+            # a bare '{session}_mid' never existed. Until this was fixed
+            # (2026-09-05) the lookup missed for every session, the feature
+            # was never created, and every consumer's `.get(..., Series(0))`
+            # fallback made 'mid_dist >= threshold' always False --
+            # box_reversion emitted ZERO signals on all data, silently,
+            # for its whole life (section 11 item 7).
+            mid_col = f'{session}box_mid'
             if mid_col in stats_aligned.columns:
                 feature_df[f'feat_{session}_mid_dist'] = (stats_aligned[mid_col] - price_close) / price_close
         

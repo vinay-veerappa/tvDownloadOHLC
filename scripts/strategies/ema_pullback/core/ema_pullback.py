@@ -33,6 +33,7 @@ from scripts.libs_py.price_action.volatility_leading import (
     compute_bar_overlap,
 )
 from scripts.libs_py.ict_engine import detect_fvg
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 
 class EMAPullbackStrategy:
@@ -51,6 +52,9 @@ class EMAPullbackStrategy:
     def __init__(self, ticker: str = "NQ1"):
         self.ticker = ticker
         self.strategy_name = "EMA Pullback"
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt().
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         p = params or {}
@@ -95,6 +99,19 @@ class EMAPullbackStrategy:
         long_mask = intraday_mask & uptrend & (df["low"] <= df["ema"]) & (df["close"] >= df["ema"])
         short_mask = intraday_mask & downtrend & (df["high"] >= df["ema"]) & (df["close"] <= df["ema"])
 
+        # The BASE setup, before the optional ablation filters narrow it. The
+        # decision log triggers on THIS and gates on the filters, so a filter
+        # that rejects bars shows up rejecting -- triggering on the
+        # post-filter mask would make every filter gate 100%-pass, a green
+        # that cannot be red (section 5.5).
+        base_long, base_short = long_mask.copy(), short_mask.copy()
+
+        # Applied-filter ledger for the decision log (section 5.5): every
+        # OPTIONAL filter appends its mask here as it runs, so the log
+        # records exactly what this invocation evaluated -- a disabled filter
+        # is not a criterion and does not appear as an always-passed gate.
+        applied_filters: list = []
+
         # ---------------------------------------------------------------------
         # Isolated Filter 1: FVG Confluence (Pullback touches unmitigated FVG)
         # ---------------------------------------------------------------------
@@ -103,6 +120,8 @@ class EMAPullbackStrategy:
             # Bullish FVG active within last 10 bars
             recent_bull_fvg = (fvg_df["fvg_type"] == 1).rolling(10, min_periods=1).max().astype(bool)
             recent_bear_fvg = (fvg_df["fvg_type"] == -1).rolling(10, min_periods=1).max().astype(bool)
+            applied_filters.append(
+                ("fvg_confluence", (recent_bull_fvg | recent_bear_fvg), None, None))
             long_mask &= recent_bull_fvg
             short_mask &= recent_bear_fvg
 
@@ -112,6 +131,8 @@ class EMAPullbackStrategy:
         if use_ker_filter and (long_mask | short_mask).any():
             ker_df = compute_kaufman_efficiency(df, period=5, efficient_threshold=ker_min)
             ker_valid = ker_df["ker_5"] >= ker_min
+            applied_filters.append(
+                ("ker_efficiency", ker_valid, ker_df["ker_5"], ker_min))
             long_mask &= ker_valid
             short_mask &= ker_valid
 
@@ -121,6 +142,7 @@ class EMAPullbackStrategy:
         if use_barbwire_filter and (long_mask | short_mask).any():
             overlap_df = compute_bar_overlap(df, window=3, threshold=max_bar_overlap / 100.0)
             not_barbwire = ~overlap_df["is_barbwire_overlap"]
+            applied_filters.append(("not_barbwire", not_barbwire, None, None))
             long_mask &= not_barbwire
             short_mask &= not_barbwire
 
@@ -129,6 +151,11 @@ class EMAPullbackStrategy:
         # ---------------------------------------------------------------------
         if use_ttm_squeeze_filter and (long_mask | short_mask).any():
             squeeze_df = compute_ttm_squeeze(df)
+            mom_aligned = (np.where(long_mask, squeeze_df["squeeze_mom"] > 0, True)
+                           & np.where(short_mask, squeeze_df["squeeze_mom"] < 0, True))
+            applied_filters.append(
+                ("ttm_momentum_aligned", pd.Series(mom_aligned, index=df.index),
+                 squeeze_df["squeeze_mom"], 0))
             long_mask &= (squeeze_df["squeeze_mom"] > 0)
             short_mask &= (squeeze_df["squeeze_mom"] < 0)
 
@@ -143,6 +170,11 @@ class EMAPullbackStrategy:
             cum_vol = vol.groupby(date_key).cumsum().replace(0, np.nan)
             vwap = cum_pv / cum_vol
             # Only long above VWAP, short below VWAP
+            vwap_ok = (np.where(long_mask, df["close"] > vwap, True)
+                       & np.where(short_mask, df["close"] < vwap, True))
+            applied_filters.append(
+                ("vwap_side_aligned", pd.Series(vwap_ok, index=df.index),
+                 df["close"] - vwap, 0))
             long_mask &= (df["close"] > vwap)
             short_mask &= (df["close"] < vwap)
 
@@ -153,6 +185,7 @@ class EMAPullbackStrategy:
             from scripts.libs_py.features.chop import compute_chop_score
             chop_res = compute_chop_score(df)
             not_choppy = chop_res["chop_regime"] != "choppy"
+            applied_filters.append(("not_choppy", not_choppy, None, None))
             long_mask &= not_choppy
             short_mask &= not_choppy
 
@@ -161,11 +194,37 @@ class EMAPullbackStrategy:
         df.loc[short_mask, "direction"] = "short"
 
         combined = df.dropna(subset=["direction"]).copy()
+        first_sigs = (combined.groupby(combined.index.normalize()).head(1).copy()
+                      if not combined.empty else combined)
+        is_first = pd.Series(False, index=df.index)
+        if len(first_sigs):
+            is_first.loc[first_sigs.index] = True
+
+        # Decision log (section 5.5). TRIGGER = the trend+pullback bar; the
+        # gates are everything that can still block it. The optional filters
+        # come from the applied_filters ledger, so the roster is exactly what
+        # this invocation evaluated.
+        rec = (
+            GateRecorder(df.index, run_id="", strategy="ema_pullback")
+            .trigger(base_long, "long")
+            .trigger(base_short, "short")
+            .gate("rth_morning_window", intraday_mask)
+        )
+        for gname, gmask, gval, gthr in applied_filters:
+            rec = rec.gate(gname, gmask, value=gval, threshold=gthr)
+        rec = rec.gate("first_signal_of_day", is_first)
+        # A magnitude for attribution: how far the pullback went under/over
+        # the EMA. Cannot fail on a bar that triggered by touching it.
+        long_depth = (df["ema"] - df["low"]).clip(lower=0)
+        short_depth = (df["high"] - df["ema"]).clip(lower=0)
+        rec = rec.measure("pullback_depth_atr",
+                          (long_depth + short_depth) / df["atr"])
+        self.last_decisions = rec.to_frame(signal_prefix="emk_")
+
         if combined.empty:
             return pd.DataFrame(columns=self.OUTPUT_COLUMNS)
 
         combined["date"] = combined.index.normalize()
-        first_sigs = combined.groupby("date").head(1).copy()
 
         first_sigs["signal_time"] = first_sigs.index
         first_sigs["entry_price"] = first_sigs["close"]

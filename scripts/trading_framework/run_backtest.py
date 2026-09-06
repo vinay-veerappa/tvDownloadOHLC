@@ -183,10 +183,11 @@ def build_engine(args, config, rec=None):
     reported metric is then a measurement of a parameter set nothing chose.
 
     Note what this makes visible rather than fixes: `NT8ParityBacktester`
-    ignores `target1_price` entirely and substitutes `queen_bps`/`runner_bps`,
-    so a hunter's declared target does not reach the sanctioned engine. That is
-    a real gap in the `hunt()` contract, recorded in section 11 -- but with one
-    engine on both sides it is at least the SAME gap on both sides.
+    honours the hunter's declared `target1_price` for the QUEEN leg (section 11
+    item 19, option A, 2026-09-05) and falls back to `queen_bps` where a signal
+    declared none; the runner leg stays at `runner_bps` (ADR-023). Both sides
+    of the search-and-report pair now run under the SAME payoff function,
+    declared target included.
     """
     from scripts.trading_framework.config.defaults import (
         execution_policy, engine_max_trades_per_day)

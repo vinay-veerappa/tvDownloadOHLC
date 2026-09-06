@@ -33,6 +33,7 @@ if _current_dir.name == "scripts":
         sys.path.insert(0, _root_dir)
 
 from scripts.libs_py.ict_engine import detect_swings, detect_cisd
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 _COLS = ["signal_time", "direction", "entry_price", "stop_price", "target1_price"]
 _LAST_ENTRY_HOUR, _LAST_ENTRY_MIN = 14, 30
@@ -51,6 +52,9 @@ class ICTLiquiditySweepStrategy:
     def __init__(self, ticker: str = "NQ1") -> None:
         self.ticker = ticker
         self.strategy_name = "ICT Liquidity Sweep"
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt() on every path.
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(
         self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None
@@ -92,6 +96,9 @@ class ICTLiquiditySweepStrategy:
         bear_entry = (cisd["cisd"].values == -1)
 
         # ── 3. Time filter (ADR-020) ────────────────────────────────────────
+        # RAW sweep+CISD is the decision-log trigger; the session window is a
+        # GATE so its rejections are visible (section 5.5).
+        raw_bull, raw_bear = bull_entry.copy(), bear_entry.copy()
         if session_only and hasattr(idx, "hour"):
             hour, minute = idx.hour, idx.minute
             in_session = (
@@ -100,6 +107,18 @@ class ICTLiquiditySweepStrategy:
             )
             bull_entry = bull_entry & np.asarray(in_session)
             bear_entry = bear_entry & np.asarray(in_session)
+        else:
+            in_session = np.ones(len(idx), dtype=bool)
+
+        # Decision log (section 5.5): sweep+CISD is the trigger; the ADR-020
+        # window is the only gate. Recorded even when nothing sweeps.
+        self.last_decisions = (
+            GateRecorder(idx, run_id="", strategy="ict_liquidity_sweep")
+            .trigger(pd.Series(raw_bull, index=idx), "long")
+            .trigger(pd.Series(raw_bear, index=idx), "short")
+            .gate("ny_session_window", pd.Series(in_session, index=idx))
+            .to_frame(signal_prefix="ils_")
+        )
 
         direction = np.where(bull_entry, "long", np.where(bear_entry, "short", None))
         mask = (direction == "long") | (direction == "short")

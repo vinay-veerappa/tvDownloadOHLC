@@ -83,7 +83,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             EntryProximity = 0.3;
             QueenTargetRMult = 2.0;   // failed_auction twin: tp_r_mult default
 
-            AddSecondaryTimeframe = false;
         }
 
         protected override void OnInitialize()

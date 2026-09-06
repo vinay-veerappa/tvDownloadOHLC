@@ -185,7 +185,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             LatestEntry   = 1100;
             FlattenBy     = 1555;
 
-            AddSecondaryTimeframe = false;
             DebugMode             = false;
 
             AutoCalibrateInstrument = true;

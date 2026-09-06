@@ -290,22 +290,22 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             DailyMaxLoss = 300;
             MaxTradesPerDay = 2;
             TrailingDrawdown = 2000;
-            FlattenBy = 1550;  // ADR-020: flatten by 15:50 ET
+            // B4 closed 2026-09-05: the base carried 1550 while its subclass
+            // IBFadeBot carried 1555 -- which one applied depended on construction
+            // order. The base now carries the FROZEN default (1545); a bot with a
+            // genuinely different session (IBFadeBot's PM window) overrides it
+            // deliberately and is recorded as the divergence.
+            FlattenBy = 1545;
 
             // Time fences
             EarliestEntry = 930;
             LatestEntry = 1430;
 
-            // Range-based strategy — do NOT add the 5-min secondary series.
-            // IB strategies use rangeRange as the risk metric (via IntradayStrategyBase.GetCurrentATR override),
-            // not ATR from a 5-min secondary. Skipping AddDataSeries(Minute,5) eliminates the 250-min warmup
-            // that was blocking all entries before ~13:20. RiskManagerBase gates on CurrentBars[1] only when
-            // AddSecondaryTimeframe=true, so with false we only need CurrentBars[0] >= BarsRequiredToTrade.
-            AddSecondaryTimeframe = false;
-
-            // Lower BarsRequiredToTrade — base requires 50 on BOTH series (primary + 5-min secondary).
-            // With 50 on the 5-min, that's 250 min before CanEnterTrade passes. Set to 1 so
-            // only 1 bar of 5-min secondary is needed (5 min warmup).
+            // Range-based strategy — the IB strategies use rangeRange as the risk
+            // metric (via IntradayStrategyBase.GetCurrentATR override), not ATR
+            // from a secondary series, so NO series is added here. B9: the base no
+            // longer adds one either; only a strategy that calls AddDataSeries in
+            // its own ConfigureStrategy() has a secondary.
             BarsRequiredToTrade = 1;
 
             // Enable ConfluenceFilter (the per-play validated filter stack) — Session 10:

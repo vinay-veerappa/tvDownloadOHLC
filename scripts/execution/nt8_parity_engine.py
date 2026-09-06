@@ -152,6 +152,11 @@ class NT8Trade:
     # per-leg row needs a per-leg exit time. When the queen never filled both
     # legs leave together and this equals `exit_time`.
     queen_exit_time: object = None
+    # Item 19: True when the queen leg used the hunter's DECLARED target
+    # rather than the bps fallback. Per trade, so a report can name how often
+    # each applied -- and a trade set compared against NT8 can see the
+    # declared-target side explicitly.
+    queen_used_declared_target: bool = False
     mfe_points: float = 0.0
     mae_points: float = 0.0
     mfe_bps: float = 0.0
@@ -204,7 +209,7 @@ def _trades_to_frame(trades) -> pd.DataFrame:
             "leg1_points", "leg2_points", "total_points", "total_pnl_usd",
             "exit_reason", "queen_hit", "runner_hit", "leg1_exit_time",
             "leg1_exit_price", "mfe_points", "mae_points", "mfe_bps", "mae_bps",
-            "is_reentry",
+            "is_reentry", "queen_used_declared_target",
         ])
     df = pd.DataFrame([t.__dict__ for t in trades])
     df["leg1_exit_time"] = df.pop("queen_exit_time")
@@ -298,6 +303,7 @@ class NT8ParityEngine:
         signals: pd.Series,             # +1 for Buy, -1 for Sell, 0 for None
         limit_prices: pd.Series,         # Limit price for entry
         stop_losses: pd.Series,          # Stop loss price
+        target_prices: Optional[pd.Series] = None,   # item 19: declared queen-leg target
         queen_bps: float = 10.0,
         runner_bps: float = 30.0,
         order_timeout_bars: int = 6,
@@ -321,9 +327,18 @@ class NT8ParityEngine:
             _require_rust_core()
         # Reset per run: a reused engine must not carry the last run's counts.
         self.last_rejections = self._zero_rejections()
+        # Item 19: the declared-target array, normalized to a per-bar float64
+        # numpy vector (NaN = no declaration). The kernel takes an Option, the
+        # Python mirror takes a vector; both mean "absent -> bps fallback".
+        tgt_arr = None
+        if target_prices is not None:
+            tgt_arr = np.asarray(pd.Series(target_prices).reindex(df.index)
+                                 .to_numpy(dtype=np.float64))
+            tgt_arr = np.where(np.isfinite(tgt_arr), tgt_arr, np.nan)
         if use_rust and HAS_RUST_CORE:
             return self._simulate_rust(
                 df, signals, limit_prices, stop_losses,
+                target_prices=tgt_arr,
                 queen_bps=queen_bps, runner_bps=runner_bps,
                 order_timeout_bars=order_timeout_bars,
                 earliest_entry_hhmm=earliest_entry_hhmm,
@@ -334,6 +349,7 @@ class NT8ParityEngine:
             )
         return self._simulate_py(
             df, signals, limit_prices, stop_losses,
+            target_prices=tgt_arr,
             queen_bps=queen_bps, runner_bps=runner_bps,
             order_timeout_bars=order_timeout_bars,
             earliest_entry_hhmm=earliest_entry_hhmm,
@@ -349,6 +365,7 @@ class NT8ParityEngine:
         signals: pd.Series,
         limit_prices: pd.Series,
         stop_losses: pd.Series,
+        target_prices: Optional[np.ndarray] = None,
         queen_bps: float = 10.0,
         runner_bps: float = 30.0,
         order_timeout_bars: int = 6,
@@ -369,6 +386,7 @@ class NT8ParityEngine:
 
         res = nt8_parity_core.simulate_bars_v1(
             times_ms, opens, highs, lows, closes, sig_arr, lmt_arr, sl_arr,
+            target_prices=target_prices,
             point_value=self.point_value,
             tick_size=self.tick_size,
             max_trades_per_day=self.max_trades_per_day,
@@ -402,7 +420,7 @@ class NT8ParityEngine:
                 "leg1_points", "leg2_points", "total_points", "total_pnl_usd",
                 "exit_reason", "queen_hit", "runner_hit", "leg1_exit_time", "leg1_exit_price",
                 "mfe_points", "mae_points",
-                "mfe_bps", "mae_bps", "is_reentry"
+                "mfe_bps", "mae_bps", "is_reentry", "queen_used_declared_target"
             ])
 
         entry_times = _restore_datetime_series(res["entry_time_ms"], df.index.tz)
@@ -456,6 +474,14 @@ class NT8ParityEngine:
             "mfe_bps": _excursion_bps(res, "mfe_points", n_trades),
             "mae_bps": _excursion_bps(res, "mae_points", n_trades),
             "is_reentry": np.zeros(n_trades, dtype=bool),
+            # Item 19: per-trade queen-leg source. A stale wheel predating the
+            # column degrades to False (all-bps) rather than raising -- same
+            # stale-wheel policy as the excursions, and the run record still
+            # carries whether targets were PASSED at all.
+            "queen_used_declared_target": (
+                np.asarray(res["queen_used_declared_target"], dtype=bool)
+                if res.get("queen_used_declared_target") is not None
+                else np.zeros(n_trades, dtype=bool)),
         })
 
     def _simulate_py(
@@ -464,6 +490,7 @@ class NT8ParityEngine:
         signals: pd.Series,             # +1 for Buy, -1 for Sell, 0 for None
         limit_prices: pd.Series,         # Limit price for entry
         stop_losses: pd.Series,          # Stop loss price
+        target_prices: Optional[np.ndarray] = None,   # item 19: declared target
         queen_bps: float = 10.0,
         runner_bps: float = 30.0,
         order_timeout_bars: int = 6,
@@ -484,6 +511,10 @@ class NT8ParityEngine:
         sig_arr = signals.to_numpy(dtype=np.int32)
         lmt_arr = limit_prices.to_numpy(dtype=np.float64)
         sl_arr = stop_losses.to_numpy(dtype=np.float64)
+        # Item 19: declared-target per-bar array; absent/NaN -> bps fallback.
+        tgt_arr = (np.asarray(target_prices, dtype=np.float64)
+                   if target_prices is not None
+                   else np.full(len(df), np.nan))
         n = len(df)
 
         time_strs = times.strftime("%H%M")
@@ -500,6 +531,8 @@ class NT8ParityEngine:
         active_tp2 = 0.0
         queen_filled = False
         queen_exit_time = None
+        # Item 19: set at fill time, read at close time (per trade).
+        queen_used_declared = False
 
         # Daily State
         cur_day = None
@@ -641,6 +674,7 @@ class NT8ParityEngine:
                         total_pnl_usd=net_usd, exit_reason=reason, queen_hit=queen_filled, runner_hit=r_hit,
                         # A queen that never filled left with the runner.
                         queen_exit_time=(queen_exit_time if queen_filled else t),
+                        queen_used_declared_target=queen_used_declared,
                     ))
 
                     daily_pnl += net_usd
@@ -688,7 +722,18 @@ class NT8ParityEngine:
                             pos_entry_time = t
                             pos_entry_price = p_limit
                             active_sl = p_sl
-                            active_tp1 = self.round_tick(p_limit + (p_limit * (queen_bps / 10000.0)))
+                            # Item 19: the queen leg honours the DECLARED target
+                            # captured at arm time; NaN -> bps fallback. A
+                            # declared target at or below entry would fill
+                            # instantly (the geometry defect class), so the
+                            # guard falls back to bps rather than accept it.
+                            p_tgt = pending_order.get("target")
+                            if p_tgt is not None and np.isfinite(p_tgt) and p_tgt > p_limit:
+                                active_tp1 = self.round_tick(p_tgt)
+                                queen_used_declared = True
+                            else:
+                                active_tp1 = self.round_tick(p_limit + (p_limit * (queen_bps / 10000.0)))
+                                queen_used_declared = False
                             active_tp2 = self.round_tick(p_limit + (p_limit * (runner_bps / 10000.0)))
                             queen_filled = False
                             queen_exit_time = None
@@ -701,7 +746,13 @@ class NT8ParityEngine:
                             pos_entry_time = t
                             pos_entry_price = p_limit
                             active_sl = p_sl
-                            active_tp1 = self.round_tick(p_limit - (p_limit * (queen_bps / 10000.0)))
+                            p_tgt = pending_order.get("target")
+                            if p_tgt is not None and np.isfinite(p_tgt) and p_tgt < p_limit:
+                                active_tp1 = self.round_tick(p_tgt)
+                                queen_used_declared = True
+                            else:
+                                active_tp1 = self.round_tick(p_limit - (p_limit * (queen_bps / 10000.0)))
+                                queen_used_declared = False
                             active_tp2 = self.round_tick(p_limit - (p_limit * (runner_bps / 10000.0)))
                             queen_filled = False
                             queen_exit_time = None
@@ -717,7 +768,11 @@ class NT8ParityEngine:
             if not in_pos and pending_order is None and sig_arr[i] != 0:
                 lmt = self.round_tick(lmt_arr[i])
                 sl = self.round_tick(sl_arr[i])
-                pending_order = {"dir": sig_arr[i], "limit": lmt, "sl": sl, "bar": i}
+                # Item 19: capture the declared target at arm time, like the
+                # limit and the stop. NaN -> no declaration, bps at fill.
+                tgt = tgt_arr[i] if i < len(tgt_arr) else np.nan
+                pending_order = {"dir": sig_arr[i], "limit": lmt, "sl": sl,
+                                 "bar": i, "target": tgt}
             elif sig_arr[i] != 0 and (in_pos or pending_order is not None):
                 # Concurrency lockout (item 13): the state machine dropped the
                 # signal without a trace -- this is the count of those drops.
@@ -842,7 +897,7 @@ class NT8ParityEngine:
                 "leg1_points", "leg2_points", "total_points", "total_pnl_usd",
                 "exit_reason", "queen_hit", "runner_hit", "leg1_exit_time", "leg1_exit_price",
                 "mfe_points", "mae_points",
-                "mfe_bps", "mae_bps", "is_reentry"
+                "mfe_bps", "mae_bps", "is_reentry", "queen_used_declared_target"
             ])
 
         entry_times = _restore_datetime_series(res["entry_time_ms"], df_1m.index.tz)

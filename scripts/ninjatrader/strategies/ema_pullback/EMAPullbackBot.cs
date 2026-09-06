@@ -96,7 +96,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             UseEngulfingConfirmation = true;
             QueenTargetRMult = 1.8;   // ema_pullback twin: tp_r_mult default
 
-            AddSecondaryTimeframe = false; // Self-contained on chart
         }
 
         protected override void OnInitialize()

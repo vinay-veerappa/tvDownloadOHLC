@@ -3,6 +3,8 @@ import pandas as pd
 from datetime import time
 from typing import Any, Dict, Optional
 
+from scripts.trading_framework.reporting.decision_log import GateRecorder
+
 
 class SixAMReversalStrategy:
     """ADR-017 vectorized 6AM reversal hunter around prior-day range sweeps."""
@@ -11,6 +13,9 @@ class SixAMReversalStrategy:
 
     def __init__(self, ticker: str = "NQ1"):
         self.ticker = ticker
+        # Section 5.5: the criteria this hunter evaluates, for the decision
+        # log. None means not instrumented; set by hunt().
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         p = params or {}
@@ -53,10 +58,26 @@ class SixAMReversalStrategy:
 
         combined = df.dropna(subset=["direction"]).copy()
         if combined.empty:
+            # Still record: the triggers and gates exist even when nothing
+            # survives them all, and "no entries" plus an empty log would be
+            # indistinguishable from "not instrumented".
+            self.last_decisions = self._record(
+                df, long_mask, short_mask, window_mask,
+                pd.Series(False, index=df.index))
             return pd.DataFrame(columns=self.OUTPUT_COLUMNS)
 
         combined["date"] = combined.index.normalize()
         first_sigs = combined.groupby("date").head(1).copy()
+
+        is_first = pd.Series(False, index=df.index)
+        is_first.loc[first_sigs.index] = True
+
+        # 4b. Decision log (section 5.5). Trigger = the sweep+reclaim bar;
+        # the gates below are everything that can still block it. The window
+        # and the reclaim are the strategy's actual criteria -- the sweep
+        # itself is the trigger, not a gate.
+        self.last_decisions = self._record(df, long_mask, short_mask,
+                                            window_mask, is_first)
 
         first_sigs["signal_time"] = first_sigs.index
         first_sigs["entry_price"] = first_sigs["close"]
@@ -73,6 +94,24 @@ class SixAMReversalStrategy:
         )
 
         return first_sigs[self.OUTPUT_COLUMNS].dropna().reset_index(drop=True)
+
+    def _record(self, df, long_mask, short_mask, window_mask, is_first):
+        sweep = ((df["low"] < df["prior_low"]) | (df["high"] > df["prior_high"]))
+        depth = pd.Series(np.nan, index=df.index)
+        long_depth = (df["prior_low"] - df["low"]).clip(lower=0)
+        short_depth = (df["high"] - df["prior_high"]).clip(lower=0)
+        depth = long_depth + short_depth
+        return (
+            GateRecorder(df.index, run_id="", strategy="six_am_reversal")
+            .trigger(long_mask, "long")
+            .trigger(short_mask, "short")
+            # A magnitude: how deep the sweep went beyond the prior-day level.
+            # On a bar that triggered because of the sweep, the sweep cannot
+            # fail -- so it is a measure, not a gate.
+            .measure("sweep_depth_pts", depth)
+            .gate("first_signal_of_day", is_first)
+            .to_frame(signal_prefix="sar_")
+        )
 
     @staticmethod
     def get_param_grid() -> Dict[str, Any]:

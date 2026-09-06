@@ -112,15 +112,57 @@ def get_nq_session_ranges(ohlc: pd.DataFrame, session_name: str, config: dict,
     res_map = agg.reindex(full_groups.values)
     res_map.index = df.index
     
+    # ADR-026 (REG-2 option A): a session value is knowable only from the end
+    # of its own window onward. The reindex above stamps the WHOLE day's final
+    # aggregate onto every bar of the logical day -- a 01:21 Asia bar read the
+    # NY1 box mid (07:30-08:29) seven hours before it existed, which the
+    # box_reversion causality probe caught live. Mask every bar strictly
+    # before the window's LAST bar to NaN; the value appears on the
+    # window-close bar and stays for the rest of the day.
+    #
+    # The window-close bar is the last bar of the session mask: for a
+    # same-day window it is the last bar with time < end_t; for an overnight
+    # window (start > end) it is the last early-morning bar (< end_t), which
+    # belongs to the group by construction. A bar carries the value iff its
+    # own logical group's window has closed at or before it.
+    times_idx = df.index.time
+    window_close_bar = mask & (times_idx < end_t)
+    groups_full = groups if isinstance(groups, pd.Series) else pd.Series(groups, index=df.index)
+    # The empty default must match the frame's tz and unit or the comparison
+    # below raises on the no-matching-bars case (a short frame missing a
+    # window) instead of yielding all-NaN. Built FROM the DatetimeIndex (a
+    # .values round trip strips tz -- the same rake as the mapped path).
+    _base = pd.DatetimeIndex([pd.NaT] * len(df.index)).as_unit(df.index.unit)
+    if df.index.tz is not None:
+        _base = _base.tz_localize(df.index.tz)
+    close_times = pd.Series(_base, index=df.index)
+    if window_close_bar.any():
+        close_idx = df.index[window_close_bar]
+        close_grp = groups_full[window_close_bar]
+        last_close = close_idx.to_series().groupby(close_grp.values).max()
+        # Map per-GROUP close instants onto bars WITHOUT a .values round trip:
+        # numpy datetime64 strips tz (yielding UTC-naive), and re-localizing
+        # those instants with tz_localize() reinterprets the WALL CLOCK and
+        # shifts the boundary by the offset (08:30 ET -> 13:30 ET under
+        # pandas 3). Map through a properly-typed DatetimeIndex instead.
+        mapped = pd.DatetimeIndex(
+            pd.to_datetime(last_close.reindex(groups_full.values),
+                           errors="coerce"))
+        if mapped.tz is None and df.index.tz is not None:
+            mapped = mapped.tz_localize(df.index.tz)
+        elif mapped.tz is not None and df.index.tz is None:
+            mapped = mapped.tz_localize(None)
+        mapped = mapped.as_unit(df.index.unit)
+        close_times = pd.Series(mapped, index=df.index)
+    knowable = close_times.notna() & (df.index >= close_times)
+
     prefix = session_name.lower()
-    return pd.DataFrame({
-        f"{prefix}_open": res_map['open'],
-        f"{prefix}_high": res_map['high'],
-        f"{prefix}_low": res_map['low'],
-        f"{prefix}_mid": (res_map['high'] + res_map['low']) / 2,
-        f"{prefix}_close": res_map['close'],
-        f"{prefix}_active": np.where(mask, 1, 0)
-    }, index=df.index)
+    out = pd.DataFrame(index=df.index)
+    for col in ['open', 'high', 'low', 'close']:
+        out[f"{prefix}_{col}"] = res_map[col].where(knowable)
+    out[f"{prefix}_mid"] = ((res_map['high'] + res_map['low']) / 2).where(knowable)
+    out[f"{prefix}_active"] = np.where(mask, 1, 0)
+    return out
 
 def extract_all_sessions(df_et: pd.DataFrame, 
                          killzone_config: dict = DEFAULT_SESSION_CONFIG, 

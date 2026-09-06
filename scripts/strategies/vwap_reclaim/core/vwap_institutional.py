@@ -29,6 +29,7 @@ from scripts.libs_py.data.resampler import resample_ohlcv, add_resampled_columns
 from scripts.libs_py.ict_engine import detect_swings, detect_cisd
 from scripts.libs_py.features.orb_bias import compute_orb_bias
 from scripts.libs_py.features.quarterly_cycles import compute_quarterly_cycles
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 
 class VWAPInstitutionalStrategy:
@@ -48,6 +49,9 @@ class VWAPInstitutionalStrategy:
     def __init__(self, ticker: str = "NQ1") -> None:
         self.ticker = ticker
         self.strategy_name = "Institutional VWAP Suite"
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt() on every path.
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(
         self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None
@@ -161,12 +165,24 @@ class VWAPInstitutionalStrategy:
             in_session = in_session & df["is_quarterly_expansion_window"]
 
         # ── 6. Signal Model Generation ──
+        # RAW model geometry (no ADX, no session) for the decision-log
+        # trigger; the ADX and window criteria are GATES so their failures
+        # are visible rather than folded into the trigger (section 5.5).
+        retest_geo_l = (df["close"] > df["5m_sma50"]) & (df["vwap"] > df["5m_sma50"]) & (df["low"] <= df["vwap"]) & (df["close"] > df["vwap"]) & ((df["close"] - df["low"]) >= bar_range * 0.4)
+        retest_geo_s = (df["close"] < df["5m_sma50"]) & (df["vwap"] < df["5m_sma50"]) & (df["high"] >= df["vwap"]) & (df["close"] < df["vwap"]) & ((df["high"] - df["close"]) >= bar_range * 0.4)
+        fade_geo_l = (df["low"].rolling(3).min() <= df["lower_2sd"]) & (df["close"] > df["lower_2sd"]) & ((df["lower_wick_pct"] >= 20) | (df["close"] > df["open"]))
+        fade_geo_s = (df["high"].rolling(3).max() >= df["upper_2sd"]) & (df["close"] < df["upper_2sd"]) & ((df["upper_wick_pct"] >= 20) | (df["close"] < df["open"]))
+        sweep_geo_l = (df["cisd"] == 1) & (df["close"] > df["vwap"]) & (df["low"] <= df["vwap"])
+        sweep_geo_s = (df["cisd"] == -1) & (df["close"] < df["vwap"]) & (df["high"] >= df["vwap"])
+        raw_geo_long = retest_geo_l | fade_geo_l | sweep_geo_l
+        raw_geo_short = retest_geo_s | fade_geo_s | sweep_geo_s
+
         # Model 1: Dynamic Retest (Trend Pullback)
         is_bull_trend = (df["5m_adx"] >= min_retest_adx) & (df["close"] > df["5m_sma50"]) & (df["vwap"] > df["5m_sma50"])
         is_bear_trend = (df["5m_adx"] >= min_retest_adx) & (df["close"] < df["5m_sma50"]) & (df["vwap"] < df["5m_sma50"])
 
-        retest_l_raw = is_bull_trend & (df["low"] <= df["vwap"]) & (df["close"] > df["vwap"]) & ((df["close"] - df["low"]) >= bar_range * 0.4)
-        retest_s_raw = is_bear_trend & (df["high"] >= df["vwap"]) & (df["close"] < df["vwap"]) & ((df["high"] - df["close"]) >= bar_range * 0.4)
+        retest_l_raw = is_bull_trend & retest_geo_l
+        retest_s_raw = is_bear_trend & retest_geo_s
 
         retest_long = in_session & retest_l_raw.shift(1).fillna(False) & (df["high"] > df["high"].shift(1))
         retest_short = in_session & retest_s_raw.shift(1).fillna(False) & (df["low"] < df["low"].shift(1))
@@ -210,6 +226,11 @@ class VWAPInstitutionalStrategy:
                 df_signals.append(sub)
 
         if not df_signals:
+            self.last_decisions = self._record(
+                df, raw_geo_long, raw_geo_short, in_session, use_orb_bias,
+                min_retest_adx, max_fade_adx,
+                retest_long, retest_short, fade_long, fade_short,
+                sweep_long, sweep_short, max_trades_day)
             return pd.DataFrame(columns=self.OUTPUT_COLUMNS)
 
         combined = pd.concat(df_signals).sort_index()
@@ -219,6 +240,18 @@ class VWAPInstitutionalStrategy:
         # Group by date and limit to max_trades_day
         combined["date"] = combined.index.normalize()
         sigs = combined.groupby("date").head(max_trades_day).copy()
+
+        kept = pd.Series(False, index=df.index)
+        kept.loc[sigs.index] = True
+
+        # Decision log (section 5.5). TRIGGER = the raw model geometry; gates:
+        # the ADX regime split, the session window, the ORB bias (when
+        # enabled), and the per-day trade cap.
+        self.last_decisions = self._record(
+            df, raw_geo_long, raw_geo_short, in_session, use_orb_bias,
+            min_retest_adx, max_fade_adx,
+            retest_long, retest_short, fade_long, fade_short,
+            sweep_long, sweep_short, max_trades_day)
 
         sigs["signal_time"] = sigs.index
         sigs["entry_price"] = sigs["close"]
@@ -253,6 +286,54 @@ class VWAPInstitutionalStrategy:
         )
 
         return sigs[self.OUTPUT_COLUMNS].dropna().reset_index(drop=True)
+
+    def _record(self, df, raw_geo_long, raw_geo_short, in_session,
+                use_orb_bias, min_retest_adx, max_fade_adx,
+                retest_long, retest_short, fade_long, fade_short,
+                sweep_long, sweep_short, max_trades_day):
+        """Decision log (section 5.5).
+
+        TRIGGER = the raw model geometry (retest/fade/sweep shapes, no ADX,
+        no session); the gates are the criteria that can still block:
+        the ADX regime split (>= min_retest_adx qualifies for the TREND
+        retest, < max_fade_adx for the FADE), the session window, the ORB
+        bias (when enabled), and the per-day trade cap.
+        `final_masks` is the OR of the six final model masks, used for the
+        cap ordinal (the cap applies to signals that otherwise qualified).
+        """
+        _day = pd.Series([d.date() for d in df.index], index=df.index)
+        final_masks = (retest_long | retest_short | fade_long | fade_short
+                       | sweep_long | sweep_short)
+        _qual = final_masks.astype(int)
+        _ordinal = _qual.groupby(_day).cumsum()
+        under_cap = _ordinal <= max_trades_day
+        adx = df["5m_adx"]
+        # ADX gate, direction-agnostic on the raw trigger: a triggered bar
+        # passes when its ADX sits in EITHER model's regime (>= min_retest
+        # for the trend model or < max_fade for the fade model). ADX values
+        # outside both (>= max_fade and < min_retest when those don't
+        # overlap) belong to no model and fail.
+        adx_ok = ((adx >= min_retest_adx) | (adx < max_fade_adx))
+        rec = (
+            GateRecorder(df.index, run_id="", strategy="vwap_institutional")
+            .trigger(raw_geo_long, "long")
+            .trigger(raw_geo_short, "short")
+            .gate("adx_regime_split", adx_ok,
+                  value=adx, threshold=min_retest_adx)
+            .gate("session_window", in_session)
+        )
+        if use_orb_bias and "orb_1m_bias" in df.columns:
+            _long_m = retest_long | fade_long | sweep_long
+            _short_m = retest_short | fade_short | sweep_short
+            orb_ok = ((np.where(_long_m, df["orb_1m_bias"] == 1, True)
+                       & np.where(_short_m, df["orb_1m_bias"] == -1, True))
+                      | ~(_long_m | _short_m))
+            rec = rec.gate("orb_bias_aligned",
+                           pd.Series(np.asarray(orb_ok), index=df.index),
+                           value=df["orb_1m_bias"], threshold=0)
+        rec = rec.gate("daily_trade_cap", under_cap,
+                       value=_ordinal, threshold=max_trades_day)
+        return rec.to_frame(signal_prefix="vwi_")
 
     @staticmethod
     def get_param_grid() -> Dict[str, Any]:

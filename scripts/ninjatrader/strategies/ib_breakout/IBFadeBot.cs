@@ -144,7 +144,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             ConfluenceFilterEnabled = false;
 
             // Run on 5m chart for FVG mode — no secondary series needed
-            AddSecondaryTimeframe = false;
             BarsRequiredToTrade = 1;
             IsFillLimitOnTouch = true;
         }

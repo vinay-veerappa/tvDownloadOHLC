@@ -113,21 +113,37 @@ means re-running this twice.
 
 ---
 
-## B4 — `IBFadeBot` / `IBStrategyBase` disagree with each other 🟡
+## B4 — `IBFadeBot` / `IBStrategyBase` disagree with each other 🟡 *(flatten disagreement closed 2026-09-05; migration blocked on a design decision)*
 
 | | |
 |---|---|
-| **Bots** | `ib_breakout/IBFadeBot.cs` (1555 / 2 / 1555), `ib_breakout/IBStrategyBase.cs` (1550 / 2 / 1430) |
+| **Bots** | `ib_breakout/IBFadeBot.cs` (1555 / 2 / 1555), `ib_breakout/IBStrategyBase.cs` (now 1545 / 2 / 1430) |
 | **Registry key** | `ib_pullback` → three bots (`IBRetestBot`, `IBBreakoutBot`, `IBFadeBot`) |
 | **Found by** | `test_bot_defaults.py` |
 
-The **base class and its subclass carry different flatten times**, so which one
-applies depends on construction order — a question no report answers today.
-`IBFadeBot` also has `LatestEntry == FlattenBy == 1555`.
+✅ **The flatten disagreement is CLOSED (2026-09-05).** The base carried 1550
+while its subclass carried 1555 — which one applied depended on construction
+order. The base now carries the **frozen 1545** (`IBRetestBot`/`IBBreakoutBot`
+inherit it and match), and only `IBFadeBot`'s 1555 remains — a deliberate
+PM-window override, recorded as the divergence. `IBStrategyBase` left
+`known_bot_divergences.py`.
+
+⚠️ **Migrating the IB chain onto `GovernedStrategy` is BLOCKED on a design
+decision, not a value.** `GovernedStrategy` SEALS `CheckForSignal()` and
+computes the verdict from declared gates — but `IntradayStrategyBase`
+(nt8-riskguard) has a concrete `CheckForSignal()` that drives the whole
+range/filter machine and **enters inside** it (`EnterWithRangeStop` /
+`EnterWithPackTradingBrackets`, custom qty and pack-bracket legs), returning 0
+so the base does not double-enter. `SetupEvaluation` exposes nothing that can
+place an order, so the enter-inside pattern cannot live under the seal.
+Migrating means either (a) re-plumbing the entire IB entry path through
+`RiskManagerBase.EnterTrade` + the custom-target hooks, or (b) relaxing the
+seal for this one chain — (b) defeats the guarantee. Four bots are affected
+(`IBStrategyBase`, `IBRetestBot`, `IBBreakoutBot`, `IBFadeBot`); the decision
+is the user's, and the four remain on `uninstrumented.py` until it is made.
 
 One registry key maps to three bots (§1.2), which means "the Python prediction
-for `ib_pullback`" does not identify a bot. That mapping needs settling as part
-of this ticket, not after.
+for `ib_pullback`" does not identify a bot. That mapping still needs settling.
 
 ---
 
@@ -204,7 +220,7 @@ groups on them, and a rename shifts every historical comparison silently.
 
 ---
 
-## B9 — a strategy concern living in the risk manager 🔴 **architecture, not a bug**
+## B9 — a strategy concern living in the risk manager ✅ DONE 2026-09-05 *(riskguard v1.69.0)*
 
 | | |
 |---|---|
@@ -263,16 +279,35 @@ strategy can call `AddDataSeries` itself today. The knob is pure redundancy.
 ⚠️ Step 3 changes stop distances and position sizes, so it changes live behaviour.
 One commit each, through nt8-riskguard's own suite and mutation batteries.
 
+**WHAT SHIPPED (2026-09-05, riskguard v1.69.0):** all three steps landed in one
+commit, because the consumers were measured first and the census made them one
+edit: `AddSecondaryTimeframe`/`SecondaryTimeframeMinutes`/`Close5m`/`High5m`/
+`Low5m`/`atrIndicator` deleted from the base; `ConfigureStrategy()` now runs
+BEFORE any series (fork change #2 — the extension point); the base's
+`GetCurrentATR()` falls back to the primary bar's range and every bot with a
+real risk metric already overrides it (BBMR, ICT, and `IntradayStrategyBase`
+were the only series-readers; each now owns its own). The two bots that had the
+series (BBMR, ICT) add it in their own `ConfigureStrategy()` — which is also
+the NT8-recommended "program the granular resolution directly into your
+strategy" path, and what lets `OrderFillResolution=High` apply to a
+multi-series strategy in the Strategy Analyzer (the platform refuses High on
+strategies whose series come from the framework). The nine bots that set the
+knob false simply lost the line. **Fork change #3 also landed**: breakeven
+fires on the bar TOUCHING the queen/TP1 level (High/Low), not the close alone,
+in both `ManageCoverTheQueen` and `ManageFixedTP1TP2` (a captured
+`customTp1Price` field); gated by `tools/check_intrabar_breakeven.py` with
+selftest negative controls.
+
 ### The three changes the deleted fork carried
 
 Recorded so nothing is lost (git history has the file). Each needs a decision,
 and they are **not** all improvements:
 
-| # | Change | Recommendation |
+| # | Change | Outcome |
 |---|---|---|
-| 1 | `SecondaryTimeframeMinutes` (int, default 15) replacing the hardcoded `AddDataSeries(Minute, 5)` | **Do not land.** It widens the layering violation above. Fix by moving the call to the strategy instead |
-| 2 | `ConfigureStrategy()` moved **before** the `AddDataSeries` block | **Land it** — a prerequisite for the fix, and it is what lets a subclass add its own series |
-| 3 | Breakeven fires on `queenFilled` (position reduced to 1) **or** the bar's high/low touching `entry ± queenPts`, instead of the close alone | **Land it, on its own, with a test.** The close-only check misses an intrabar touch, so the runner's stop stays at risk through a bar that reached the target. It moves a stop on a live position — the most consequential change of the three |
+| 1 | `SecondaryTimeframeMinutes` (int, default 15) replacing the hardcoded `AddDataSeries(Minute, 5)` | **Not landed** — it would have widened the layering violation. The call moved to the strategy instead |
+| 2 | `ConfigureStrategy()` moved **before** the `AddDataSeries` block | **LANDED** — the extension point that lets a subclass add its own series |
+| 3 | Breakeven fires on `queenFilled` (position reduced to 1) **or** the bar's high/low touching `entry ± queenPts`, instead of the close alone | **LANDED 2026-09-05**, with `tools/check_intrabar_breakeven.py` (selftest has negative controls). The close-only check missed an intrabar touch, so the runner's stop stayed at risk through a bar that reached the target. It moves a stop on a live position — the most consequential change of the three |
 
 Everything else in that fork's diff was it being **stale**, not ahead: nine
 `return false;` that upstream now routes through `Blocked`, and a `GetSignalName`

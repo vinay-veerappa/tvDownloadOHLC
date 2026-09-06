@@ -42,11 +42,19 @@ KEY_COLS = ["symbol", "session_slot", "time_basis", "trading_day"]
 # We deliberately exclude any outcome, target, bias-correct, or post-signal
 # columns to avoid leakage.  All selected columns are numeric or low-cardinality
 # strings LightGBM can encode.
+#
+# REG-1 (2026-09-05): the `*_bucket_full` columns were REMOVED from this list.
+# They are whole-sample quantile labels -- a 2010 row's bucket was computed
+# using data through 2026 -- so training on them leaks the future
+# distribution into every split. The causal `*_trailing` variants remain;
+# they encode the same information as expanding quantiles that were knowable
+# on the day. `_attach_confluence_features` keeps only columns listed here,
+# so the leakage is gone at the join, not merely de-weighted.
 # ---------------------------------------------------------------------------
 CONFLUENCE_FEATURES = [
     # IB structure
     "ib_open", "ib_high", "ib_low", "ib_close", "ib_mid", "ib_range",
-    "range_pct", "range_atr", "range_pts", "range_bucket_full",
+    "range_pct", "range_atr", "range_pts",
     "range_bucket_trailing", "range_pctile_20", "range_pctile_60",
     "ib_range_pct_of_daily", "ib_range_5d_pctile", "ib_range_5d_contracting",
     "ib_range_5d_expanding", "ib_vs_overnight_ratio",
@@ -79,14 +87,16 @@ CONFLUENCE_FEATURES = [
     # Session / calendar
     "dow", "dst_regime", "us_dst", "uk_dst", "early_mid_event", "gap_dir",
     "gap_pct", "gap_pts", "gap_filled", "gap_fill_minutes",
-    # Volume / volatility context
-    "vix_bucket_full", "vix_bucket_trailing", "vix_close",
+    # Volume / volatility context. vix_bucket_full REMOVED (REG-1:
+    # whole-sample quantile label -- training-time leakage); the trailing
+    # variant carries the causal version of the same signal.
+    "vix_bucket_trailing", "vix_close",
 ]
 
 # Columns that are strings but low-cardinality / useful for LightGBM categorical encoding.
 CONFLUENCE_CAT_FEATURES = [
-    "range_bucket_full", "range_bucket_trailing", "first_break_bucket",
-    "dst_regime", "news_impact_level", "opex_phase", "vix_bucket_full",
+    "range_bucket_trailing", "first_break_bucket",
+    "dst_regime", "news_impact_level", "opex_phase",
     "vix_bucket_trailing",
 ]
 

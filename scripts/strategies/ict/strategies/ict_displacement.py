@@ -33,6 +33,7 @@ if _current_dir.name == "scripts":
         sys.path.insert(0, _root_dir)
 
 from scripts.libs_py.ict_engine import detect_swings, detect_structure_breaks
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 # Canonical output columns required by VectorizedBacktester
 _COLS = ["signal_time", "direction", "entry_price", "stop_price", "target1_price"]
@@ -58,6 +59,9 @@ class ICTDisplacementStrategy:
     def __init__(self, ticker: str = "NQ1") -> None:
         self.ticker = ticker
         self.strategy_name = "ICT Displacement (MSS)"
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt() on every path.
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(
         self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None
@@ -97,11 +101,19 @@ class ICTDisplacementStrategy:
         # ── 2. MSS signals: first close that clears the tracked level ───────
         # break_high == True  → bullish MSS (close > last swing high)
         # break_low  == True  → bearish MSS (close < last swing low)
-        bull_mss = breaks["break_high"].values & ~np.roll(breaks["break_high"].values, 1)
-        bear_mss = breaks["break_low"].values  & ~np.roll(breaks["break_low"].values,  1)
+        # Cast to bool: detect_structure_breaks can emit float/NaN columns,
+        # and `~` on a float array is a BITWISE op on the values (not a
+        # logical not) -- silently wrong rather than loud.
+        bh = breaks["break_high"].fillna(False).astype(bool).values
+        bl = breaks["break_low"].fillna(False).astype(bool).values
+        bull_mss = bh & ~np.roll(bh, 1)
+        bear_mss = bl & ~np.roll(bl, 1)
         bull_mss[0] = bear_mss[0] = False   # roll artifact
 
         # ── 3. Time filter (ADR-020) ────────────────────────────────────────
+        # The RAW break (before the window) is the decision-log trigger; the
+        # session window is a GATE so its rejections are visible (section 5.5).
+        raw_bull, raw_bear = bull_mss.copy(), bear_mss.copy()
         if session_only and hasattr(idx, "hour"):
             hour   = idx.hour
             minute = idx.minute
@@ -111,6 +123,18 @@ class ICTDisplacementStrategy:
             )
             bull_mss = bull_mss & np.asarray(in_session)
             bear_mss = bear_mss & np.asarray(in_session)
+        else:
+            in_session = np.ones(len(idx), dtype=bool)
+
+        # Decision log (section 5.5): the MSS break is the trigger, the ADR-020
+        # session window is the only gate. Recorded even when nothing breaks.
+        self.last_decisions = (
+            GateRecorder(idx, run_id="", strategy="ict_displacement")
+            .trigger(pd.Series(raw_bull, index=idx), "long")
+            .trigger(pd.Series(raw_bear, index=idx), "short")
+            .gate("ny_session_window", pd.Series(in_session, index=idx))
+            .to_frame(signal_prefix="idp_")
+        )
 
         # ── 4. Assemble signal rows (vectorised where) ──────────────────────
         direction = np.where(bull_mss, "long", np.where(bear_mss, "short", None))

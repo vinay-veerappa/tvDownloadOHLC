@@ -538,3 +538,59 @@ changes do not silently regress it.
   evaluation (F5), artifact-derived promotion metrics (F6), and the live-soak ledger
   with ten-session certification (F7).
 
+
+---
+
+## [ADR-026] Session-Range Knowability (REG-2 Option A): no value before its window closes
+**Status:** Approved (user-ratified 2026-09-05)
+**Date:** 2026-09-05
+
+### Context
+`scripts/libs_py/nqstats/sessions.py::get_nq_session_ranges` stamped a session's
+whole-day final aggregate (open/high/low/close/mid) onto EVERY bar of the logical
+trading day, including bars from 18:00 the prior evening. A 01:21 Asia bar therefore
+read the NY1 box mid (classification window 07:30-08:29 ET) seven hours before it
+existed. The `box_reversion` causality probe caught this live (LOOKAHEAD at 1 of 3
+informative cutoffs, a 01:21 signal appearing only when future bars were appended);
+the same stamping contaminated every consumer of `extract_all_sessions` -- about
+20 call sites including live trader scripts. Research item REG-2
+(`docs/strategies/research_backlog/14_session_range_lookahead.md`) recorded three
+remediation options; the user ratified option A.
+
+### Decision
+1. **A session value is knowable only from the end of its own window onward.**
+   `get_nq_session_ranges` (and therefore `extract_all_sessions`) emits NaN on
+   every bar strictly BEFORE the session's window-close bar, then the final
+   aggregate from the window-close bar onward. Consumers wanting "today's value"
+   on an early bar must read the explicit `prev_*` columns.
+2. **Box status is as-of-t, not as-of-day.** `compute_box_status` emits "Pending"
+   while a box's classification window is still forming (the LT/SF split is not
+   final), the FINAL status from the window-close bar onward, and "None" before
+   the window opens. Previously the day's final status was visible from 18:00.
+3. **NaN is not a value.** Classifiers that converted NaN inputs into concrete
+   labels now propagate NaN / "Unknown" instead: `get_broken_status_vectorized`
+   ("Held" on NaN), `NQStatsEngine`'s `c_anchor` ("BEARISH" on NaN). A fabricated
+   label reads as a measurement; a NaN reads as not-measured.
+4. `compute_box_broken` continues to check the mid only inside its post-session
+   broken window (already time-scoped); with the stamper fixed its input mid is
+   now knowable inside that window.
+
+### Alternatives Considered
+* Option B (value from session start, forward-filled): rejected -- still exposes
+  the FINAL aggregate on the bars where the box is still forming.
+* Option C (leave the shared layer, gate each consumer): rejected by the user --
+  it leaves the lookahead in place for every consumer not yet gated, which is the
+  status quo that produced the defect.
+
+### Consequences
+* Every framework hunter consuming box features inherits causality without its
+  own window gate. `box_reversion`'s consumer-side 08:30-11:30 gate remains
+  (entries are only taken there anyway) and is now redundant-but-harmless.
+* Live trader scripts (`intraday_blocks.py`, `briefing_core.py`) that read
+  "today's session value" on early bars now see NaN and must use `prev_*`; the
+  blast-radius harness and recorded runs quantify each script's exposure.
+* The PineScript/profiler convention (LT/SF are PENDING states that can flip)
+  now has its Python equivalent: the "Pending" status value is new to the Python
+  side and appears only inside classification windows.
+* Pinned by `tests/test_session_range_knowability.py` (boundary tests per
+  session, negative controls, and a causality probe on the adapter path).

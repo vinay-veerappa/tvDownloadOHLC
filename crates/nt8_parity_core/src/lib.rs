@@ -18,6 +18,7 @@ const NAN: f64 = f64::NAN;
 #[pyfunction]
 #[pyo3(signature = (
     times_epoch_ms, opens, highs, lows, closes, signals, limit_prices, stop_losses,
+    target_prices=None,
     point_value=2.0, tick_size=0.25, max_trades_per_day=3, max_consecutive_losers=2,
     pause_minutes=30, hard_stop_losers=3, daily_max_loss=1500.0, contracts=2,
     commission_per_contract_rt=1.40, slippage_ticks=0.0,
@@ -36,6 +37,7 @@ fn simulate_bars_v1(
     signals: PyReadonlyArray1<'_, i32>,
     limit_prices: PyReadonlyArray1<'_, f64>,
     stop_losses: PyReadonlyArray1<'_, f64>,
+    target_prices: Option<PyReadonlyArray1<'_, f64>>,
     point_value: f64,
     tick_size: f64,
     max_trades_per_day: usize,
@@ -66,10 +68,19 @@ fn simulate_bars_v1(
     let signals = signals.as_slice()?;
     let limit_prices = limit_prices.as_slice()?;
     let stop_losses = stop_losses.as_slice()?;
+    // Section 11 item 19 (option A, user-ratified 2026-09-05): the queen leg
+    // honours the hunter's DECLARED target when this array carries a finite
+    // value on the signal bar; a NaN or absent array falls back to queen_bps.
+    // The runner leg stays at runner_bps (ADR-023 Cover-The-Queen is frozen).
+    let targets: Vec<f64> = match target_prices {
+        Some(arr) => arr.as_slice()?.to_vec(),
+        None => Vec::new(),
+    };
     let n = opens.len();
 
     if times.len() != n || highs.len() != n || lows.len() != n || closes.len() != n
         || signals.len() != n || limit_prices.len() != n || stop_losses.len() != n
+        || (!targets.is_empty() && targets.len() != n)
     {
         return Err(PyValueError::new_err("input arrays must have equal length"));
     }
@@ -87,6 +98,10 @@ fn simulate_bars_v1(
         limit: f64,
         sl: f64,
         bar: usize,
+        // Item 19: the hunter's declared target, captured at ARM time from the
+        // signal bar (NaN -> no declaration, bps fallback at fill).
+        target: f64,
+        has_target: bool,
     }
 
     let mut out: Vec<[f64; 8]> = Vec::new(); // entry_ms, exit_ms, dir, entry_px, exit_px, leg1, leg2, total_pts
@@ -101,6 +116,9 @@ fn simulate_bars_v1(
     // measurement this kernel did not make. It reached a live report as
     // "median MAE 0.0" on eleven trades that exited on a stop.
     let mut out_exc: Vec<[f64; 2]> = Vec::new();   // mfe_pts, mae_pts
+    // Item 19: did the queen leg honour the DECLARED target (true) or the bps
+    // fallback (false)? Per trade, so a report can say how often each applied.
+    let mut out_declared: Vec<bool> = Vec::new();
     // Per-reason rejection counts -- section 11 item 13. The engine's own
     // gates (entry window, daily cap, pause, hard stop, daily loss limit,
     // timeout, concurrency lockout) were invisible to every report, so a
@@ -125,6 +143,8 @@ fn simulate_bars_v1(
     let mut active_tp2: f64 = 0.0;
     let mut queen_filled = false;
     let mut queen_exit_ms: i64 = 0;
+    // Item 19: set at fill time, read at close time.
+    let mut queen_used_declared = false;
 
     let mut cur_day: i64 = 0;
     let mut daily_trades: usize = 0;
@@ -273,6 +293,7 @@ fn simulate_bars_v1(
                 out_flags.push([queen_filled, r_hit]);
                 out_queen_ms.push(queen_exit_ms);
                 out_exc.push([cur_mfe_pts, cur_mae_pts]);
+                out_declared.push(queen_used_declared);
                 // Reset with the position, not with the day: an excursion that
                 // carried over would attribute one trade's adverse move to the
                 // next one.
@@ -324,7 +345,20 @@ fn simulate_bars_v1(
                             pos_entry_time = t;
                             pos_entry_price = p.limit;
                             active_sl = p.sl;
-                            active_tp1 = round_tick(p.limit + p.limit * (queen_bps / 10000.0));
+                            // Item 19: the queen leg honours the DECLARED
+                            // target when the hunter armed one; otherwise the
+                            // frozen queen_bps. Guard: a declared target at or
+                            // below entry would fill instantly and pays out a
+                            // nonsense profit -- the same geometry class the
+                            // validator drops signals for -- so fall back to
+                            // bps rather than accept it.
+                            if p.has_target && p.target > p.limit {
+                                active_tp1 = p.target;
+                                queen_used_declared = true;
+                            } else {
+                                active_tp1 = round_tick(p.limit + p.limit * (queen_bps / 10000.0));
+                                queen_used_declared = false;
+                            }
                             active_tp2 = round_tick(p.limit + p.limit * (runner_bps / 10000.0));
                             queen_filled = false;
                             queen_exit_ms = 0;
@@ -336,7 +370,13 @@ fn simulate_bars_v1(
                             pos_entry_time = t;
                             pos_entry_price = p.limit;
                             active_sl = p.sl;
-                            active_tp1 = round_tick(p.limit - p.limit * (queen_bps / 10000.0));
+                            if p.has_target && p.target < p.limit {
+                                active_tp1 = p.target;
+                                queen_used_declared = true;
+                            } else {
+                                active_tp1 = round_tick(p.limit - p.limit * (queen_bps / 10000.0));
+                                queen_used_declared = false;
+                            }
                             active_tp2 = round_tick(p.limit - p.limit * (runner_bps / 10000.0));
                             queen_filled = false;
                             queen_exit_ms = 0;
@@ -355,7 +395,15 @@ fn simulate_bars_v1(
         if !in_pos && pending_order.is_none() && signals[i] != 0 {
             let lmt = round_tick(limit_prices[i]);
             let sl = round_tick(stop_losses[i]);
-            pending_order = Some(Pending { dir: signals[i], limit: lmt, sl, bar: i });
+            // Item 19: capture the declared target at arm time, like the
+            // limit and the stop. A NaN or absent target is "no declaration"
+            // and the fill falls back to queen_bps.
+            let (tgt, has_tgt) = if !targets.is_empty() && targets[i].is_finite() {
+                (round_tick(targets[i]), true)
+            } else {
+                (0.0, false)
+            };
+            pending_order = Some(Pending { dir: signals[i], limit: lmt, sl, bar: i, target: tgt, has_target: has_tgt });
         } else if signals[i] != 0 && (in_pos || pending_order.is_some()) {
             // Concurrency lockout: a signal arrived while a position or a
             // working order already owned the slot. Before item 13 this was
@@ -384,6 +432,9 @@ fn simulate_bars_v1(
     // -- a distinction no P&L column can make.
     dict.set_item("mfe_points", out_exc.iter().map(|e| e[0]).collect::<Vec<_>>())?;
     dict.set_item("mae_points", out_exc.iter().map(|e| e[1]).collect::<Vec<_>>())?;
+    // Item 19: per-trade queen-leg source -- the hunter's declared target or
+    // the bps fallback. The Python mirror emits the same column.
+    dict.set_item("queen_used_declared_target", out_declared.clone())?;
     // Per-reason rejection counts (item 13). The keys are the frozen gate
     // names; gate2_parity.py asserts they are equal to the Python mirror's.
     let rej = pyo3::types::PyDict::new(_py);

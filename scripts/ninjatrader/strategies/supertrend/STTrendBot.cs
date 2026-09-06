@@ -115,7 +115,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             FlattenBy = 1555;
 
             // MUST be 5m primary, no secondary — closed bars only
-            AddSecondaryTimeframe = false;
             DebugMode = true;
 
             StPeriod = 14;

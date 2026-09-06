@@ -35,6 +35,7 @@ from scripts.libs_py.ict_engine import (
     detect_swings,
     detect_cisd,
 )
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 
 class FailedAuctionStrategy:
@@ -53,6 +54,9 @@ class FailedAuctionStrategy:
     def __init__(self, ticker: str = "NQ1"):
         self.ticker = ticker
         self.strategy_name = "Failed Auction"
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt().
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         p = params or {}
@@ -99,6 +103,15 @@ class FailedAuctionStrategy:
         long_mask = intraday_mask & sweep_low & reclaim_low
         short_mask = intraday_mask & sweep_high & reclaim_high
 
+        # The BASE setup before the ablation filters narrow it; the decision
+        # log triggers on this so filter gates can actually fail (section 5.5).
+        base_long, base_short = long_mask.copy(), short_mask.copy()
+
+        # Applied-filter ledger for the decision log: every OPTIONAL filter
+        # appends its mask as it runs, so the roster is exactly what this
+        # invocation evaluated.
+        applied_filters: list = []
+
         # ---------------------------------------------------------------------
         # Isolated Filter 1: CISD Delivery Series Reversal Trigger
         # ---------------------------------------------------------------------
@@ -107,6 +120,9 @@ class FailedAuctionStrategy:
             cisd_df = detect_cisd(df, swings)
             recent_bull_cisd = (cisd_df["cisd"] == 1).rolling(5, min_periods=1).max().astype(bool)
             recent_bear_cisd = (cisd_df["cisd"] == -1).rolling(5, min_periods=1).max().astype(bool)
+            applied_filters.append(
+                ("cisd_delivery_reversal", recent_bull_cisd | recent_bear_cisd,
+                 None, None))
             long_mask &= recent_bull_cisd
             short_mask &= recent_bear_cisd
 
@@ -117,6 +133,9 @@ class FailedAuctionStrategy:
             fvg_df = detect_fvg(df, require_candle_direction=True)
             recent_bull_fvg = (fvg_df["fvg_type"] == 1).rolling(3, min_periods=1).max().astype(bool)
             recent_bear_fvg = (fvg_df["fvg_type"] == -1).rolling(3, min_periods=1).max().astype(bool)
+            applied_filters.append(
+                ("rejection_fvg_present", recent_bull_fvg | recent_bear_fvg,
+                 None, None))
             long_mask &= recent_bull_fvg
             short_mask &= recent_bear_fvg
 
@@ -127,6 +146,9 @@ class FailedAuctionStrategy:
             ker_df = compute_kaufman_efficiency(df, period=5)
             # Exhaustion means prior runaway momentum has decelerated
             is_exhausted = ker_df["ker_5"] <= ker_exhaustion_max
+            applied_filters.append(
+                ("impulse_exhaustion", is_exhausted,
+                 ker_df["ker_5"], ker_exhaustion_max))
             long_mask &= is_exhausted
             short_mask &= is_exhausted
 
@@ -136,6 +158,7 @@ class FailedAuctionStrategy:
         if use_barbwire_filter and (long_mask | short_mask).any():
             overlap_df = compute_bar_overlap(df, window=3, threshold=max_bar_overlap / 100.0)
             not_barbwire = ~overlap_df["is_barbwire_overlap"]
+            applied_filters.append(("not_barbwire", not_barbwire, None, None))
             long_mask &= not_barbwire
             short_mask &= not_barbwire
 
@@ -144,6 +167,30 @@ class FailedAuctionStrategy:
         df.loc[short_mask, "direction"] = "short"
 
         combined = df.dropna(subset=["direction"]).copy()
+        first_sigs = (combined.groupby(combined.index.normalize()).head(1).copy()
+                      if not combined.empty else combined)
+        is_first = pd.Series(False, index=df.index)
+        if len(first_sigs):
+            is_first.loc[first_sigs.index] = True
+
+        # Decision log (section 5.5). TRIGGER = the sweep+reclaim bar; the
+        # gates are the window, the applied optional filters, and
+        # first_of_day. The sweep depth is a MEASURE (it cannot fail on a
+        # bar that triggered by sweeping).
+        rec = (
+            GateRecorder(df.index, run_id="", strategy="failed_auction")
+            .trigger(base_long, "long")
+            .trigger(base_short, "short")
+            .gate("intraday_window", intraday_mask)
+        )
+        for gname, gmask, gval, gthr in applied_filters:
+            rec = rec.gate(gname, gmask, value=gval, threshold=gthr)
+        rec = rec.gate("first_signal_of_day", is_first)
+        sweep_depth = ((df["prior_low"] - df["low"]).clip(lower=0)
+                       + (df["high"] - df["prior_high"]).clip(lower=0))
+        rec = rec.measure("sweep_depth_pts", sweep_depth)
+        self.last_decisions = rec.to_frame(signal_prefix="fa_")
+
         if combined.empty:
             return pd.DataFrame(columns=self.OUTPUT_COLUMNS)
 

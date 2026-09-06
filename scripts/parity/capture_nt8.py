@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from scripts.parity.nt8_profile import (
-    ORDER_FILL_KEYS, build_request, load_profile, profile_hash)
+    ORDER_FILL_KEYS, build_request, load_profile)
 
 BRIDGE_URL = os.getenv("NT8_BRIDGE_URL", "http://localhost:7890/api/backtest")
 TOKEN_FILE = pathlib.Path(
@@ -241,7 +241,13 @@ def capture(strategy: str, symbol: str, date_from: str, date_to: str, *,
         # owns one (B9) and the keys were suppressed -- the two are NOT the
         # same configuration and a future reader must not assume they were.
         "fillResolution": "strategy-programmed" if multi_series else "High",
-        "profileHash": resp.get("profileHash") or profile_hash(prof),
+        # build_request already hashed the profile AS SENT (multi-series bots
+        # run without the analyzer's OrderFillResolution keys, so their hash
+        # differs); reusing it means the fixture names the configuration that
+        # actually ran even when the bridge cannot echo (0 trades, dialog
+        # abort). Falling back to profile_hash(prof) here once recorded the
+        # UNSUPPRESSED hash against a run that never saw those keys.
+        "profileHash": resp.get("profileHash") or body["profileHash"],
         "reportedMetrics": {k: resp.get(k) for k in (
             "totalTrades", "winners", "losers", "tradeWinRatePct", "profitFactor",
             "grossProfit", "grossLoss", "netProfit", "maxDrawdown",

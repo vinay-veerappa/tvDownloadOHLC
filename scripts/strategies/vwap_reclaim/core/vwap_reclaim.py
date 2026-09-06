@@ -37,6 +37,7 @@ from scripts.libs_py.ict_engine import (
     detect_swings,
     detect_cisd,
 )
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 
 class VWAPReclaimStrategy:
@@ -55,6 +56,9 @@ class VWAPReclaimStrategy:
     def __init__(self, ticker: str = "NQ1"):
         self.ticker = ticker
         self.strategy_name = "VWAP Reclaim"
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt().
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         p = params or {}
@@ -118,6 +122,15 @@ class VWAPReclaimStrategy:
             & (vol >= min_abs_volume)
         )
 
+        # The BASE setup before the ablation filters narrow it; the decision
+        # log triggers on this so filter gates can actually fail (section 5.5).
+        base_long, base_short = long_mask.copy(), short_mask.copy()
+
+        # Applied-filter ledger for the decision log: every OPTIONAL filter
+        # appends its mask as it runs, so the roster is exactly what this
+        # invocation evaluated.
+        applied_filters: list = []
+
         # ---------------------------------------------------------------------
         # Isolated Filter 1: IFVG / Displacement Through VWAP
         # ---------------------------------------------------------------------
@@ -129,6 +142,9 @@ class VWAPReclaimStrategy:
             recent_bear_ifvg = (ifvg_df["ifvg"] == -1).rolling(3, min_periods=1).max().astype(bool)
             recent_bull_fvg = (fvg_df["fvg_type"] == 1).rolling(3, min_periods=1).max().astype(bool)
             recent_bear_fvg = (fvg_df["fvg_type"] == -1).rolling(3, min_periods=1).max().astype(bool)
+            applied_filters.append(
+                ("ifvg_confluence", (recent_bull_ifvg | recent_bull_fvg)
+                 | (recent_bear_ifvg | recent_bear_fvg), None, None))
             long_mask &= (recent_bull_ifvg | recent_bull_fvg)
             short_mask &= (recent_bear_ifvg | recent_bear_fvg)
 
@@ -140,6 +156,9 @@ class VWAPReclaimStrategy:
             cisd_df = detect_cisd(df, swings)
             recent_bull_cisd = (cisd_df["cisd"] == 1).rolling(5, min_periods=1).max().astype(bool)
             recent_bear_cisd = (cisd_df["cisd"] == -1).rolling(5, min_periods=1).max().astype(bool)
+            applied_filters.append(
+                ("cisd_delivery_flip", recent_bull_cisd | recent_bear_cisd,
+                 None, None))
             long_mask &= recent_bull_cisd
             short_mask &= recent_bear_cisd
 
@@ -152,6 +171,9 @@ class VWAPReclaimStrategy:
             )
             daily_cross_count = crosses.groupby(date_key).cumsum()
             under_cross_limit = daily_cross_count <= max_vwap_crosses
+            applied_filters.append(
+                ("vwap_cross_limit", under_cross_limit,
+                 daily_cross_count, max_vwap_crosses))
             long_mask &= under_cross_limit
             short_mask &= under_cross_limit
 
@@ -161,6 +183,8 @@ class VWAPReclaimStrategy:
         if use_ker_filter and (long_mask | short_mask).any():
             ker_df = compute_kaufman_efficiency(df, period=5, efficient_threshold=ker_min)
             ker_valid = ker_df["ker_5"] >= ker_min
+            applied_filters.append(
+                ("ker_efficiency", ker_valid, ker_df["ker_5"], ker_min))
             long_mask &= ker_valid
             short_mask &= ker_valid
 
@@ -170,6 +194,7 @@ class VWAPReclaimStrategy:
         if use_barbwire_filter and (long_mask | short_mask).any():
             overlap_df = compute_bar_overlap(df, window=3, threshold=max_bar_overlap / 100.0)
             not_barbwire = ~overlap_df["is_barbwire_overlap"]
+            applied_filters.append(("not_barbwire", not_barbwire, None, None))
             long_mask &= not_barbwire
             short_mask &= not_barbwire
 
@@ -178,11 +203,39 @@ class VWAPReclaimStrategy:
         df.loc[short_mask, "direction"] = "short"
 
         combined = df.dropna(subset=["direction"]).copy()
+        first_sigs = (combined.groupby(combined.index.normalize()).head(1).copy()
+                      if not combined.empty else combined)
+        is_first = pd.Series(False, index=df.index)
+        if len(first_sigs):
+            is_first.loc[first_sigs.index] = True
+
+        # Decision log (section 5.5). TRIGGER = the base reclaim bar; the
+        # gates are the volume floor, the window, the applied optional
+        # filters, and first_of_day. The rel-volume gate carries its value
+        # and threshold so a reader can see WHERE the floor sits.
+        rec = (
+            GateRecorder(df.index, run_id="", strategy="vwap_reclaim")
+            .trigger(base_long, "long")
+            .trigger(base_short, "short")
+            .gate("rth_window", intraday_mask)
+            .gate("relative_volume_floor", (df["rel_vol"] >= rel_vol_min),
+                  value=df["rel_vol"], threshold=rel_vol_min)
+            .gate("absolute_volume_floor", (vol >= min_abs_volume),
+                  value=vol, threshold=min_abs_volume)
+        )
+        for gname, gmask, gval, gthr in applied_filters:
+            rec = rec.gate(gname, gmask, value=gval, threshold=gthr)
+        rec = rec.gate("first_signal_of_day", is_first)
+        # Magnitudes for attribution, never gates: how far price deviated
+        # from VWAP before the reclaim, and the reclaim bar's range.
+        dev = (prev_close - prev_vwap).abs()
+        rec = rec.measure("pre_reclaim_vwap_deviation", dev)
+        self.last_decisions = rec.to_frame(signal_prefix="vwr_")
+
         if combined.empty:
             return pd.DataFrame(columns=self.OUTPUT_COLUMNS)
 
         combined["date"] = combined.index.normalize()
-        first_sigs = combined.groupby("date").head(1).copy()
 
         first_sigs["signal_time"] = first_sigs.index
         first_sigs["entry_price"] = first_sigs["close"]

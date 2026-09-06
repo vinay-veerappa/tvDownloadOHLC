@@ -42,7 +42,6 @@ KNOWN_DIVERGENCES = {
     "scripts/ninjatrader/strategies/bandits_8020/BBMRReversionBot.cs": (1600, None, 1600),
     "scripts/ninjatrader/strategies/bandits_8020/Bandits8020Bot.cs": (1555, 3, 1100),
     "scripts/ninjatrader/strategies/ib_breakout/IBFadeBot.cs": (1555, 2, 1555),
-    "scripts/ninjatrader/strategies/ib_breakout/IBStrategyBase.cs": (1550, 2, 1430),
     "scripts/ninjatrader/strategies/ifvg_cisd/ICTFVGCISDBot.cs": (1555, 3, 1530),
     "scripts/ninjatrader/strategies/keltner_channel/KeltnerChannelBot.cs": (1600, 4, 1530),
     "scripts/ninjatrader/strategies/supertrend/STTrendBot.cs": (1555, None, 1555),
@@ -51,6 +50,11 @@ KNOWN_DIVERGENCES = {
     # EMAPullbackBot left this list 2026-09-05: it differs only in LatestEntry,
     # which stopped being a frozen field when entries became unrestricted. See
     # BOT_FIX_BACKLOG.md B6.
+    # IBStrategyBase left this list 2026-09-05 (B4 closed): its 1550 vs
+    # IBFadeBot's 1555 -- which one applied depended on construction order --
+    # is settled; the base now carries the frozen 1545 and matches, and only
+    # IBFadeBot's deliberate PM-window override remains recorded. See
+    # BOT_FIX_BACKLOG.md B4 for the one-key-three-bots mapping note.
 }
 
 # ONLY `flattenByEt` IS COMPARED. `maxTradesPerDay` and `lastEntryEt` are

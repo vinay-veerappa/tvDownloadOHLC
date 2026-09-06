@@ -42,6 +42,7 @@ from scripts.libs_py.ict_engine import (
     detect_cisd_authoritative,
     detect_structure_breaks,
 )
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 # ── Constants ──────────────────────────────────────────────────────────────
 _COLS = ["signal_time", "direction", "entry_price", "stop_price", "target1_price"]
@@ -62,6 +63,9 @@ class ICTFVGCISDRejectionStrategy:
     def __init__(self, ticker: str = "ES1") -> None:
         self.ticker = ticker
         self.strategy_name = "ICT FVG+CISD Rejection"
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt() on every path.
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     # ── Public interface ──────────────────────────────────────────────
 
@@ -297,7 +301,38 @@ class ICTFVGCISDRejectionStrategy:
             bear_mask &= (rej_fvg_bear_count > 0)
         bear_mask &= np.isfinite(bear_entry) & np.isfinite(bear_stop) & (bear_risk > 1e-9)
 
-        # ── 14. Assemble output ───────────────────────────────────────
+        # ── 14. Decision log (section 5.5), before assembly ───────────
+        # TRIGGER = the HTF FVG rejection bar (in-gap + directional close);
+        # gates: CISD fired, MSS fired (when required), rejection-leg FVG
+        # count (when required), and finite entry/stop geometry. Recorded
+        # even when nothing qualifies.
+        rec = (
+            GateRecorder(exec_idx, run_id="", strategy="ict_fvg_cisd_rejection")
+            .trigger(pd.Series(htf_bull_reject, index=exec_idx), "long")
+            .trigger(pd.Series(htf_bear_reject, index=exec_idx), "short")
+            .gate("cisd_fired",
+                  pd.Series(cisd_bull_fired | cisd_bear_fired, index=exec_idx))
+        )
+        if require_mss:
+            rec = rec.gate("mss_fired",
+                            pd.Series(mss_bull_fired | mss_bear_fired,
+                                      index=exec_idx))
+        if require_rej_fvg:
+            rec = rec.gate("rejection_fvg_present",
+                            pd.Series((rej_fvg_bull_count > 0)
+                                      | (rej_fvg_bear_count > 0),
+                                      index=exec_idx))
+        rec = rec.gate(
+            "geometry_finite",
+            pd.Series((np.isfinite(bull_entry) & np.isfinite(bull_stop)
+                       & (bull_risk > 1e-9))
+                      | (np.isfinite(bear_entry) & np.isfinite(bear_stop)
+                         & (bear_risk > 1e-9))
+                      | (~htf_bull_reject & ~htf_bear_reject),
+                      index=exec_idx))
+        self.last_decisions = rec.to_frame(signal_prefix="ifc_")
+
+        # ── 15. Assemble output ───────────────────────────────────────
         bull_idx_arr = np.where(bull_mask)[0]
         bear_idx_arr = np.where(bear_mask)[0]
 
@@ -370,10 +405,25 @@ class ICTFVGCISDRejectionStrategy:
     def _cumulative_fire(
         fire_mask: np.ndarray, ltf_index: pd.DatetimeIndex, exec_index: pd.DatetimeIndex
     ) -> np.ndarray:
-        """Map LTF boolean signal to exec as cumulative 'has fired' via ffill."""
+        """Map LTF boolean signal to exec as cumulative 'has fired' via ffill.
+
+        The two indexes can arrive in different resolutions (ns vs us under
+        pandas 3) or tz representations, and a cross-resolution reindex
+        raises. Normalize BOTH to the exec index's unit before reindexing --
+        values are instants, so the mapping is unaffected.
+        """
         if not fire_mask.any():
             return np.zeros(len(exec_index), dtype=bool)
-        s = pd.Series(1, index=ltf_index[fire_mask])
+        ltf = pd.DatetimeIndex(ltf_index)
+        if (ltf.tz is None) != (exec_index.tz is None):
+            # Make tz match: an aware frame with naive LTF (or vice versa)
+            # means one side lost its localization; localize to the other.
+            if exec_index.tz is not None and ltf.tz is None:
+                ltf = ltf.tz_localize(exec_index.tz)
+            elif exec_index.tz is None and ltf.tz is not None:
+                ltf = ltf.tz_localize(None)
+        ltf = ltf.as_unit(exec_index.unit)
+        s = pd.Series(1, index=ltf[fire_mask])
         cum = s.cumsum().reindex(exec_index, method="ffill").fillna(0)
         return cum.values > 0
 

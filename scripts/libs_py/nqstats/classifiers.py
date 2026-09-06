@@ -502,28 +502,36 @@ def get_broken_status_vectorized(sessions_df: pd.DataFrame) -> pd.DataFrame:
     - Did London break Asia?
     - Did Pre-NY break London?
     - Did NY_AM break London or Asia?
+
+    ADR-026: a NaN input is NOT a verdict. With the range stamper fixed, the
+    London range is NaN until the London window closes, so "Held" on those
+    bars asserted a comparison that had not happened. NaN inputs now yield
+    "Unknown" rather than a concrete label.
     """
-    # 1. London vs Asia
     ah = sessions_df['asia_high'].values
     al = sessions_df['asia_low'].values
     lh = sessions_df['london_high'].values
     ll = sessions_df['london_low'].values
-    
-    london_broke_asia = (lh > ah) | (ll < al)
-    
+
+    inputs_known = ~(np.isnan(ah) | np.isnan(al) | np.isnan(lh) | np.isnan(ll))
+    london_broke_asia = np.where(inputs_known, (lh > ah) | (ll < al), np.nan)
+
     # 2. Pre-NY vs London
     ph = sessions_df['pre-ny_high'].values
     pl = sessions_df['pre-ny_low'].values
-    
-    preny_broke_london = (ph > lh) | (pl < ll)
-    
-    # Output labels
-    l_vs_a = np.where(london_broke_asia, "Broken", "Held")
-    p_vs_l = np.where(preny_broke_london, "Broken", "Held")
-    
+
+    inputs_known_p = ~(np.isnan(ph) | np.isnan(pl) | np.isnan(lh) | np.isnan(ll))
+    preny_broke_london = np.where(inputs_known_p, (ph > lh) | (pl < ll), np.nan)
+
+    # Output labels: "Unknown" where the inputs are not yet knowable.
+    l_vs_a = np.where(np.isnan(london_broke_asia), "Unknown",
+                      np.where(london_broke_asia == 1, "Broken", "Held"))
+    p_vs_l = np.where(np.isnan(preny_broke_london), "Unknown",
+                      np.where(preny_broke_london == 1, "Broken", "Held"))
+
     # Build combo string Series
     combo = pd.Series(l_vs_a, index=sessions_df.index) + "/" + pd.Series(p_vs_l, index=sessions_df.index)
-    
+
     return pd.DataFrame({
         "london_vs_asia": l_vs_a,
         "preny_vs_london": p_vs_l,

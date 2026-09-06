@@ -114,7 +114,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             AtrPeriod = 14;
             StopAtrMult = 1.5;
             TrailAtrMult = 2.0;
-            AddSecondaryTimeframe = false; // Self-contained on chart series
         }
 
         protected override void OnInitialize()

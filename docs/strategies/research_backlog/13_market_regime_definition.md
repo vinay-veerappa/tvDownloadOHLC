@@ -1,10 +1,16 @@
 # 13 — Market Regime: one definition, used everywhere
 
 **Family**: infrastructure research (not a strategy). **Item**: `REG-1`.
-**Status**: OPEN — first cheap step done 2026-09-05 (see below); nothing else
-is decided. **Raised**: 2026-09-05.
-**Blocks**: `statistically_sufficient` (STRATEGY_WORKFLOW.md §9) is currently
-using a *proxy* and says so on every run it prints.
+**Status**: **DECIDED 2026-09-06 (user): keep the calendar-quarter proxy; adapt
+or change it when something better is found.** The lookahead defects are fixed
+(filter calibration, classifier features), the live-consumer table is two rows
+shorter, and arms 1, 2, 5 and parts of 3–4 are measured (see "Arms" below): A′
+(VIX 10d-MA tercile) is the front-runner but **era stability — the hypothesis
+H test — is unsatisfied by every market-content candidate**, which is precisely
+why the user parked it. **Raised**: 2026-09-05. **Decided**: 2026-09-06.
+**Blocks**: nothing any more — the proxy is a *declared* proxy everywhere it
+prints, and this item is the standing record of the measured candidates and of
+what "better" would have to beat (the adoptability checklist).
 
 ---
 
@@ -97,32 +103,117 @@ measured, not argued.
 | F | **Calendar quarter (ET)** | yes (the proxy) | yes | Trivially causal, no market content. The placeholder to be replaced |
 | G | **Trend/chop** (KER, ADX — see `12_range_chop_congestion.md`) | proposed | yes | Overlaps item 12; settle there or here, not both |
 
-## Arms
+## Arms — 1, 2, 5 MEASURED 2026-09-05; 3, 4 partially
 
-One hypothesis, falsifiable:
+The hypothesis under test, falsifiable:
 
-> **H:** there is a regime definition under which a strategy's per-stratum edge
-> is more stable across time than its pooled edge — i.e. the stratification
-> explains variance rather than manufacturing it.
+> **H:** there is a regime definition under which a strategy's per-stratum
+> edge is more stable across time than its pooled edge — i.e. the
+> stratification explains variance rather than manufacturing it.
 
-Test it the way the backlog tests anything else. For each candidate above:
+**Status of H after measurement: NOT SUPPORTED by any market-content
+candidate yet.** Era stability (arm 4) is |ρ| ≤ 0.5 for every VIX candidate;
+only the content-free quarter proxy reaches +1.00 (for one strategy). The
+arms below carry the numbers; the front-runner survives on the other three
+arms, not on H.
 
-1. **Balance** — trades per stratum per year. A definition that puts 85% of days
-   in one bucket cannot support "≥120 trades across ≥3 regimes" and is out on
-   arithmetic alone.
-2. **Persistence** — how long does a stratum label last? A regime that changes
-   every other day is a noise filter wearing a regime's name. Report the median
-   run length.
-3. **Separation** — take 2–3 strategies with *known* different characters
-   (`mean_reversion`, `ib_pullback`, one trend follower) and measure per-stratum
-   PF / WR / expectancy. A useful partition makes them disagree; a useless one
-   moves all of them together.
-4. **Stability across eras** — split the history in half, compute the
-   per-stratum edge on each half, and correlate. This is the test that kills a
-   definition whose strata do not keep their meaning.
-5. **Lookahead control** — run every candidate in both `_full` and `_trailing`
-   form and report the gap. If a candidate only works in `_full` form, it does
-   not work.
+Measured on the Globex IB day-level aggregate (`ib_facts_NQ1`, 5,158 trading
+days, 2006–2026). Full harness output inlined below; throwaway scripts, nothing
+depends on them.
+
+### Arm 1 — balance
+
+| Candidate | Strata shares | Years reaching ≥3 strata (≥5% each) |
+|---|---|---|
+| A VIX tercile (1d) | 32–34% each | min 1 (whole years in ≤2 strata) |
+| A′ VIX 10d-MA tercile | 32–34% each | min 1 — **2017 spent the year in ONE stratum**; 2012–14, 2021–22 in two |
+| B VIX abs bands (<15/15–25/>25) | 34/49/17% | min 1 |
+| C realvol tercile (range_atr) | 45/29/26% | min 3 |
+| D IB range tercile | 44/29/27% | min 1 |
+| F quarter (the proxy) | 25% each | min 3 |
+
+### Arm 2 — persistence (the ≥5-day adoptability bar)
+
+| Candidate | Median run | Mean run | Longest |
+|---|---|---|---|
+| A VIX tercile (1d) | 3.0d | 8.6d | 265d |
+| **A′ VIX 10d-MA tercile** | **16.0d** | 31.3d | 302d |
+| **A″ VIX 20d-MA tercile** | **27.0d** | 48.2d | 310d |
+| B VIX abs bands (1d) | 3.0d | 11.1d | 209d |
+| C realvol tercile | 1.0d | 1.7d | 17d |
+| D IB range tercile | 1.0d | 2.2d | 100d |
+| F quarter | 63d | 62d | 66d |
+
+**No unsmoothed candidate passes.** The range-based ones (C, D) are day
+filters, not regimes — median run ONE day, answering the brief's own question
+("is it a regime or a day type?": a day type). Smoothing the VIX with a
+trailing 10d/20d MA is causal (trailing window) and clears the bar.
+
+### Arm 3 — separation (does the partition make strategies disagree?)
+
+On the two recorded trade sets under the current policy — `mean_reversion`
+(fade; 2,527 trades) and `box_reversion` (mid-reversion; 1,601 trades; fixed
+this session). Per-stratum mean points per trade:
+
+| Candidate | mean_reversion | box_reversion | stratum-rank corr |
+|---|---|---|---|
+| A VIX 1d | High +0.68 / Med +0.15 / Low +0.18 | High **+3.64** / Med +11.60 / Low +11.08 | **−1.00** |
+| A′ VIX 10d | High +0.51 / Mid +0.38 / Low +0.04 | High **+5.32** / Mid +10.82 / Low +10.27 | −0.50 |
+| B abs bands | High +0.35 / Mid +0.37 / Low +0.23 | High **+0.78** / Mid +9.92 / Low +11.05 | −0.50 |
+| F quarter | Q1 +0.70 … Q2 −0.25 | Q1 +8.08 … Q4 +9.75 | −0.40 |
+
+**A VIX 1d separates maximally** (−1.00): mean_reversion's edge lives in High
+VIX while box_reversion's mid-reversion collapses there (High-VIX days run
+through the mid instead of reverting). That is a partition carrying
+information, not manufacturing variance. Caveat: box_reversion's trade set is
+unvalidated (5 criteria FAIL) and the strategy was dead until this session —
+its half of arm 3 is provisional until a recorded run says otherwise. A trend
+follower is still needed for the third character the arm asks for.
+
+### Arm 4 — era stability (per-stratum edge, H1 vs H2 rank correlation)
+
+Weak everywhere (|ρ| ≤ 0.5) except the quarter proxy for mean_reversion
+(+1.00 — and the proxy has no market content). **H as stated is not yet
+supported by the VIX candidates**: strata meanings drift across eras, which the
+brief anticipated ("a Low VIX day in 2017 and one in 2022 are not the same
+market"). This is the test the surviving candidate must beat, and none has
+beaten it yet.
+
+### Arm 5 — full/trailing gap
+
+D (range): **17.1%** whole-sample disagreement, earliest fifth 29%. A (VIX):
+**18.3%**, earliest fifths 37/37%. Same earliest-heavy gradient as the IB
+aggregate table above. B, C′-smoothed and F are causal by construction (no
+`_full` twin exists to disagree with).
+
+### Where this leaves the candidate table
+
+| Candidate | Balance | Persistence ≥5d | Separation | Era stability | Verdict so far |
+|---|---|---|---|---|---|
+| A VIX tercile 1d | ✅ | ❌ (3d) | ✅ (−1.00) | ❌ | fails persistence |
+| **A′ VIX 10d-MA tercile** | ⚠️ (some years 1–2 strata) | ✅ (16d) | ➖ (−0.50) | ❌ | **front-runner, pending era stability** |
+| B VIX abs bands | ❌ (17% High) | ❌ (3d; 10d variant 16d) | ➖ | ❌ | thresholds + skew |
+| C realvol tercile | ✅ | ❌ (1–3d) | not run | not run | a day filter |
+| D IB range tercile | ⚠️ | ❌ (1d) | not run | not run | a day type (its own row says so) |
+| F quarter | ✅ | ✅ | ❌ (no content) | ✅ for one strategy | the proxy it already is |
+
+**Open before adoption**: era stability is the unsatisfied criterion for every
+market-content candidate. The next measurement worth taking: era stability of
+**A′ (VIX 10d tercile)** on more trade sets (a trend follower, and
+`ib_pullback`) — if ρ stays ≤ 0.5, the honest conclusion is that a *single*
+stable 3-stratum regime does not exist in this data, and the adoptable answer
+is A′ anyway (best on the other three arms) with era stability reported per
+run rather than assumed. That decision is the user's to ratify, per the
+adoptability checklist.
+
+The five arms themselves, for reference (this is how the tables above were
+produced): **balance** — trades per stratum per year, arithmetic elimination;
+**persistence** — median stratum run length; **separation** — per-stratum edge
+across strategies with different characters (a useful partition makes them
+disagree); **era stability** — per-stratum edge on each half of history,
+rank-correlated; **lookahead control** — every candidate in both `_full` and
+`_trailing` form, and a candidate that only works in `_full` form does not
+work.
 
 ## What makes a definition adoptable
 
@@ -154,7 +245,7 @@ currently either using a different definition or using none:
 | `research_backlog/README.md` learning protocol | "IB regime quint" (is a tercile) | the definition |
 | `reporting/session_breakdown.py`, `trade_ordinal.py` | session only | session × regime |
 | `edgeful/ib_breakout_filter.py` calibration cells | ~~`range_bucket_full` (lookahead)~~ → `range_bucket_trailing` **FIXED 2026-09-05** | the definition |
-| `edgeful/universal_signal_classifier_input.py` | both `_full` and `_trailing` | the causal one |
+| `edgeful/universal_signal_classifier_input.py` | ~~both `_full` and `_trailing`~~ → **`_trailing` only — FIXED 2026-09-05** | the definition |
 | `libs_py/nqstats/ib.py` | its own copy of the bucketing | imports it |
 | `edgeful/ib_pipeline.py` | its own copy of the bucketing | imports it |
 | `ml/prop_firm_simulator.py` | nothing | per-regime pass rate, so "viable" names its conditions |
@@ -213,11 +304,14 @@ five. **This is a live defect in a shipped filter and it is fixed** (2026-09-05)
   negative control that flips the full label everywhere and requires the
   calibration to not move.
 
-Still open in this item: `universal_signal_classifier_input.py` still lists
-`range_bucket_full` / `vix_bucket_full` as classifier features (leakage into
-the model's feature set, not the calibration); the duplicated bucketing code in
-`nqstats/ib.py` and `edgeful/ib_pipeline.py` (§"two defects" above); and the
-candidate comparison arms below. The A/B harness for the calibration lives at
+Still open in this item: the duplicated bucketing code in `nqstats/ib.py` and
+`edgeful/ib_pipeline.py` (§"two defects" above); and the candidate comparison
+arms below. **The classifier feature list is fixed** (2026-09-05):
+`universal_signal_classifier_input.py` no longer feeds `range_bucket_full` /
+`vix_bucket_full` to the model (whole-sample quantile labels leak the future
+distribution into every training split); only the causal `*_trailing`
+variants remain. Pinned by `tests/edgeful/test_classifier_input_no_lookahead.py`.
+The A/B harness for the calibration lives at
 `%TEMP%\opencode\reg1_ab_calibration.py` — inlined above, nothing depends on it.
 
 ---

@@ -141,6 +141,63 @@ def main():
     else:
         print(f"  V1 rejection_counts: EXACT MATCH ({sum(py_rej.values())} rejections across {len(py_rej)} reasons)")
 
+    # Declared-target parity (section 11 item 19). Same inputs plus a target
+    # series -- the queen leg must honour it on BOTH paths identically, or the
+    # feature exists on one side only, which is the drift this gate exists to
+    # prevent. A synthetic target close enough to fill distinguishes a
+    # declared-target exit from the bps bracket.
+    n_bars = len(df)
+    tgt = pd.Series(np.nan, index=df.index)
+    sig_idx = np.arange(0, n_bars, 15)
+    tgt.iloc[sig_idx] = (df["close"].to_numpy()[sig_idx]
+                         + np.where(np.arange(0, n_bars, 15) % 2 == 0, 1.0, -1.0))
+    py_t = engine.simulate(
+        df,
+        pd.Series(signals, index=df.index),
+        pd.Series(limit_prices, index=df.index),
+        pd.Series(stop_losses, index=df.index),
+        target_prices=tgt,
+        use_rust=False,
+    )
+    rs_t = nt8_parity_core.simulate_bars_v1(
+        times_ms,
+        df["open"].to_numpy(dtype=np.float64),
+        df["high"].to_numpy(dtype=np.float64),
+        df["low"].to_numpy(dtype=np.float64),
+        df["close"].to_numpy(dtype=np.float64),
+        signals,
+        limit_prices,
+        stop_losses,
+        target_prices=tgt.to_numpy(dtype=np.float64),
+        point_value=2.0, tick_size=0.25, contracts=2,
+    )
+    n_py_t, n_rs_t = len(py_t), len(rs_t["entry_time_ms"])
+    print(f"[V1-T] python trades: {n_py_t} | rust trades: {n_rs_t}")
+    if n_py_t != n_rs_t:
+        print("V1 DECLARED-TARGET TRADE COUNT DIVERGENCE")
+        sys.exit(2)
+    for col in ("entry_price", "exit_price", "leg1_points", "leg2_points",
+                "total_points"):
+        a = py_t[col].to_numpy(dtype=np.float64)
+        b = np.asarray(rs_t[col], dtype=np.float64)
+        if not np.array_equal(a, b):
+            bad = np.where(a != b)[0]
+            mismatches += len(bad)
+            print(f"  V1-T {col}: {len(bad)} mismatches (declared-target run)")
+        else:
+            print(f"  V1-T {col}: EXACT MATCH ({len(a)} rows, declared-target run)")
+    # the declared flag itself must agree, or a report would name different
+    # sources for the same trade on the two paths
+    py_flag = py_t["queen_used_declared_target"].to_numpy(dtype=bool)
+    rs_flag = np.asarray(rs_t["queen_used_declared_target"], dtype=bool)
+    if py_flag.size == rs_flag.size and not np.array_equal(py_flag, rs_flag):
+        mismatches += int((py_flag != rs_flag).sum())
+        print("  V1-T queen_used_declared_target: DIVERGENCE")
+    else:
+        used = int(py_flag.sum()) if py_flag.size else 0
+        print(f"  V1-T queen_used_declared_target: EXACT MATCH "
+              f"({used}/{len(py_flag)} trades used the declared target)")
+
     # ---------------- V2 ----------------
     df_5m = df_full.loc[YEAR_START:YEAR_END].resample("5min").agg(
         {"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()

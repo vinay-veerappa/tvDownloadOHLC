@@ -110,7 +110,21 @@ In the order I would do them.
 | 4 | **§11 items 4, 8** | Parameter documents for non-ICT families; migrate off the legacy `session_block` |
 
 Done this session (2026-09-05, recorded in their own documents): REG-1 first
-cheap step; §11 item 13.
+cheap step + the classifier feature fix; §11 item 13 (engine gates instrumented,
+200:1 re-measured to 1.26:1); §11 item 7 (`box_reversion` was silently dead —
+see the item for the three stacked defects); §11.1 6.1 (the deprecated
+`walk_forward_split` audit — zero callers, now enforced); REG-2 closed
+(ADR-026, user-ratified option A); §11 item 18 — ALL fourteen hunters
+instrumented, `UNINSTRUMENTED_HUNTERS` empty; **§11 item 19 closed (option A,
+user-ratified)** — the queen leg honours the hunter's declared target
+(runner stays at bps; wrong-side declarations refuse to bps), all three
+layers + gate2, `mean_reversion` win rate 14.6% → 32.1% under the honest
+payoff. **Bot-side follow-up from item 19**: the C# bots still bracket at
+bps; parity now carries that named divergence until the bots learn the
+declared target (user's lane). The live scripts (`intraday_blocks`,
+`briefing_core`) were NOT re-diffed — they are live-path consumers; their
+early-bar reads now return NaN (loud) instead of fabricated values, and
+running them is the user's call.
 
 Waiting on the user, not on code: §11 items 2 (`WickType`), 11 (deploy), 15
 (deploy), 17/B9 (which `RiskManagerBase` changes to land), 20 (deploy).

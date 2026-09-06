@@ -45,8 +45,17 @@ class BoxMeanReversionSignal(SignalGenerator):
         
         # 2. Extract mapped statuses (LF = 1, SF = -1)
         # We look at NY1 (AM session) status as our primary driver
-        # Fallback to zero if feature is not present in initial hours
-        ny1_status = features.get('feat_ny1_status', pd.Series(0, index=data.index))
+        # A missing feature is a wiring error, not a value: the previous
+        # Series(0)/Series(1) fallbacks made this module trade (or never
+        # trade) on a feature the adapter never produced -- the same
+        # column-name defect that left the hunter silent its whole life
+        # (fixed 2026-09-05). Refuse instead.
+        ny1_status = features.get('feat_ny1_status')
+        if ny1_status is None:
+            raise ValueError(
+                "BoxMeanReversionSignal: adapter produced no 'feat_ny1_status'; "
+                "refusing rather than defaulting to zero (which trades on a "
+                "fabricated feature)")
         
         # 3. Dynamic Hyperparameters
         min_dist = config.get('min_dist', 0.0005)    # Min distance required to enter
@@ -67,7 +76,12 @@ class BoxMeanReversionSignal(SignalGenerator):
             valid_entry &= ~(trend_up | trend_down)
             
         # C. Minimum Distance to Target Filter (Avoid tiny EV trades)
-        mid_dist = features.get('feat_ny1_mid_dist', pd.Series(1, index=data.index))
+        mid_dist = features.get('feat_ny1_mid_dist')
+        if mid_dist is None:
+            raise ValueError(
+                "BoxMeanReversionSignal: adapter produced no 'feat_ny1_mid_dist'; "
+                "refusing rather than defaulting to one (which passed the "
+                "distance gate on every bar of a fabricated feature)")
         valid_entry &= (mid_dist.abs() >= min_dist)
         
         # D. London Breakout Requirement
@@ -89,6 +103,15 @@ class BoxMeanReversionSignal(SignalGenerator):
         raw_signals[(ny1_status == -1) & valid_entry] = 1
         # SHORT: Long False (1) + valid entry filters
         raw_signals[(ny1_status == 1) & valid_entry] = -1
+
+        # 6b. THE TARGET MUST BE ON THE REVERSION SIDE. mid_dist is signed:
+        # positive when the mid is ABOVE price. A Short-False long reverts
+        # UP, so it needs mid_dist > 0; a Long-False short needs mid_dist < 0.
+        # Without this the magnitude-only distance gate emitted longs whose
+        # target sat below entry (and the stop) -- nonsense geometry that
+        # the signal_geometry criterion would fail the whole run for.
+        raw_signals[(raw_signals == 1) & (mid_dist <= 0)] = 0
+        raw_signals[(raw_signals == -1) & (mid_dist >= 0)] = 0
         
         # 7. Convert Series to Standardized Signal DataFrame (Layer 4 Schema)
         # This converts a flat Series into the Metadata-rich DF the engine expects
@@ -103,8 +126,11 @@ class BoxMeanReversionSignal(SignalGenerator):
             m_dist = mid_dist.loc[idx]
             
             # Map parameters to relative targets
-            # Target is the Mid point
-            target = entry_price * (1 - m_dist) # Reverses the (mid-close)/close normalization
+            # Target is the Mid point. mid_dist = (mid - close)/close is
+            # SIGNED, so the target is entry * (1 + m_dist); the previous
+            # (1 - m_dist) inverted it and put every target on the wrong
+            # side of entry (fixed 2026-09-05).
+            target = entry_price * (1 + m_dist) # Reverses the (mid-close)/close normalization
             
             # Stop is dist away
             stop = entry_price * (1 - (sl_dist * raw_signals.loc[idx]))

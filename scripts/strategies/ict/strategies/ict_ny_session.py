@@ -42,6 +42,7 @@ from scripts.libs_py.ict_engine import (
     detect_cisd,
     get_session_data,
 )
+from scripts.trading_framework.reporting.decision_log import GateRecorder
 
 _COLS = ["signal_time", "direction", "entry_price", "stop_price", "target1_price"]
 
@@ -67,6 +68,9 @@ class ICTNYSessionStrategy:
     def __init__(self, ticker: str = "NQ1") -> None:
         self.ticker = ticker
         self.strategy_name = "ICT NY Session Killzone"
+        # Section 5.5: the criteria this hunter evaluates. None means not
+        # instrumented; set by hunt() on every path.
+        self.last_decisions: Optional[pd.DataFrame] = None
 
     def hunt(
         self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None
@@ -120,8 +124,24 @@ class ICTNYSessionStrategy:
         swept_low  = (low < asian_lo) & (close > asian_lo)
 
         # ── 4. CISD in the killzone confirms the trade direction ─────────────
+        # RAW sweep is the decision-log trigger; CISD and the killzone are
+        # GATES so their rejections are visible (section 5.5).
         bull_entry = (cisd["cisd"].values == 1) & swept_low  & np.asarray(in_kz)
         bear_entry = (cisd["cisd"].values == -1) & swept_high & np.asarray(in_kz)
+
+        # Decision log (section 5.5): sweeping the Asian range is the
+        # trigger; the CISD confirmation and the NY killzone window are the
+        # gates. Recorded even when nothing sweeps.
+        self.last_decisions = (
+            GateRecorder(idx, run_id="", strategy="ict_ny_session")
+            .trigger(pd.Series(swept_low, index=idx), "long")
+            .trigger(pd.Series(swept_high, index=idx), "short")
+            .gate("cisd_confirmation",
+                  pd.Series((cisd["cisd"].values == 1)
+                            | (cisd["cisd"].values == -1), index=idx))
+            .gate("ny_killzone_window", pd.Series(in_kz, index=idx))
+            .to_frame(signal_prefix="ins_")
+        )
 
         direction = np.where(bull_entry, "long", np.where(bear_entry, "short", None))
         mask = (direction == "long") | (direction == "short")
