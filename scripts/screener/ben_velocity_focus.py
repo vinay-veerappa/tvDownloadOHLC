@@ -41,7 +41,11 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 
 from scripts.csp_ranking.finviz_client import FinvizClient
 from scripts.csp_ranking.technicals import TechnicalAnalyzer
-from scripts.utils.universe_manager import get_universe
+from scripts.utils.universe_manager import (
+    get_universe,
+    get_dynamic_velocity_universe,
+    get_dynamic_institutional_universe
+)
 
 
 # ─── 1. VELOCITY SCAN: MOMENTUM LEADERS ───────────────────────────────────────
@@ -59,8 +63,10 @@ class VelocityLeader:
         self.days_to_turn: float = data["days_to_turn"] # Float / Volume
         self.short_float_pct: float = data.get("short_float_pct", 0.0)
         self.short_ratio: float = data.get("short_ratio", 0.0)
+        self.industry: str = data.get("industry", "")
+        self.sector: str = data.get("sector", "")
         self.is_short_squeeze: bool = self.short_float_pct >= 20.0 or self.short_ratio >= 5.0
-        self.is_fast_turn: bool = self.days_to_turn < 20.0
+        self.is_fast_turn: bool = 0 < self.days_to_turn < 20.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -74,6 +80,8 @@ class VelocityLeader:
             "days_to_turn": round(self.days_to_turn, 1),
             "short_float_pct": round(self.short_float_pct, 1),
             "short_ratio": round(self.short_ratio, 1),
+            "industry": self.industry,
+            "sector": self.sector,
             "is_fast_turn": self.is_fast_turn,
             "is_short_squeeze": self.is_short_squeeze
         }
@@ -82,21 +90,33 @@ class VelocityLeader:
 def scan_velocity_momentum(
     tickers: Optional[List[str]] = None,
     min_price: float = 10.0,
-    min_chg_pct: float = 2.0,       # Ben's filter is +3%, allowing 2% for comprehensive scan
-    min_avg_vol_k: float = 150.0,   # 150k 50-day avg volume
-    min_rel_vol_pct: float = 130.0, # +30% above 50-day avg
-    min_rs_rating: int = 60,        # RS >= 60
-    max_float_m: float = 100.0,     # Low Float <= 100M shares
+    min_chg_pct: float = 3.0,            # Ben's exact TOS threshold: >= +3.00%
+    min_avg_vol_k: float = 150.0,        # Ben's exact TOS threshold: 50-day SMA(Vol) > 150k
+    min_rel_vol_pct: float = 130.0,      # Ben's exact TOS threshold: Vol / Avg50[1] >= 130%
+    min_rs_rating: int = 0,              # Pure TOS scan has no RS floor (RS used for ranking/tagging)
+    max_float_m: Optional[float] = None, # Pure TOS scan has no float hard cap (allows NVS, CRK)
+    exclude_biotech: bool = True,        # Ben's exact TOS setting: Exclude Biotechnology
 ) -> List[VelocityLeader]:
     """
-    Executes Ben Bennett's exact Velocity Momentum Leader scan.
+    Executes Ben Bennett's exact ThinkorSwim Velocity Momentum Leader scan:
+    - Scan in: All Stocks (dynamically screened across US equity market)
+    - Exclude: Biotechnology
+    - Stock Close >= $10.00
+    - Stock % Change >= +3.00%
+    - 50-day SMA Volume > 150,000
+    - Custom Relative Volume: 100 * Volume / SMA(Volume, 50)[1] >= 130% (Vol % Chg >= +30%)
+    - Analyzes Float & Days to Turn (< 20d flagged as Fast Float Churn)
     """
-    target_tickers = tickers or get_universe("all")
+    target_tickers = tickers or get_dynamic_velocity_universe()
     finviz_client = FinvizClient()
     discovered: List[VelocityLeader] = []
 
+    float_str = f"Float <= {max_float_m}M" if max_float_m else "Float: Uncapped"
+    rs_str = f"RS >= {min_rs_rating}" if min_rs_rating > 0 else "RS: Uncapped"
+    bio_str = "Exclude Biotech: YES" if exclude_biotech else "Exclude Biotech: NO"
+
     print(f"\n⚡ Running Ben's Velocity Scan across {len(target_tickers)} candidates...")
-    print(f"   [Criteria: Price >= ${min_price}, Chg >= +{min_chg_pct}%, Rel Vol >= {min_rel_vol_pct}%, RS >= {min_rs_rating}, Float <= {max_float_m}M]")
+    print(f"   [Criteria: Price >= ${min_price}, Chg >= +{min_chg_pct}%, Rel Vol >= {min_rel_vol_pct}%, Avg Vol > {min_avg_vol_k}k | {bio_str} | {float_str} | {rs_str}]")
 
     # 1. Fetch SPY 1-yr return for RS baseline
     try:
@@ -111,29 +131,35 @@ def scan_velocity_momentum(
             if not prof:
                 continue
 
+            # Check Biotechnology exclusion (Defense-in-depth against TOS exclude)
+            industry = prof.industry
+            if exclude_biotech and industry and "biotechnology" in industry.lower():
+                continue
+
             # Quick fundamental pre-filter
             if prof.price < min_price:
                 continue
 
             # Parse Float from Finviz or fallback
-            float_str = prof.raw_data.get("Shs Float", "")
+            float_str_val = prof.raw_data.get("Shs Float", "")
             float_val_m = 0.0
-            if float_str and float_str != "-":
-                if float_str.endswith("M"):
-                    float_val_m = float(float_str.replace("M", ""))
-                elif float_str.endswith("B"):
-                    float_val_m = float(float_str.replace("B", "")) * 1000.0
-                elif float_str.endswith("K"):
-                    float_val_m = float(float_str.replace("K", "")) / 1000.0
+            if float_str_val and float_str_val != "-":
+                if float_str_val.endswith("M"):
+                    float_val_m = float(float_str_val.replace("M", ""))
+                elif float_str_val.endswith("B"):
+                    float_val_m = float(float_str_val.replace("B", "")) * 1000.0
+                elif float_str_val.endswith("K"):
+                    float_val_m = float(float_str_val.replace("K", "")) / 1000.0
 
-            # Float constraint
-            if float_val_m > max_float_m and float_val_m > 0:
-                continue
+            # Float constraint (optional)
+            if max_float_m is not None and max_float_m > 0:
+                if float_val_m > max_float_m and float_val_m > 0:
+                    continue
 
             # Fetch daily OHLCV
             stock = yf.Ticker(ticker)
             hist = stock.history(period="6mo")
-            if hist.empty or len(hist) < 50:
+            if hist.empty or len(hist) < 51:
                 continue
 
             close_today = float(hist["Close"].iloc[-1])
@@ -145,20 +171,31 @@ def scan_velocity_momentum(
                 continue
 
             vol_today = int(hist["Volume"].iloc[-1])
-            vol_50_median = float(hist["Volume"].tail(50).median())
-            avg_vol_50 = float(hist["Volume"].tail(50).mean())
+            # TOS Study: def avg50 = Average(volume, 50)[1]; volume / avg50 >= 1.30
+            avg_vol_50_prev = float(hist["Volume"].iloc[-51:-1].mean())
 
-            if (avg_vol_50 / 1000.0) < min_avg_vol_k:
+            if (avg_vol_50_prev / 1000.0) < min_avg_vol_k:
                 continue
 
-            rel_vol_pct = (vol_today / vol_50_median) * 100.0 if vol_50_median > 0 else 100.0
+            rel_vol_pct = (vol_today / avg_vol_50_prev) * 100.0 if avg_vol_50_prev > 0 else 100.0
             if rel_vol_pct < min_rel_vol_pct:
                 continue
+
+            # Check Biotechnology via yfinance if industry wasn't populated by Finviz
+            if exclude_biotech and not industry:
+                try:
+                    yf_ind = stock.info.get("industry", "")
+                    if "biotechnology" in yf_ind.lower():
+                        continue
+                    if yf_ind:
+                        industry = yf_ind
+                except Exception:
+                    pass
 
             # Relative Strength Percentile Calculation vs SPY (6-mo momentum)
             stock_6m_ret = (close_today / float(hist["Close"].iloc[0]) - 1.0) * 100.0
             rs_score = int(min(99, max(1, 50 + (stock_6m_ret - (spy_1y_ret * 0.5)) * 0.8)))
-            if rs_score < min_rs_rating:
+            if min_rs_rating > 0 and rs_score < min_rs_rating:
                 continue
 
             # Days to Turn Calculation: (Float Shares) / (Today's Volume)
@@ -182,16 +219,18 @@ def scan_velocity_momentum(
                 "today_vol": vol_today,
                 "days_to_turn": days_to_turn,
                 "short_float_pct": short_float,
-                "short_ratio": short_ratio_val
+                "short_ratio": short_ratio_val,
+                "industry": industry,
+                "sector": prof.sector
             })
             discovered.append(cand)
 
         except Exception:
             continue
 
-    # Sort descending by RS Rating (and ascending by Days to Turn for ties)
-    discovered.sort(key=lambda x: (x.rs_rating, -x.days_to_turn), reverse=True)
-    print(f"✅ Velocity Scan complete: Found {len(discovered)} qualifying Momentum Leaders.")
+    # Sort descending by Relative Volume (highest volume velocity leaders first)
+    discovered.sort(key=lambda x: (x.rel_vol_pct, x.rs_rating), reverse=True)
+    print(f"✅ Velocity Scan complete: Found {len(discovered)} qualifying Momentum Leaders (Ex-Biotech).")
     return discovered
 
 
@@ -225,20 +264,22 @@ class InstitutionalLeader:
 
 def scan_institutional_leaders(
     tickers: Optional[List[str]] = None,
-    min_eps_yoy: float = 20.0,   # Ben's hard floor is +25%
-    min_rev_yoy: float = 20.0,   # Ben's hard floor is +25%
-    min_rs_rating: int = 75,     # Ben's hard floor is RS 80
+    min_eps_yoy: float = 25.0,        # Ben's exact hard floor: EPS YoY >= +25%
+    min_rev_yoy: float = 25.0,        # Ben's exact hard floor: Rev YoY >= +25%
+    min_rs_rating: int = 80,          # Ben's exact hard floor: RS Rating >= 80
+    max_dist_to_52w_high: float = 20.0, # Ben's exact floor: Near 52-week high (within 20%)
 ) -> List[InstitutionalLeader]:
     """
     Executes Ben Bennett's exact Focus List: Institutional Leaders scan.
     Score = (40% EPS YoY) + (30% Rev YoY) + (30% RS Rating).
+    Hard floors: EPS YoY >= +25%, Rev YoY >= +25%, RS >= 80, Near 52w High (within 20%).
     """
-    target_tickers = tickers or get_universe("all")
+    target_tickers = tickers or get_dynamic_institutional_universe()
     finviz_client = FinvizClient()
     discovered: List[InstitutionalLeader] = []
 
     print(f"\n🏛️ Running Ben's Focus List: Institutional Leaders Scan across {len(target_tickers)} candidates...")
-    print(f"   [Hard Floors: EPS YoY >= +{min_eps_yoy}%, Rev YoY >= +{min_rev_yoy}%, RS >= {min_rs_rating}]")
+    print(f"   [Hard Floors: EPS YoY >= +{min_eps_yoy}%, Rev YoY >= +{min_rev_yoy}%, RS >= {min_rs_rating}, Near 52w High <= {max_dist_to_52w_high}%]")
     print(f"   [Composite Score Weight: 40% EPS Growth + 30% Rev Growth + 30% RS Rating]")
 
     # SPY 1-yr baseline
@@ -273,8 +314,8 @@ def scan_institutional_leaders(
             high_52w = float(hist["High"].max())
             close_today = float(hist["Close"].iloc[-1])
             dist_to_high = ((high_52w - close_today) / high_52w) * 100.0
-            if dist_to_high > 25.0:
-                continue # Disqualify: more than 25% off 52-week highs
+            if dist_to_high > max_dist_to_52w_high:
+                continue # Disqualify: more than 20% off 52-week highs
 
             # RS Rating calculation
             stock_1y_ret = (close_today / float(hist["Close"].iloc[0]) - 1.0) * 100.0
@@ -282,6 +323,14 @@ def scan_institutional_leaders(
 
             if rs_score < min_rs_rating:
                 continue
+
+            # Industry metadata fallback
+            industry = prof.industry
+            if not industry:
+                try:
+                    industry = stock.info.get("industry", "")
+                except Exception:
+                    pass
 
             # Composite Score (0-100)
             # EPS Component: 0-40 pts (caps at +200% growth)
@@ -300,9 +349,9 @@ def scan_institutional_leaders(
                 "rev_yoy": rev_growth,
                 "rs_rating": rs_score,
                 "score": composite_score,
-                "industry": prof.industry,
+                "industry": industry,
                 "sector": prof.sector,
-                "notes": f"{prof.industry} ({prof.sector})"
+                "notes": f"{industry} ({prof.sector})"
             })
             discovered.append(cand)
 
@@ -321,24 +370,35 @@ def print_ben_scans():
     velocity_list = scan_velocity_momentum()
     leaders_list = scan_institutional_leaders()
 
-    print("\n" + "=" * 95)
-    print("  VELOCITY SCAN: MOMENTUM LEADERS (Fast Float Churn & High Rel Vol)")
-    print("=" * 95)
-    print(f"  {'#':<3} {'Ticker':<7} {'Price':<8} {'Chg %':<8} {'RS':<5} {'Rel Vol':<10} {'Float':<8} {'Days to Turn':<15} {'Short Float':<12}")
-    print("  " + "-" * 91)
-    for i, v in enumerate(velocity_list[:12], 1):
-        fast_tag = "🔥 (<20d)" if v.is_fast_turn else ""
-        sq_tag = "🍋 Squeeze" if v.is_short_squeeze else ""
-        print(f"  {i:<3} {v.ticker:<7} ${v.price:<7.2f} {v.chg_pct:>+6.2f}% {v.rs_rating:<5} {v.rel_vol_pct:>6.0f}%   {v.float_m:>5.1f}M  {v.days_to_turn:>6.1f}d {fast_tag:<8} {v.short_float_pct:>5.1f}% {sq_tag}")
+    print("\n" + "=" * 110)
+    print("  VELOCITY SCAN: MOMENTUM LEADERS (TOS Criteria: Price >= $10, Chg >= +3%, Rel Vol >= 130% | Ex-Biotech)")
+    print("=" * 110)
+    print(f"  {'#':<3} {'Ticker':<7} {'Price':<8} {'Chg %':<8} {'Rel Vol':<10} {'Turn':<9} {'Float':<8} {'RS':<5} {'Industry':<28} {'Tags'}")
+    print("  " + "-" * 106)
+    for i, v in enumerate(velocity_list[:15], 1):
+        tags = []
+        if v.is_fast_turn:
+            tags.append("🔥 (<20d)")
+        if v.is_short_squeeze:
+            tags.append("🍋 Squeeze")
+        tag_str = " ".join(tags)
+        ind_display = (v.industry[:26] + "..") if len(v.industry) > 28 else v.industry
+        print(f"  {i:<3} {v.ticker:<7} ${v.price:<7.2f} {v.chg_pct:>+6.2f}% {v.rel_vol_pct:>6.0f}%   {v.days_to_turn:>6.1f}d   {v.float_m:>5.1f}M  {v.rs_rating:<5} {ind_display:<28} {tag_str}")
 
-    print("\n" + "=" * 95)
-    print("  FOCUS LIST: INSTITUTIONAL LEADERS (Earnings 40 / Rev 30 / RS 30)")
-    print("=" * 95)
-    print(f"  {'#':<3} {'Ticker':<7} {'Price':<8} {'EPS YoY':<10} {'Rev YoY':<10} {'RS':<5} {'Score':<7} {'Industry / Group':<30}")
-    print("  " + "-" * 91)
+    print("\n" + "=" * 110)
+    print("  FOCUS LIST: INSTITUTIONAL LEADERS (Floors: EPS >= 25%, Rev >= 25%, RS >= 80 | Score: EPS 40 / Rev 30 / RS 30)")
+    print("=" * 110)
+    if leaders_list:
+        top_scorer = leaders_list[0]
+        biggest_eps = max(leaders_list, key=lambda x: x.eps_yoy)
+        print(f"  🏛️  {len(leaders_list)} QUALIFIERS  |  Top Score: {top_scorer.ticker} ({top_scorer.score:.1f})  |  Biggest EPS Grower: {biggest_eps.ticker} ({biggest_eps.eps_yoy:>+5.0f}%)")
+        print("  " + "-" * 106)
+    print(f"  {'#':<3} {'Ticker':<7} {'Price':<8} {'EPS YoY':<10} {'Rev YoY':<10} {'RS':<5} {'Score':<7} {'Industry / Group':<32}")
+    print("  " + "-" * 106)
     for i, l in enumerate(leaders_list[:15], 1):
-        print(f"  {i:<3} {l.ticker:<7} ${l.price:<7.2f} {l.eps_yoy:>+7.1f}%   {l.rev_yoy:>+7.1f}%   {l.rs_rating:<5} {l.score:>5.1f}   {l.industry:<30}")
-    print("=" * 95 + "\n")
+        ind_str = (l.industry[:30] + "..") if len(l.industry) > 32 else l.industry
+        print(f"  {i:<3} {l.ticker:<7} ${l.price:<7.2f} {l.eps_yoy:>+7.1f}%   {l.rev_yoy:>+7.1f}%   {l.rs_rating:<5} {l.score:>5.1f}   {ind_str:<32}")
+    print("=" * 110 + "\n")
 
 
 if __name__ == "__main__":

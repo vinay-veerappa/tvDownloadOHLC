@@ -34,7 +34,11 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 
 from scripts.csp_ranking.finviz_client import FinvizClient
 from scripts.csp_ranking.technicals import TechnicalAnalyzer
-from scripts.utils.universe_manager import get_universe
+from scripts.utils.universe_manager import (
+    get_universe,
+    get_dynamic_csp_universe,
+    get_dynamic_institutional_universe
+)
 
 
 def bs_call_delta(S: float, K: float, T: float, r: float, sigma: float) -> float:
@@ -108,7 +112,7 @@ def scan_covered_calls(
     Scans for optimal Covered Call candidates across the universe.
     Filters: Price > 50 SMA, No Earnings Before Expiration, 1.2%+ Monthly Yield.
     """
-    target_tickers = tickers or get_universe("csp")
+    target_tickers = tickers or get_dynamic_csp_universe()
     today = date.today()
     finviz_client = FinvizClient()
     candidates: List[CoveredCallCandidate] = []
@@ -282,7 +286,7 @@ def scan_pmcc_leaps(
     """
     Scans for Poor Man's Covered Calls (Deep ITM LEAPS + Short Front Call).
     """
-    target_tickers = tickers or get_universe("momentum")
+    target_tickers = tickers or get_dynamic_institutional_universe()
     today = date.today()
     candidates: List[PmccCandidate] = []
 

@@ -168,6 +168,14 @@ class FinvizClient:
             if not data:
                 return None
 
+            # Extract Sector and Industry from breadcrumbs
+            sec_link = soup.find("a", href=lambda h: h and "f=sec_" in h)
+            ind_link = soup.find("a", href=lambda h: h and "f=ind_" in h)
+            if sec_link:
+                data["Sector"] = sec_link.text.strip()
+            if ind_link:
+                data["Industry"] = ind_link.text.strip()
+
             # Cache to disk
             with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)

@@ -134,9 +134,10 @@ def run_all_scanners(
 
     # Velocity Highlights
     if velocity_leaders:
-        print(f"\n  ⚡ TOP VELOCITY LEADERS (Float Churn < 20d):")
-        for v in velocity_leaders[:5]:
-            print(f"     • {v.ticker:<6} ${v.price:<7.2f} Chg: {v.chg_pct:>+5.2f}% | Rel Vol: {v.rel_vol_pct:.0f}% | Turn: {v.days_to_turn:.1f}d | RS: {v.rs_rating}")
+        print(f"\n  ⚡ TOP VELOCITY LEADERS (TOS Criteria | Ex-Biotech):")
+        for v in velocity_leaders[:6]:
+            fast_tag = "🔥 (<20d)" if v.is_fast_turn else ""
+            print(f"     • {v.ticker:<6} ${v.price:<7.2f} Chg: {v.chg_pct:>+5.2f}% | Rel Vol: {v.rel_vol_pct:.0f}% | Turn: {v.days_to_turn:.1f}d {fast_tag:<8} | RS: {v.rs_rating:<3} | {v.industry}")
 
     # Momentum Highlights
     print(f"\n  🚀 EQUITY MOMENTUM BREAKOUTS:")

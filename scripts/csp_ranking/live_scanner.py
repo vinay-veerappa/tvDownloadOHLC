@@ -14,7 +14,7 @@ from scipy.stats import norm
 
 from scripts.csp_ranking.tos_parser import TOSOptionContract
 from scripts.csp_ranking.finviz_client import FinvizClient
-from scripts.utils.universe_manager import get_universe
+from scripts.utils.universe_manager import get_universe, get_dynamic_csp_universe
 
 
 def bs_put_delta(S: float, K: float, T: float, r: float, sigma: float) -> float:
@@ -40,7 +40,7 @@ def scan_live_market(
     """
     Executes the exact 9-point Ben Option Hacker scan autonomously using the dynamic universe.
     """
-    target_tickers = tickers or get_universe("csp")
+    target_tickers = tickers or get_dynamic_csp_universe()
     today = date.today()
     discovered_contracts: List[TOSOptionContract] = []
     finviz_client = FinvizClient()

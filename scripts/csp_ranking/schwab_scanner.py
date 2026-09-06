@@ -13,7 +13,7 @@ from pathlib import Path
 from scripts.csp_ranking.tos_parser import TOSOptionContract
 from scripts.csp_ranking.finviz_client import FinvizClient
 from scripts.streaming.options.config import HUB_URL
-from scripts.utils.universe_manager import get_universe
+from scripts.utils.universe_manager import get_universe, get_dynamic_csp_universe
 
 
 def query_hub_rest(method: str, params: dict, timeout: int = 15) -> dict:
@@ -46,7 +46,7 @@ def scan_schwab_options(
     """
     Queries the central Schwab Options Hub to discover and filter CSP candidates matching Ben's exact 9 criteria.
     """
-    target_tickers = tickers or get_universe("csp")
+    target_tickers = tickers or get_dynamic_csp_universe()
     today = date.today()
     discovered_contracts: List[TOSOptionContract] = []
     finviz_client = FinvizClient()

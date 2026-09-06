@@ -61,7 +61,7 @@ def run_screener(
         log.warning("Market Regime is BEAR_PROTECTIVE. Long breakouts stand down.")
 
     # 2. Stage 1 Universe Discovery & Industry RS
-    candidates = fetch_finviz_candidates(limit=limit)
+    candidates = fetch_finviz_candidates(strategy_id=strategy_id, limit=limit)
     if not candidates:
         log.info("No candidates returned from funnel.")
         return pd.DataFrame()

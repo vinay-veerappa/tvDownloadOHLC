@@ -6,11 +6,44 @@ Applies initial liquidity, price, performance, and optionable filters to reduce
 8,000+ US equities down to top candidate pools.
 Includes rate-limiting delays and browser User-Agent headers.
 """
+import os
+import json
 import time
 import logging
+from pathlib import Path
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 log = logging.getLogger("screener_funnel")
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+FUNNEL_CACHE_DIR = REPO_ROOT / "data" / "universe"
+
+
+def _get_funnel_cache(strat_key: str, max_age_secs: float = 14400) -> Optional[List[Dict[str, Any]]]:
+    cache_file = FUNNEL_CACHE_DIR / f"funnel_{strat_key}.json"
+    if cache_file.exists():
+        try:
+            mtime = cache_file.stat().st_mtime
+            if (datetime.now().timestamp() - mtime) < max_age_secs:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list) and len(data) > 0:
+                    log.info(f"Loaded {len(data)} candidates for '{strat_key}' from local funnel cache.")
+                    return data
+        except Exception:
+            pass
+    return None
+
+
+def _save_funnel_cache(strat_key: str, candidates: List[Dict[str, Any]]):
+    try:
+        FUNNEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file = FUNNEL_CACHE_DIR / f"funnel_{strat_key}.json"
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(candidates, f, indent=2)
+    except Exception:
+        pass
 
 try:
     from finvizfinance.screener.overview import Overview
@@ -23,6 +56,37 @@ DEFAULT_FILTERS = {
     'Option/Short': 'Optionable',
     'Price': 'Over $5',
     '20-Day Simple Moving Average': 'Price above SMA20',
+}
+
+STRATEGY_FUNNEL_FILTERS = {
+    "qullamaggie_hft": {
+        'Industry': 'Stocks only (ex-Funds)',
+        'Average Volume': 'Over 500K',
+        'Price': 'Over $7',
+        'Performance': 'Half +50%',
+        '20-Day Simple Moving Average': 'Price above SMA20',
+    },
+    "stockbee_ep": {
+        'Industry': 'Stocks only (ex-Funds)',
+        'Average Volume': 'Over 500K',
+        'Price': 'Over $5',
+        'Relative Volume': 'Over 1.5',
+    },
+    "minervini_trend": {
+        'Industry': 'Stocks only (ex-Funds)',
+        'Average Volume': 'Over 500K',
+        'Price': 'Over $10',
+        '200-Day Simple Moving Average': 'Price above SMA200',
+        '50-Day Simple Moving Average': 'Price above SMA50',
+        '52-Week High/Low': '0-10% below High',
+    },
+    "parabolic_short": {
+        'Industry': 'Stocks only (ex-Funds)',
+        'Average Volume': 'Over 500K',
+        'Price': 'Over $7',
+        'Performance': 'Month +30%',
+        'RSI (14)': 'Overbought (70)',
+    },
 }
 
 DEFAULT_FALLBACK_UNIVERSE = [
@@ -86,12 +150,28 @@ def _get_fallback_candidates(limit: int = 100) -> List[Dict[str, Any]]:
     return candidates
 
 
-def fetch_finviz_candidates(custom_filters: Optional[Dict[str, str]] = None, limit: int = 100) -> List[Dict[str, Any]]:
+def fetch_finviz_candidates(
+    custom_filters: Optional[Dict[str, str]] = None,
+    strategy_id: Optional[str] = None,
+    limit: int = 100
+) -> List[Dict[str, Any]]:
     """
     Fetch universe candidate stocks from Finviz.
     Returns list of dicts: [{ticker, company, sector, industry, marketCap, price, volume, float}]
     """
-    filters = custom_filters or DEFAULT_FILTERS
+    strat_key = strategy_id or "default"
+    if not custom_filters:
+        cached = _get_funnel_cache(strat_key)
+        if cached:
+            return cached[:limit]
+
+    if custom_filters:
+        filters = custom_filters
+    elif strategy_id and strategy_id in STRATEGY_FUNNEL_FILTERS:
+        filters = STRATEGY_FUNNEL_FILTERS[strategy_id]
+        log.info(f"Using strategy-specific Finviz funnel for '{strategy_id}'.")
+    else:
+        filters = DEFAULT_FILTERS
     
     if Overview is None:
         log.warning("finvizfinance package not installed. Returning default fallback universe.")
@@ -106,8 +186,12 @@ def fetch_finviz_candidates(custom_filters: Optional[Dict[str, str]] = None, lim
             log.info("Finviz returned no candidates for the given filters.")
             return _get_fallback_candidates(limit)
             
-        # Sort by Market Cap descending to get the most liquid/real companies first instead of alphabetical junk
-        if "Market Cap" in df.columns:
+        # Strategy-aware sorting
+        if strategy_id in ("stockbee_ep", "parabolic_short") and "Change" in df.columns:
+            df = df.sort_values(by="Change", ascending=False)
+        elif strategy_id == "qullamaggie_hft" and "Volume" in df.columns:
+            df = df.sort_values(by="Volume", ascending=False)
+        elif "Market Cap" in df.columns:
             df = df.sort_values(by="Market Cap", ascending=False)
         elif "Volume" in df.columns:
             df = df.sort_values(by="Volume", ascending=False)
@@ -142,6 +226,8 @@ def fetch_finviz_candidates(custom_filters: Optional[Dict[str, str]] = None, lim
                 break
                 
         log.info(f"Finviz funnel retrieved {len(results)} candidate stocks.")
+        if results:
+            _save_funnel_cache(strat_key, results)
         return results
     except Exception as e:
         log.error(f"Finviz funnel query failed: {e}. Returning fallback universe.")

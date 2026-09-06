@@ -33,22 +33,33 @@ flowchart TD
 
 ## 2. Velocity Scan — Momentum Leaders
 
-### A. Core Criteria & Hard Floors
-| Criterion | Threshold | Rationale |
-|---|---|---|
-| **Price** | $\ge \$10.00$ | Eliminates illiquid penny stocks and institutional no-fly zones |
-| **Price % Gain** | $\ge +3.0\%$ | Confirms active directional demand expansion today |
-| **50-Day Avg Volume** | $\ge 150,000$ | Ensures institutional baseline liquidity |
-| **Volume % Chg vs 50-Day Avg** | $\ge +30\%$ ($\text{Rel Vol} \ge 130\%$) | Confirms unusual institutional accumulation |
-| **Relative Strength (RS Rating)** | $\ge 60$ (Percentile 1–99 vs SPY) | Outperforming benchmark universe |
-| **Low Float Cap** | $\le 100,000,000$ shares ($100\text{M}$) | **Low Supply + Heavy Demand = Maximum Price Velocity** |
+### A. Core ThinkorSwim Setup & Criteria
+The scanner reproduces Ben Bennett's exact ThinkorSwim **Velocity Scan**:
+* **Scan in**: `All Stocks` (screened dynamically across the full US market)
+* **Exclude**: `Biotechnology` (eliminates binary clinical trial / FDA approval noise)
 
-### B. Mathematical Formulas
+| Criterion | ThinkorSwim Setting | Rationale |
+|---|---|---|
+| **Price** | `Close >= 10.00` | Eliminates penny stocks and institutional no-fly zones |
+| **Price % Gain** | `% change >= +3.00%` | Confirms active directional demand expansion today |
+| **50-Day Avg Volume** | `Average_Volume(50) > 150000` | Ensures institutional baseline liquidity |
+| **Relative Volume Study** | `100 * volume / Average(volume, 50)[1] >= 130` | Confirms volume is $\ge 30\%$ above the 50-day moving average |
+| **Biotechnology Filter** | `Exclude: Biotechnology` | Strict industry exclusion of all biotech tickers |
+
+### B. Analytical Overlays & Float Turnover
+In ThinkorSwim, the scan outputs all qualifying momentum names, and Ben evaluates them using float turnover, relative strength, and short interest overlays:
+
+| Metric | Threshold / Tag | Rationale |
+|---|---|---|
+| **Days to Turn** | `< 20.0 days` (`🔥 FAST FLOAT CHURN`) | Rapid supply absorption by institutions |
+| **Float Size** | `< 100M shares` | Low supply + high demand = explosive upside velocity |
+| **Short Squeeze** | `Short Float >= 20%` OR `Short Ratio >= 5.0` (`🍋 Squeeze`) | Forced short-covering fuel |
+| **Relative Strength** | Percentile 1–99 vs SPY (6-month) | Highlights leaders leading the broad market |
 
 #### 1. Days to Turn (Float Turnover Speed)
 $$\text{Days to Turn} = \frac{\text{Shares in Float}}{\text{Today's Volume}}$$
 * **Interpretation**: The estimated number of trading sessions required to completely churn the entire tradable float at current volume.
-* **Institutional Signal**: Values **$< 20.0\text{ days}$** indicate that supply is being locked up rapidly by institutions.
+* **Institutional Signal**: Values **$< 20.0\text{ days}$** indicate that tradable supply is being locked up rapidly.
 
 #### 2. Short Squeeze Mechanics
 A stock is flagged with the **🍋 Short Squeeze Overlay** when:

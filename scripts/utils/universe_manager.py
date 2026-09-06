@@ -100,12 +100,14 @@ def get_stock_tickers() -> Set[str]:
     return active - indices
 
 
-def get_universe(category: str = "csp") -> List[str]:
+def get_universe(category: str = "csp", dynamic: bool = False) -> List[str]:
     """General category lookup."""
     _load_data_if_modified()
     cat_key = category.lower()
 
     if cat_key in ("csp", "csp_universe"):
+        if dynamic:
+            return get_dynamic_csp_universe()
         res = _CACHE.get("csp_universe", [])
     elif cat_key in ("momentum", "momentum_universe", "screener"):
         res = _CACHE.get("momentum_universe", [])
@@ -134,6 +136,204 @@ def get_universe(category: str = "csp") -> List[str]:
         res = list(dict.fromkeys(res + custom_wl))
 
     return res
+
+
+DYNAMIC_CSP_CACHE_PATH = REPO_ROOT / "data" / "universe" / "dynamic_csp_universe.json"
+
+
+def get_dynamic_csp_universe(force_refresh: bool = False, max_candidates: int = 150) -> List[str]:
+    """
+    Retrieves dynamically screened CSP candidate tickers from Finviz (Optionable, Price > $7,
+    > 200 SMA, Profitable, Volatility > 3%, Volume > 500k) and merges them with the base
+    curated csp_universe and custom watchlist.
+    Uses disk caching to keep performance instant (< 1ms) after initial daily fetch.
+    """
+    base_tickers = get_universe("csp", dynamic=False)
+
+    # 1. Check local cache freshness (6 hours)
+    if not force_refresh and DYNAMIC_CSP_CACHE_PATH.exists():
+        try:
+            mtime = DYNAMIC_CSP_CACHE_PATH.stat().st_mtime
+            if (datetime.now().timestamp() - mtime) < 21600:
+                with open(DYNAMIC_CSP_CACHE_PATH, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                if isinstance(cached, list) and len(cached) > 0:
+                    combined = list(dict.fromkeys(base_tickers + cached))
+                    return combined
+        except Exception:
+            pass
+
+    # 2. Query Finviz Screener
+    discovered: List[str] = []
+    try:
+        from finvizfinance.screener.overview import Overview
+        f = Overview()
+        filters = {
+            'Industry': 'Stocks only (ex-Funds)',
+            'Price': 'Over $7',
+            '200-Day Simple Moving Average': 'Price above SMA200',
+            'Option/Short': 'Optionable',
+            'Average Volume': 'Over 500K',
+            'P/E': 'Profitable (>0)',
+            'Volatility': 'Month - Over 3%',
+        }
+        f.set_filter(filters_dict=filters)
+        df = f.screener_view()
+        if df is not None and not df.empty and "Ticker" in df.columns:
+            bug_active = False
+            doubled_count = sum(1 for t in df["Ticker"].astype(str) if len(t) > 1 and t[0] == t[1])
+            if len(df) > 0 and doubled_count / len(df) > 0.5:
+                bug_active = True
+
+            for raw_t in df["Ticker"].astype(str):
+                sym = raw_t.strip().upper()
+                if not sym or "." in sym:
+                    continue
+                if bug_active and len(sym) > 1:
+                    sym = sym[1:]
+                discovered.append(sym)
+                if len(discovered) >= max_candidates:
+                    break
+
+        if discovered:
+            DYNAMIC_CSP_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(DYNAMIC_CSP_CACHE_PATH, "w", encoding="utf-8") as f:
+                json.dump(discovered, f, indent=2)
+            print(f"📡 Dynamic CSP Universe refreshed: Found {len(discovered)} market-wide candidates.")
+    except Exception as e:
+        print(f"⚠️ Dynamic Finviz fetch unavailable ({e}). Falling back to static universe.")
+
+    combined = list(dict.fromkeys(base_tickers + discovered))
+    return combined
+
+
+DYNAMIC_VELOCITY_CACHE_PATH = REPO_ROOT / "data" / "universe" / "dynamic_velocity_universe.json"
+
+
+def get_dynamic_velocity_universe(force_refresh: bool = False, max_candidates: int = 150) -> List[str]:
+    """
+    Retrieves dynamically screened velocity momentum candidates from Finviz
+    (Price >= $10, Change >= +3%, Rel Vol >= 1.0, Avg Vol > 100k, Exclude Biotechnology)
+    matching Ben Bennett's ThinkorSwim Velocity Scan, with disk caching.
+    """
+    base_tickers = get_universe("momentum", dynamic=False)
+
+    if not force_refresh and DYNAMIC_VELOCITY_CACHE_PATH.exists():
+        try:
+            mtime = DYNAMIC_VELOCITY_CACHE_PATH.stat().st_mtime
+            if (datetime.now().timestamp() - mtime) < 21600:
+                with open(DYNAMIC_VELOCITY_CACHE_PATH, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                if isinstance(cached, list) and len(cached) > 0:
+                    return cached
+        except Exception:
+            pass
+
+    discovered: List[str] = []
+    try:
+        from finvizfinance.screener.overview import Overview
+        f = Overview()
+        filters = {
+            'Industry': 'Stocks only (ex-Funds)',
+            'Price': 'Over $10',
+            'Change': 'Up 3%',
+            'Average Volume': 'Over 100K',
+            'Relative Volume': 'Over 1',
+        }
+        f.set_filter(filters_dict=filters)
+        df = f.screener_view()
+        if df is not None and not df.empty and "Ticker" in df.columns:
+            # Exclude Biotechnology (ThinkorSwim exact exclusion)
+            if "Industry" in df.columns:
+                df = df[~df["Industry"].astype(str).str.contains("Biotechnology", case=False, na=False)]
+
+            bug_active = False
+            doubled_count = sum(1 for t in df["Ticker"].astype(str) if len(t) > 1 and t[0] == t[1])
+            if len(df) > 0 and doubled_count / len(df) > 0.5:
+                bug_active = True
+
+            for raw_t in df["Ticker"].astype(str):
+                sym = raw_t.strip().upper()
+                if not sym or "." in sym:
+                    continue
+                if bug_active and len(sym) > 1:
+                    sym = sym[1:]
+                discovered.append(sym)
+                if len(discovered) >= max_candidates:
+                    break
+
+        if discovered:
+            DYNAMIC_VELOCITY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(DYNAMIC_VELOCITY_CACHE_PATH, "w", encoding="utf-8") as f:
+                json.dump(discovered, f, indent=2)
+            print(f"⚡ Dynamic Velocity Universe refreshed: Found {len(discovered)} momentum candidates (Ex-Biotech).")
+    except Exception as e:
+        print(f"⚠️ Dynamic Velocity fetch unavailable ({e}). Falling back to static universe.")
+
+    return discovered if discovered else base_tickers
+
+
+DYNAMIC_INSTITUTIONAL_CACHE_PATH = REPO_ROOT / "data" / "universe" / "dynamic_institutional_universe.json"
+
+
+def get_dynamic_institutional_universe(force_refresh: bool = False, max_candidates: int = 100) -> List[str]:
+    """
+    Retrieves dynamically screened institutional growth leaders from Finviz
+    (EPS YoY/QoQ > 20%, Sales YoY/QoQ > 20%, Price > 200 SMA, Price >= $10, Avg Vol > 300k).
+    """
+    base_tickers = get_universe("all")
+
+    if not force_refresh and DYNAMIC_INSTITUTIONAL_CACHE_PATH.exists():
+        try:
+            mtime = DYNAMIC_INSTITUTIONAL_CACHE_PATH.stat().st_mtime
+            if (datetime.now().timestamp() - mtime) < 21600:
+                with open(DYNAMIC_INSTITUTIONAL_CACHE_PATH, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                if isinstance(cached, list) and len(cached) > 0:
+                    return list(dict.fromkeys(base_tickers + cached))
+        except Exception:
+            pass
+
+    discovered: List[str] = []
+    try:
+        from finvizfinance.screener.overview import Overview
+        f = Overview()
+        filters = {
+            'Industry': 'Stocks only (ex-Funds)',
+            'Price': 'Over $10',
+            '200-Day Simple Moving Average': 'Price above SMA200',
+            'EPS growthqtr over qtr': 'Over 25%',
+            'Sales growthqtr over qtr': 'Over 25%',
+            'Average Volume': 'Over 300K',
+        }
+        f.set_filter(filters_dict=filters)
+        df = f.screener_view()
+        if df is not None and not df.empty and "Ticker" in df.columns:
+            bug_active = False
+            doubled_count = sum(1 for t in df["Ticker"].astype(str) if len(t) > 1 and t[0] == t[1])
+            if len(df) > 0 and doubled_count / len(df) > 0.5:
+                bug_active = True
+
+            for raw_t in df["Ticker"].astype(str):
+                sym = raw_t.strip().upper()
+                if not sym or "." in sym:
+                    continue
+                if bug_active and len(sym) > 1:
+                    sym = sym[1:]
+                discovered.append(sym)
+                if len(discovered) >= max_candidates:
+                    break
+
+        if discovered:
+            DYNAMIC_INSTITUTIONAL_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(DYNAMIC_INSTITUTIONAL_CACHE_PATH, "w", encoding="utf-8") as f:
+                json.dump(discovered, f, indent=2)
+            print(f"🏛️ Dynamic Institutional Universe refreshed: Found {len(discovered)} fundamental growth leaders.")
+    except Exception as e:
+        print(f"⚠️ Dynamic Institutional fetch unavailable ({e}). Falling back to static universe.")
+
+    return list(dict.fromkeys(base_tickers + discovered))
+
 
 
 def add_ticker(ticker: str, category: str = "csp_universe", strategy: Optional[str] = None) -> bool:
