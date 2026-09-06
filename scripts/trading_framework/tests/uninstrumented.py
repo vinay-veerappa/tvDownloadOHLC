@@ -44,22 +44,11 @@ WHAT INSTRUMENTED MEANS, per side:
 #: `vwap_institutional` (which is) was missing. Four exemptions for nothing plus
 #: one strategy silently un-exempted. `test_every_inventoried_hunter_is_a_real_
 #: registry_key` is what caught it.
-UNINSTRUMENTED_HUNTERS = {
-    "box_reversion",
-    "ema_pullback",
-    "failed_auction",
-    "ib_pullback",
-    "ict_asia_volatility",
-    "ict_displacement",
-    "ict_fvg_cisd_rejection",
-    "ict_fvg_rejection",
-    "ict_liquidity_sweep",
-    "ict_ny_session",
-    "ifvg_cisd",
-    "six_am_reversal",
-    "vwap_institutional",
-    "vwap_reclaim",
-}
+#: EMPTIED 2026-09-05: every registered hunter now reports its criteria. The
+#: list stays (empty) rather than being deleted -- the enforcer and the
+#: documentation both reference it, and a new hunter that skips instrumentation
+#: must fail, which the empty set + the behavioural test now guarantee.
+UNINSTRUMENTED_HUNTERS: set[str] = set()
 
 # ---------------------------------------------------------------------------- #
 # C# bots
@@ -77,8 +66,6 @@ UNINSTRUMENTED_BOTS = {
     "scripts/ninjatrader/strategies/ib_breakout/IBFadeBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBRetestBot.cs",
     "scripts/ninjatrader/strategies/ib_breakout/IBStrategyBase.cs",
-    "scripts/ninjatrader/strategies/the_strat/Strat212ContinuationBot.cs",
-    "scripts/ninjatrader/strategies/the_strat/Strat22RevStratBot.cs",
 }
 
 #: The base classes a bot may derive from while still counting as uninstrumented.

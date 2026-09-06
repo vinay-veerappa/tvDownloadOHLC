@@ -18,9 +18,27 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
     /// <summary>
     /// Strat212ContinuationBot - Automated 2-1-2 Strat Continuation Strategy.
     /// Consumes TheStratClassifier indicator for visual rendering and signals.
-    /// Inherits from RiskManagerBase for centralized risk management and ATM execution.
+    ///
+    /// Migrated onto GovernedStrategy (STRATEGY_WORKFLOW.md 3.4; B7+B8, unblocked
+    /// by the WickType range-guard decision of section 11 item 2). The two-phase
+    /// state machine is preserved bar-for-bar: a setup is STAGED on the signal
+    /// bar (no entry) and ENTERED on the next bar only when price breaks the
+    /// staged trigger — the trigger is the confirmed breakout, and the verdict
+    /// is computed by the sealed base from the gates declared at that moment.
+    ///
+    /// DECLARED CRITERIA: warmup, the bot's own day cap (RiskManagerBase skips
+    /// its cap for unregistered accounts, so the config max is enforced here and
+    /// declared so the roster can see it), the canonical EntryAllowed window
+    /// (killzones included), and the staged setup's FTFC score and target
+    /// distance as measures carried from the signal bar. Staging-phase
+    /// rejections (no setup, FTFC misaligned, bad geometry) leave no trigger —
+    /// they land in the Skip denominator, which is the rule-4 accounting the
+    /// original had no record of at all.
+    ///
+    /// All tunables come from strat_config.json (the parameter document, 3.3):
+    /// the compiled defaults are the fail-open fallback only.
     /// </summary>
-    public class Strat212ContinuationBot : RiskManagerBase
+    public class Strat212ContinuationBot : GovernedStrategy
     {
         #region Strat Strategy Parameters
         [NinjaScriptProperty]
@@ -55,10 +73,14 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
         private double pendingStop;
         private double pendingTP1;
         private double pendingTP2;
+        // Values scored on the SIGNAL bar, carried to the ENTRY decision so the
+        // log describes the criteria that produced the staged setup.
+        private int stagedFtfcScore;
+        private double stagedTargetDist;
 
         protected override string GetStrategyName() => "Strat212Bot";
 
-        protected override void SetStrategyDefaults()
+        protected override void OnStrategyDefaults()
         {
             Description = "Automated 2-1-2 Strat continuation bot consuming TheStratClassifier with centralized RiskManagerBase";
             Name = "Strat212ContinuationBot";
@@ -108,9 +130,7 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             AddSecondaryTimeframe = false; // Self-contained on chart series
         }
 
-        protected override void ConfigureStrategy() { }
-
-        protected override void InitializeStrategy()
+        protected override void OnInitialize()
         {
             stratClassifier = TheStratClassifier(WickThreshold);
             chartAtr = ATR(AtrPeriod);
@@ -122,6 +142,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             pendingStop = double.NaN;
             pendingTP1 = double.NaN;
             pendingTP2 = double.NaN;
+            stagedFtfcScore = 0;
+            stagedTargetDist = double.NaN;
         }
 
         protected override double GetCurrentATR()
@@ -136,14 +158,22 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             return 15.0 * GetPointValue() * Math.Max(1, DefaultQuantity);
         }
 
-        protected override int CheckForSignal()
+        /// <summary>
+        /// DECLARE this bar's criteria. Phase order matches the original
+        /// CheckForSignal exactly: confirm the staged setup first (its success
+        /// short-circuits the bar), then fall through to staging on
+        /// confirmation failure — the original staged a fresh setup on the
+        /// same bar its predecessor went unconfirmed. Staging declares no
+        /// trigger: a staged setup is not an entry, and a bar that only stages
+        /// is a Skip (the denominator), which is what the log needs for scale.
+        /// </summary>
+        protected override void OnEvaluate(SetupEvaluation e)
         {
-            if (stratClassifier == null || CurrentBar < 4) return 0;
+            if (stratClassifier == null) { e.Gate("warmup", false); return; }
+            bool warmed = CurrentBar >= 4;
+            e.Gate("warmup", warmed, CurrentBar, 4);
+            if (!warmed) return;
 
-            // ── Canonical Strat gates (mirror of Python signals.py) ──
-            // Bot-owned: RiskManagerBase skips its trade cap in backtests
-            // (unregistered account), so the bot enforces the config max itself —
-            // identical number live and in Strategy Analyzer.
             var gateCfg = StratConfig.Load();
             sessionTracker.Update(Time[0], Open[0]);
             DateTime today = Time[0].Date;
@@ -159,57 +189,94 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                 double pt = pendingTrigger;
                 pendingSig = 0;
                 bool broke = !double.IsNaN(pt) && (ps > 0 ? High[0] >= pt : Low[0] <= pt);
-                if (broke
-                    && stratTradesToday < gateCfg.MaxTradesPerDay
-                    && StratCore.EntryAllowed(Time[0], gateCfg.EarliestEntry, gateCfg.LatestEntry,
-                        gateCfg.FlattenBy, gateCfg.Killzones, useKz))
+
+                bool capOk = stratTradesToday < gateCfg.MaxTradesPerDay;
+                bool windowOk = StratCore.EntryAllowed(Time[0], gateCfg.EarliestEntry, gateCfg.LatestEntry,
+                    gateCfg.FlattenBy, gateCfg.Killzones, useKz);
+
+                if (broke)
                 {
-                    stratTradesToday++;
-                    if (DrawVisuals)
+                    // The trigger and the two gates that can block it, all on
+                    // one decision — the same three the original ANDed.
+                    e.Trigger(broke, ps > 0 ? "long" : "short");
+                    e.Gate("strat_day_cap", capOk, stratTradesToday, gateCfg.MaxTradesPerDay);
+                    e.Gate("entry_window", windowOk);
+                    e.Measure("staged_ftfc_score", stagedFtfcScore);
+                    e.Measure("staged_target_dist", stagedTargetDist, MinTargetPoints);
+
+                    if (capOk && windowOk)
                     {
-                        string tag = "Strat212_Entry_" + CurrentBar;
-                        if (ps == 1)
-                            Draw.ArrowUp(this, tag, false, 0, Low[0] - (4 * TickSize), Brushes.LimeGreen);
-                        else
-                            Draw.ArrowDown(this, tag, false, 0, High[0] + (4 * TickSize), Brushes.Red);
+                        stratTradesToday++;
+                        if (DrawVisuals)
+                        {
+                            string tag = "Strat212_Entry_" + CurrentBar;
+                            if (ps == 1)
+                                Draw.ArrowUp(this, tag, false, 0, Low[0] - (4 * TickSize), Brushes.LimeGreen);
+                            else
+                                Draw.ArrowDown(this, tag, false, 0, High[0] + (4 * TickSize), Brushes.Red);
+                        }
+                        // The staged bracket travels to the base via the
+                        // pending* fields; clear them on acceptance exactly as
+                        // the original cleared pendingSig before returning.
+                        return;
                     }
-                    return ps;
                 }
                 // Unconfirmed → fall through and stage any fresh setup on this bar.
             }
 
             // ── 2. Fresh setup: gate, score, stage (never enter on the signal bar) ──
-            if (stratTradesToday >= gateCfg.MaxTradesPerDay) return 0;
-            // Killzone gate (session.py mirror; base still owns earliest/latest/flatten).
-            if (!StratCore.EntryAllowed(Time[0], gateCfg.EarliestEntry, gateCfg.LatestEntry,
-                    gateCfg.FlattenBy, gateCfg.Killzones, useKz))
-                return 0;
+            bool stageCapOk = stratTradesToday < gateCfg.MaxTradesPerDay;
+            bool stageWindowOk = StratCore.EntryAllowed(Time[0], gateCfg.EarliestEntry, gateCfg.LatestEntry,
+                    gateCfg.FlattenBy, gateCfg.Killzones, useKz);
 
             int sig = stratClassifier.Signal212Series[0];
-            if (sig == 0) return 0;
+            if (sig == 0) return;
+
             // FTFC alignment gate (signals.py mirror: long needs score >= +min, short <= -min).
-            if (UseFtfcFilter && gateCfg.UseFtfcFilter)
-            {
-                int score = sessionTracker.FtfcScore(Close[0]);
-                if (sig > 0 && score < MinFtfcScore) return 0;
-                if (sig < 0 && score > -MinFtfcScore) return 0;
-            }
+            int scoreNow = sessionTracker.FtfcScore(Close[0]);
+            bool ftfcOk = !(UseFtfcFilter && gateCfg.UseFtfcFilter)
+                          || (sig > 0 && scoreNow >= MinFtfcScore)
+                          || (sig < 0 && scoreNow <= -MinFtfcScore);
+
             double trig = stratClassifier.TriggerPriceSeries[0];
-            if (double.IsNaN(trig)) return 0;
-            // Capture the FULL bracket now: the base reads stop/targets on the
-            // ENTRY bar (next bar), when these series no longer hold this setup.
+            bool hasTrig = !double.IsNaN(trig);
+
             double stp = stratClassifier.InsideBarStopSeries[0];
             double t1 = stratClassifier.MagnitudeTargetSeries[0];
             double t2 = stratClassifier.MagnitudeTarget2Series[0];
-            if (double.IsNaN(stp) || double.IsNaN(t1) || double.IsNaN(t2)) return 0;
-            if (sig > 0 && !(stp < trig && trig < t1 && t1 <= t2)) return 0;
-            if (sig < 0 && !(stp > trig && trig > t1 && t1 >= t2)) return 0;
-            if (Math.Abs(t1 - trig) < MinTargetPoints) return 0;
+            bool hasBracket = !double.IsNaN(stp) && !double.IsNaN(t1) && !double.IsNaN(t2);
+            bool geometryOk = hasBracket
+                              && (sig > 0 ? (stp < trig && trig < t1 && t1 <= t2)
+                                          : (stp > trig && trig > t1 && t1 >= t2));
+            double targetDist = hasBracket ? Math.Abs(t1 - trig) : double.NaN;
+            bool targetOk = hasBracket && targetDist >= MinTargetPoints;
+
+            // Staging criteria, recorded for the denominator even though no
+            // entry happens here: which of the stage gates is killing setups
+            // is exactly what the roster exists to show.
+            e.Note("stage_setup", (sig > 0 ? "2-1-2 long staged: " : "2-1-2 short staged: ")
+                + "ftfc=" + scoreNow + "/" + MinFtfcScore
+                + " trig=" + (hasTrig ? "ok" : "NaN")
+                + " geometry=" + (geometryOk ? "ok" : "invalid")
+                + " target=" + (double.IsNaN(targetDist) ? "NaN" : targetDist.ToString("G6"))
+                + (targetOk ? "" : " < min " + MinTargetPoints)
+                + (stageCapOk ? "" : " [cap reached]")
+                + (stageWindowOk ? "" : " [window closed]"));
+
+            if (!stageCapOk || !stageWindowOk) return;
+            if (!hasTrig) return;
+            if (!ftfcOk) return;
+            if (!hasBracket) return;
+            if (!geometryOk) return;
+            if (!targetOk) return;
+
             pendingSig = sig;
             pendingTrigger = trig;
             pendingStop = stp;
             pendingTP1 = t1;
             pendingTP2 = t2;
+            stagedFtfcScore = scoreNow;
+            stagedTargetDist = targetDist;
             if (DrawVisuals)
             {
                 string tag = "Strat212_Strat_" + CurrentBar;
@@ -224,7 +291,6 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
                     Draw.Text(this, tag + "_Txt", false, "2-1-2 SELL", 0, High[0] + (10 * TickSize), 0, Brushes.Red, new SimpleFont("Arial", 9), TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
                 }
             }
-            return 0;
         }
 
         // Bracket levels come from the STAGED setup (signal bar), not the entry bar:
