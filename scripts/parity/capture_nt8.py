@@ -43,7 +43,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from scripts.parity.nt8_profile import build_request, load_profile, profile_hash
+from scripts.parity.nt8_profile import (
+    ORDER_FILL_KEYS, build_request, load_profile, profile_hash)
 
 BRIDGE_URL = os.getenv("NT8_BRIDGE_URL", "http://localhost:7890/api/backtest")
 TOKEN_FILE = pathlib.Path(
@@ -173,13 +174,25 @@ def capture(strategy: str, symbol: str, date_from: str, date_to: str, *,
             out_dir: str | pathlib.Path = ".",
             max_trades: int = DEFAULT_MAX_TRADES,
             extra_params: Optional[Dict[str, Any]] = None,
-            timeout_sec: int = 420) -> Capture:
-    """Run the strategy in the Analyzer under the frozen profile and store it."""
+            timeout_sec: int = 420,
+            strategy_source: Optional[str] = None,
+            strategy_source_path: Optional[str] = None) -> Capture:
+    """Run the strategy in the Analyzer under the frozen profile and store it.
+
+    `strategy_source` (or its path) lets a strategy that programs its own
+    series (B9: AddDataSeries in ConfigureStrategy) receive the profile MINUS
+    the analyzer's OrderFillResolution keys -- NT8 refuses those on a
+    multi-series strategy and aborts the run, which surfaced as a silent
+    0-trade capture. The meta records which fill resolution the run had.
+    """
     prof = load_profile()
     body = build_request(strategy, symbol, date_from, date_to,
                          period=period, period_value=period_value,
                          max_trades=max_trades, timeout_sec=timeout_sec,
-                         extra_params=extra_params, profile=prof)
+                         extra_params=extra_params, profile=prof,
+                         strategy_source=strategy_source,
+                         strategy_source_path=strategy_source_path)
+    multi_series = any(k not in body["params"] for k in ORDER_FILL_KEYS)
     resp = post(body, timeout=timeout_sec + 180)
     trades = _check(resp, strategy, max_trades)
 
@@ -223,6 +236,11 @@ def capture(strategy: str, symbol: str, date_from: str, date_to: str, *,
         "tradesReturned": len(trades),
         "effectiveGlobals": resp.get("effectiveGlobals"),
         "appliedParams": resp.get("appliedParams"),
+        # Which fill resolution the run actually had. "High" + the three keys
+        # means the analyzer series; "strategy-programmed" means the strategy
+        # owns one (B9) and the keys were suppressed -- the two are NOT the
+        # same configuration and a future reader must not assume they were.
+        "fillResolution": "strategy-programmed" if multi_series else "High",
         "profileHash": resp.get("profileHash") or profile_hash(prof),
         "reportedMetrics": {k: resp.get(k) for k in (
             "totalTrades", "winners", "losers", "tradeWinRatePct", "profitFactor",
@@ -244,11 +262,18 @@ def main() -> int:
     ap.add_argument("--period-value", type=int, default=1)
     ap.add_argument("--max-trades", type=int, default=DEFAULT_MAX_TRADES)
     ap.add_argument("--out-dir", default="scripts/parity/fixtures")
+    ap.add_argument("--bot-source", default=None,
+                    help="path to the strategy's .cs source. Passing it lets a "
+                         "multi-series strategy (AddDataSeries in "
+                         "ConfigureStrategy) receive the profile minus the "
+                         "analyzer's OrderFillResolution keys, which NT8 "
+                         "refuses there.")
     a = ap.parse_args()
     try:
         res = capture(a.strategy, a.symbol, a.date_from, a.date_to,
                       period=a.period, period_value=a.period_value,
-                      out_dir=a.out_dir, max_trades=a.max_trades)
+                      out_dir=a.out_dir, max_trades=a.max_trades,
+                      strategy_source_path=a.bot_source)
     except Nt8CaptureError as exc:
         print("REFUSED: {}".format(exc))
         return 1

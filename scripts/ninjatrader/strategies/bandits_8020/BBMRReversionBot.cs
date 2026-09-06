@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Indicators;
+using NinjaTrader.Data;
 #endregion
 
 namespace NinjaTrader.NinjaScript.Strategies.Vinay
@@ -196,7 +197,8 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             // See TradingDefaults.RthHardExit.
             FlattenBy = 1600;
 
-            AddSecondaryTimeframe = true; // 5m for BB/RSI/ADX
+            // B9: the AddSecondaryTimeframe knob is gone. The bot adds its own 5m
+            // series in ConfigureStrategy() (below) and owns its warmup gate.
             DebugMode = true;
 
             BBPeriod = 20;
@@ -223,7 +225,18 @@ namespace NinjaTrader.NinjaScript.Strategies.Vinay
             HtfProximityPts = 15.0;
         }
 
-        protected override void ConfigureStrategy() { }
+        protected override void ConfigureStrategy()
+        {
+            // B9: the strategy owns its series. AddDataSeries is legal here --
+            // the base calls ConfigureStrategy() inside State.Configure. The 5m
+            // series is what BB/RSI/ADX/ATR all run on. This makes BBMR a
+            // MULTI-series strategy, which is also why the parity capture
+            // suppresses the analyzer's OrderFillResolution keys for this bot:
+            // NT8 refuses them ("program directly into your strategy the more
+            // granular resolution"), and per-series resolution is exactly what
+            // AddDataSeries(BarsPeriodType...) programs here.
+            AddDataSeries(BarsPeriodType.Minute, 5);
+        }
 
         protected override void OnInitialize()
         {

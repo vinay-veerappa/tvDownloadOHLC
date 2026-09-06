@@ -50,10 +50,15 @@ def _meta(**over):
 
 @pytest.fixture
 def frozen(monkeypatch):
-    """Pin the frozen-profile hash so these tests do not move when it changes."""
+    """Pin the frozen-profile hash so these tests do not move when it changes.
+
+    Accepts the same `bot_path` argument production passes (B9: the profile
+    AS SENT to a multi-series bot hashes differently); the default hash is
+    returned for every bot so these tests stay profile-independent.
+    """
     def _set(value, described="backtest_profile.json"):
         monkeypatch.setattr(wf, "_frozen_profile_hash",
-                            lambda: (value, described))
+                            lambda bot_path=None: (value, described))
     _set("sha256:CURRENT")
     return _set
 
@@ -111,6 +116,22 @@ def test_both_faults_are_reported_not_just_the_first(frozen):
 # --------------------------------------------------------------------------- #
 def test_a_matching_fixture_is_bound(frozen):
     assert wf._nt8_evidence_unbound(_ctx(), _meta()) == []
+
+
+def test_a_multi_series_bot_and_a_single_series_bot_hash_differently():
+    """B9: a bot that programs its own series runs WITHOUT the analyzer's
+    OrderFillResolution keys, so the profile it ran under hashes differently
+    and the attribution gate must compare like with like. The two
+    configurations are NOT the same and must not share a hash.
+    """
+    from scripts.parity.nt8_profile import (
+        effective_profile, load_profile, profile_hash)
+    prof = load_profile()
+    multi = profile_hash(effective_profile(prof, strategy_source=(
+        "class X { void C() { AddDataSeries(BarsPeriodType.Minute, 5); } }")))
+    single = profile_hash(effective_profile(prof, strategy_source=(
+        "class Y { void C() { /* AddDataSeries(BarsPeriodType.Minute, 5) */ } }")))
+    assert multi != single
 
 
 def test_a_run_with_no_paired_bot_does_not_fail_on_the_strategy_name(frozen):

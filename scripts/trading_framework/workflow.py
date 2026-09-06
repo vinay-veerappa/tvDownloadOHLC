@@ -632,7 +632,8 @@ def _capture_nt8(ctx: "Ctx") -> Optional[str]:
             res = capture(cls, symbol, d_from, d_to,
                           period_value=ctx.args.nt8_period_value,
                           out_dir=ctx.output_dir,
-                          max_trades=ctx.args.nt8_max_trades)
+                          max_trades=ctx.args.nt8_max_trades,
+                          strategy_source_path=bot)
         except Nt8CaptureError as exc:
             st.detail(refused=str(exc))
             ctx.rec.refuse("nt8 capture: {}".format(exc))
@@ -649,8 +650,15 @@ def _capture_nt8(ctx: "Ctx") -> Optional[str]:
     return res.csv_path
 
 
-def _frozen_profile_hash() -> Tuple[Optional[str], str]:
+def _frozen_profile_hash(bot_path: Optional[str] = None) -> Tuple[Optional[str], str]:
     """The hash of the frozen NT8 profile AS IT STANDS NOW.
+
+    With `bot_path`, the hash is of the profile AS SENT to that strategy: a
+    bot that programs its own series (AddDataSeries in ConfigureStrategy) runs
+    without the analyzer's OrderFillResolution keys, so the profile it ran
+    under hashes differently and the gate must compare like with like --
+    comparing a multi-series capture against the unsuppressed hash would fail
+    every such run forever.
 
     Returns (hash, description). A None hash carries the reason in the second
     element -- an unreadable profile is not the same as a mismatching one and
@@ -658,11 +666,14 @@ def _frozen_profile_hash() -> Tuple[Optional[str], str]:
     """
     try:
         from scripts.parity.nt8_profile import (
-            load_profile, profile_hash, PROFILE_PATH)
+            effective_profile, load_profile, profile_hash, PROFILE_PATH)
     except Exception as exc:                                # pragma: no cover
         return None, "the frozen profile module would not import: {}".format(exc)
     try:
-        return profile_hash(load_profile()), os.path.basename(str(PROFILE_PATH))
+        prof = load_profile()
+        if bot_path:
+            prof = effective_profile(prof, strategy_source_path=bot_path)
+        return profile_hash(prof), os.path.basename(str(PROFILE_PATH))
     except Exception as exc:
         return None, "the frozen profile would not read: {}".format(exc)
 
@@ -694,7 +705,8 @@ def _nt8_evidence_unbound(ctx: Ctx, meta: Optional[Dict[str, Any]]) -> List[str]
     reasons: List[str] = []
 
     declared = meta.get("profileHash")
-    current, described = _frozen_profile_hash()
+    # Compare against the profile AS SENT to THIS bot -- see _frozen_profile_hash.
+    current, described = _frozen_profile_hash(getattr(ctx, "bot_path", None))
     if not declared:
         reasons.append(
             "the fixture's .meta.json declares no profileHash; it predates the "
