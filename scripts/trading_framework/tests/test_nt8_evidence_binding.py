@@ -120,7 +120,7 @@ def test_a_matching_fixture_is_bound(frozen):
 
 def test_a_multi_series_bot_and_a_single_series_bot_hash_differently():
     """B9: a bot that programs its own series runs WITHOUT the analyzer's
-    OrderFillResolution keys, so the profile it ran under hashes differently
+    OrderFillResolution=High, so the profile it ran under hashes differently
     and the attribution gate must compare like with like. The two
     configurations are NOT the same and must not share a hash.
     """
@@ -132,6 +132,25 @@ def test_a_multi_series_bot_and_a_single_series_bot_hash_differently():
     single = profile_hash(effective_profile(prof, strategy_source=(
         "class Y { void C() { /* AddDataSeries(BarsPeriodType.Minute, 5) */ } }")))
     assert multi != single
+
+
+def test_a_multi_series_profile_sends_standard_explicitly():
+    """The SA template is STICKY: it keeps whatever the last run applied, so
+    OMITTING OrderFillResolution does not clear a stored High -- NT8 re-applies
+    it when the strategy loads, the dialog fires ('High Order Fill Resolution
+    is only available for single-series strategies'), and the capture returns
+    0 trades. Standard must be SENT, not dropped.
+    """
+    from scripts.parity.nt8_profile import (
+        ORDER_FILL_KEYS, _ORDER_FILL_TYPE_KEYS, effective_profile, load_profile)
+    eff = effective_profile(load_profile(), strategy_source=(
+        "class X { void C() { AddDataSeries(BarsPeriodType.Minute, 5); } }"))
+    t = eff["strategyTemplate"]
+    assert t["OrderFillResolution"] == "Standard"
+    for k in _ORDER_FILL_TYPE_KEYS:
+        assert k not in t, k
+    # every OrderFill* key is accounted for: none silently vanished
+    assert set(ORDER_FILL_KEYS) - set(t) == set(_ORDER_FILL_TYPE_KEYS)
 
 
 def test_a_run_with_no_paired_bot_does_not_fail_on_the_strategy_name(frozen):

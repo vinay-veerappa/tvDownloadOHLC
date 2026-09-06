@@ -43,8 +43,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from scripts.parity.nt8_profile import (
-    ORDER_FILL_KEYS, build_request, load_profile)
+from scripts.parity.nt8_profile import build_request, load_profile
 
 BRIDGE_URL = os.getenv("NT8_BRIDGE_URL", "http://localhost:7890/api/backtest")
 TOKEN_FILE = pathlib.Path(
@@ -180,10 +179,12 @@ def capture(strategy: str, symbol: str, date_from: str, date_to: str, *,
     """Run the strategy in the Analyzer under the frozen profile and store it.
 
     `strategy_source` (or its path) lets a strategy that programs its own
-    series (B9: AddDataSeries in ConfigureStrategy) receive the profile MINUS
-    the analyzer's OrderFillResolution keys -- NT8 refuses those on a
+    series (B9: AddDataSeries in ConfigureStrategy) run under Standard fill
+    resolution instead of the analyzer's High -- NT8 refuses High on a
     multi-series strategy and aborts the run, which surfaced as a silent
-    0-trade capture. The meta records which fill resolution the run had.
+    0-trade capture. Standard is SENT explicitly (the SA template is sticky:
+    omitting the key would leave whatever the last run applied). The meta
+    records which fill resolution the run had.
     """
     prof = load_profile()
     body = build_request(strategy, symbol, date_from, date_to,
@@ -192,7 +193,7 @@ def capture(strategy: str, symbol: str, date_from: str, date_to: str, *,
                          extra_params=extra_params, profile=prof,
                          strategy_source=strategy_source,
                          strategy_source_path=strategy_source_path)
-    multi_series = any(k not in body["params"] for k in ORDER_FILL_KEYS)
+    multi_series = body["params"].get("OrderFillResolution") != "High"
     resp = post(body, timeout=timeout_sec + 180)
     trades = _check(resp, strategy, max_trades)
 
@@ -242,11 +243,12 @@ def capture(strategy: str, symbol: str, date_from: str, date_to: str, *,
         # same configuration and a future reader must not assume they were.
         "fillResolution": "strategy-programmed" if multi_series else "High",
         # build_request already hashed the profile AS SENT (multi-series bots
-        # run without the analyzer's OrderFillResolution keys, so their hash
-        # differs); reusing it means the fixture names the configuration that
-        # actually ran even when the bridge cannot echo (0 trades, dialog
-        # abort). Falling back to profile_hash(prof) here once recorded the
-        # UNSUPPRESSED hash against a run that never saw those keys.
+        # run under an explicitly-sent Standard instead of the analyzer's
+        # High, so their hash differs); reusing it means the fixture names
+        # the configuration that actually ran even when the bridge cannot
+        # echo (0 trades, dialog abort). Falling back to profile_hash(prof)
+        # here once recorded the UNSUPPRESSED hash against a run that never
+        # ran under it.
         "profileHash": resp.get("profileHash") or body["profileHash"],
         "reportedMetrics": {k: resp.get(k) for k in (
             "totalTrades", "winners", "losers", "tradeWinRatePct", "profitFactor",
@@ -271,9 +273,8 @@ def main() -> int:
     ap.add_argument("--bot-source", default=None,
                     help="path to the strategy's .cs source. Passing it lets a "
                          "multi-series strategy (AddDataSeries in "
-                         "ConfigureStrategy) receive the profile minus the "
-                         "analyzer's OrderFillResolution keys, which NT8 "
-                         "refuses there.")
+                         "ConfigureStrategy) run under an explicitly-sent "
+                         "Standard fill resolution -- NT8 refuses High there.")
     a = ap.parse_args()
     try:
         res = capture(a.strategy, a.symbol, a.date_from, a.date_to,

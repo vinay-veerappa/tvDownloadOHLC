@@ -35,18 +35,22 @@ PROFILE_PATH = Path(__file__).resolve().parent / "backtest_profile.json"
 _NON_BEHAVIOURAL = ("_comment", "_fieldNotes")
 
 #: NT8 refuses OrderFillResolution=High on a MULTI-series strategy ("program
-#: directly into your strategy the more granular resolution"). The three keys
-#: describe the ANALYZER's fill series, so they are meaningless the moment the
-#: strategy adds its own -- the SA dialog aborts and the capture returns 0
-#: trades that reads as "the strategy does not trade". A bot that calls
-#: AddDataSeries anywhere in its real source (comments stripped, so a
-#: docstring mentioning the method is not a false positive) gets these keys
-#: dropped, and the recorded profileHash describes the profile AS SENT.
+#: directly into your strategy the more granular resolution"). The SA window
+#: is REUSED between calls and its template is STICKY: it keeps whatever a
+#: previous run applied, so OMITTING the keys does not clear the stored High
+#: -- the dialog fires anyway and the capture returns 0 trades that reads as
+#: "the strategy does not trade". A bot that calls AddDataSeries anywhere in
+#: its real source (comments stripped, so a docstring mentioning the method
+#: is not a false positive) gets High OVERWRITTEN with Standard -- the value
+#: that is legal for both single- and multi-series -- while Type/Value only
+#: describe the High series and are dropped. The recorded profileHash
+#: describes the profile AS SENT.
 ORDER_FILL_KEYS = (
     "OrderFillResolution",
     "OrderFillResolutionType",
     "OrderFillResolutionValue",
 )
+_ORDER_FILL_TYPE_KEYS = ("OrderFillResolutionType", "OrderFillResolutionValue")
 #: Matches a real call, not a mention: `AddDataSeries(` at the start of an
 #: expression. `BarsPeriodType` in the same statement is how every live call
 #: writes it; keeping the type qualifier in the pattern is what stops
@@ -72,11 +76,12 @@ def effective_profile(profile: Dict[str, Any], strategy_source: Optional[str] = 
                       strategy_source_path: Optional[str] = None) -> Dict[str, Any]:
     """The profile AS IT WILL BE SENT for one strategy.
 
-    A strategy that programs its own series cannot also take the analyzer's
-    OrderFillResolution keys, so they are dropped and the result is what
-    `profile_hash` should describe -- recording the unsuppressed hash against a
-    run that ran without those keys would attribute evidence to a profile it
-    did not run under.
+    A strategy that programs its own series cannot run under the analyzer's
+    OrderFillResolution=High, so the value is OVERWRITTEN with Standard (the
+    SA template is sticky -- omission does not clear it) and the Type/Value
+    pair is dropped. The result is what `profile_hash` should describe:
+    recording the unsuppressed hash against a run that ran differently would
+    attribute evidence to a profile it did not run under.
     """
     if strategy_source is None and strategy_source_path:
         with open(strategy_source_path, encoding="utf-8") as fh:
@@ -85,16 +90,22 @@ def effective_profile(profile: Dict[str, Any], strategy_source: Optional[str] = 
         return profile
     out = dict(profile)
     template = dict(out.get("strategyTemplate") or {})
-    dropped = [k for k in ORDER_FILL_KEYS if k in template]
+    dropped = [k for k in _ORDER_FILL_TYPE_KEYS if k in template]
     for k in dropped:
         del template[k]
+    if template.get("OrderFillResolution") != "Standard":
+        template["OrderFillResolution"] = "Standard"
+        dropped = ["OrderFillResolution"] + dropped
     if dropped:
         notes = list(out.get("_nonBehaviouralNotes") or [])
         notes.append(
-            "OrderFillResolution/Type/Value suppressed for this strategy: it "
-            "calls AddDataSeries(BarsPeriodType...), and NT8 refuses the "
-            "analyzer's fill series on a multi-series strategy. The strategy "
-            "programs its own resolution (B9).")
+            "OrderFillResolution overwritten with Standard (Type/Value "
+            "dropped) for this strategy: it calls "
+            "AddDataSeries(BarsPeriodType...), and NT8 refuses High on a "
+            "multi-series strategy. Standard is sent EXPLICITLY because the "
+            "SA template is sticky -- omitting the key would leave whatever "
+            "the last run applied. The strategy programs its own resolution "
+            "(B9).")
         out["_nonBehaviouralNotes"] = notes
         out["strategyTemplate"] = template
     return out
