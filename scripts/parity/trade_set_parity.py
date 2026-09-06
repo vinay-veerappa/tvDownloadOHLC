@@ -144,8 +144,43 @@ def normalise_trades(df: pd.DataFrame, *, label: str,
             "have no substitute.".format(label, missing, list(df.columns)[:20]))
 
     out = pd.DataFrame(index=range(len(df)))
-    et = pd.to_datetime(resolved["entry_time"].to_numpy(), errors="coerce")
-    et = pd.DatetimeIndex(et)
+    # TIMEZONE RULE, in three cases (pandas 3 measured):
+    #   * all offsets present (possibly MIXED -05:00/-04:00 across DST) --
+    #     to_datetime(utc=True) converts each to its own correct instant. A
+    #     plain to_datetime raises "Mixed timezones detected" here; that crash
+    #     is what killed the first NT8 capture against the recorded reference
+    #     run, so mixed is the NORMAL case for a Python trade list, not an
+    #     edge case.
+    #   * any naive mixed with aware -- the naive ones parse to NaT under
+    #     utc=True+coerce, and the isna check below refuses the frame.
+    #   * ALL naive -- utc=True would silently DEFAULT them to UTC, which is
+    #     the 4-5h NT8 misreading this gate exists to prevent. So naivety is
+    #     detected on the RAW strings before parsing, and the assume_tz gate
+    #     runs first.
+    raw = pd.Series(resolved["entry_time"].to_numpy()).astype(str).str.strip()
+    has_offset = raw.str.contains(
+        r"(?:[+-]\d{2}:?\d{2}|Z)$", regex=True).fillna(False)
+    if not bool(has_offset.all()) and bool(has_offset.any()):
+        raise ParityInputError(
+            "{}: entry timestamps MIX offset-aware and naive values ({} aware, "
+            "{} naive). A frame half-shifted by 4-5 hours cannot be joined; "
+            "normalise the source before parity.".format(
+                label, int(has_offset.sum()), int((~has_offset).sum())))
+    if bool(has_offset.all()):
+        et = pd.DatetimeIndex(
+            pd.to_datetime(resolved["entry_time"].to_numpy(), errors="coerce",
+                           utc=True))
+    else:
+        if not assume_tz:
+            raise ParityInputError(
+                "{}: entry timestamps are TIMEZONE-NAIVE and no --assume-tz was "
+                "given. NT8 Strategy Analyzer exports ET-naive; interpreting "
+                "them as UTC shifts every trade by 4-5 hours. State the zone "
+                "rather than letting pandas pick one.".format(label))
+        et = pd.DatetimeIndex(
+            pd.to_datetime(resolved["entry_time"].to_numpy(), errors="coerce"))
+        et = et.tz_localize(assume_tz, ambiguous="NaT",
+                            nonexistent="shift_forward")
     if et.isna().any():
         raise ParityInputError(
             "{}: {} entry timestamp(s) could not be parsed".format(
@@ -167,12 +202,25 @@ def normalise_trades(df: pd.DataFrame, *, label: str,
 
     xt = resolved["exit_time"]
     if xt is not None:
-        xt_i = pd.DatetimeIndex(pd.to_datetime(xt.to_numpy(), errors="coerce"))
-        if xt_i.tz is None and assume_tz:
+        # Same three-case timezone rule as entry_time above.
+        x_raw = pd.Series(xt.to_numpy()).astype(str).str.strip()
+        x_offset = x_raw.str.contains(
+            r"(?:[+-]\d{2}:?\d{2}|Z)$", regex=True).fillna(False)
+        x_has_offset = bool(x_offset.all())
+        if not x_has_offset and bool(x_offset.any()):
+            out["exit_time"] = pd.NaT   # mixed: left NaT, the join uses entry
+        elif x_has_offset:
+            xt_i = pd.DatetimeIndex(pd.to_datetime(xt.to_numpy(),
+                                                   errors="coerce", utc=True))
+            out["exit_time"] = xt_i
+        elif assume_tz:
+            xt_i = pd.DatetimeIndex(
+                pd.to_datetime(xt.to_numpy(), errors="coerce"))
             xt_i = xt_i.tz_localize(assume_tz, ambiguous="NaT",
                                     nonexistent="shift_forward")
-        out["exit_time"] = (xt_i.tz_convert("UTC") if xt_i.tz is not None
-                            else pd.NaT)
+            out["exit_time"] = xt_i.tz_convert("UTC")
+        else:
+            out["exit_time"] = pd.NaT
     else:
         out["exit_time"] = pd.NaT
 
